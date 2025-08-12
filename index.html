@@ -1,0 +1,30 @@
+<!DOCTYPE html><html lang="es"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Login Coordinadores</title>
+<style>body{font-family:system-ui;margin:0;display:grid;place-items:center;min-height:100vh;background:#f7f7f8}
+.card{width:min(420px,92vw);background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.06)}
+label{display:block;font-weight:600;margin:.75rem 0 .25rem}input,button{width:100%;padding:.8rem;border-radius:10px}
+input{border:1px solid #d1d5db}button{border:0;background:#111827;color:#fff;font-weight:700;margin-top:.8rem;cursor:pointer}
+.err{color:#b91c1c;font-size:.9rem;margin-top:.5rem}</style></head>
+<body><div class="card">
+<h1>Portal de Coordinadores</h1>
+<label>Correo</label><input id="email" type="email" autocomplete="username"/>
+<label>Contraseña</label><input id="pass" type="password" autocomplete="current-password"/>
+<button id="btn">Ingresar</button><div id="msg" class="err"></div></div>
+
+<script type="module">
+import { auth } from './firebase-init-portal.js';
+import { signInWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
+document.getElementById('btn').onclick = async ()=>{
+  const email = email.value.trim(), pass = document.getElementById('pass').value;
+  const msg = document.getElementById('msg'); msg.textContent='';
+  try{
+    const { user } = await signInWithEmailAndPassword(auth, email, pass);
+    const tok = await user.getIdTokenResult(true);
+    if (!['coordinador','supervisor','admin'].includes(tok.claims.role)) {
+      msg.textContent = 'Tu cuenta no tiene rol de coordinador.'; return;
+    }
+    location = 'coordinadores.html';
+  }catch(e){ msg.textContent = e.code || 'Error de acceso'; }
+};
+</script></body></html>
