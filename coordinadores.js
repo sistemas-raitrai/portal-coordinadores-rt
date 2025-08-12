@@ -1,12 +1,10 @@
 // coordinadores.js — Portal de Coordinadores RT
-// Requiere: firebase-init-portal.js en la misma carpeta.
-
 import { app, db } from './firebase-init-portal.js';
 import { getAuth, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
   collection, getDocs, getDoc, doc, setDoc, serverTimestamp,
-  query, where                        // <-- añade estos
+  query, where
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 
 const auth = getAuth(app);
@@ -18,38 +16,19 @@ onAuthStateChanged(auth, async (user) => {
   load(user);
 });
 
+// ========= SOLO ESTA load =========
 async function load(user){
   const cont = document.getElementById('grupos');
   cont.textContent = 'Cargando tus grupos…';
 
-  // 🔑 Trae SOLO los grupos donde el usuario esté asignado
+  // Trae SOLO los grupos donde el usuario esté asignado
   const q = query(collection(db,'grupos'),
                   where('coordinadores','array-contains', user.uid));
   const snap = await getDocs(q);
   const mis = [];
   snap.forEach(d => { const g = d.data(); g.id = d.id; mis.push(g); });
+
   mis.sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
-  renderGrupos(mis, user);
-}
-
-
-// ======================
-// Carga y render de grupos
-// ======================
-async function load(user){
-  const cont = document.getElementById('grupos');
-  cont.textContent = 'Cargando tus grupos…';
-
-  const all = await getDocs(collection(db,'grupos'));
-  const mis = [];
-  all.forEach(snap=>{
-    const g = snap.data(); g.id = snap.id;
-    if ((g.coordinadores||[]).includes(user.uid)) mis.push(g);
-  });
-
-  // Orden por fechaInicio asc
-  mis.sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
-
   renderGrupos(mis, user);
 }
 
@@ -112,13 +91,12 @@ async function renderGrupos(grupos, user){
       };
       pills.appendChild(pill);
     });
-    // Mostrar día 1 por defecto
     if (fechas[0]) renderActs(g, fechas[0], card.querySelector(`#acts-${g.id}`), user);
   }
 }
 
 // ======================
-// Actividades + Asistencia
+// Actividades + Asistencia (subcolección)
 // ======================
 async function getAsistenciaDoc(grupoId, fecha, actName){
   const id = `${fecha}_${slug(actName)}`;
@@ -154,7 +132,6 @@ async function renderActs(grupo, fechaISO, cont, user){
     `;
     cont.appendChild(div);
 
-    // Ficha proveedor (si existen catálogos)
     injectProveedorInfo(div.querySelector('.prov'), act);
 
     const inp = div.querySelector('input');
@@ -172,8 +149,8 @@ async function renderActs(grupo, fechaISO, cont, user){
         paxPlanificados: plan,
         paxAsistentes: paxAsist,
         notas: txt.value||'',
-        coordinadorUid: user.uid,
-        coordinadorEmail: user.email,
+        registradoPorUid: user.uid,
+        registradoPorEmail: user.email,
         updatedAt: serverTimestamp(),
         createdAt: data?.createdAt ?? serverTimestamp()
       };
