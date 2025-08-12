@@ -1,10 +1,10 @@
-// coordinadores.js — Portal de Coordinadores RT (cruce por staff / coordinador)
+// coordinadores.js — Portal de Coordinadores RT (staff + cruce coordinadores + asistencia)
 import { app, db } from './firebase-init-portal.js';
 import { getAuth, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
   collection, getDocs, doc, updateDoc, serverTimestamp,
-  query, where, getDoc
+  query, where
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 
 const auth = getAuth(app);
@@ -23,18 +23,29 @@ const STAFF_EMAILS = new Set([
 // ---- Normalizador: sin tildes/espacios/punt., lower ----
 const norm = (s='') => s
   .toString()
-  .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // quita diacríticos
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')   // quita diacríticos
   .toLowerCase()
-  .replace(/[^a-z0-9]+/g,''); // quita espacios/puntuación
+  .replace(/[^a-z0-9]+/g,'');                        // quita espacios/puntuación
 
 // ---- util: slug para clave de actividad ----
 const slug = s => norm(s).slice(0,60);
 
 // ---- UI helpers ----
-function putText(id, txt){ const el = document.getElementById(id); if (el) el.textContent = txt; }
 function fmt(iso){ if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'}); }
 function rangoFechas(ini, fin){ const out=[]; if(!ini||!fin) return out; const a=new Date(ini+'T00:00:00'), b=new Date(fin+'T00:00:00'); for(let d=new Date(a); d<=b; d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10)); return out; }
 function calcPlan(actividad, grupo){ const a=actividad||{}; const ad=Number(a.adultos||0), es=Number(a.estudiantes||0); const porAct=(ad+es)>0?(ad+es):null; return porAct ?? Number(grupo.cantidadgrupo||0); }
+
+// === Helpers de asistencia (leer/actualizar en memoria) ===
+function getSavedAsistencia(grupo, fechaISO, actividad) {
+  const key = slug(actividad || 'actividad');
+  return grupo?.asistencias?.[fechaISO]?.[key] || null;
+}
+function setSavedAsistenciaLocal(grupo, fechaISO, actividad, data) {
+  const key = slug(actividad || 'actividad');
+  if (!grupo.asistencias) grupo.asistencias = {};
+  if (!grupo.asistencias[fechaISO]) grupo.asistencias[fechaISO] = {};
+  grupo.asistencias[fechaISO][key] = data;
+}
 
 // ====== Arranque ======
 onAuthStateChanged(auth, async (user) => {
@@ -47,11 +58,9 @@ onAuthStateChanged(auth, async (user) => {
   const coordinadores = await loadCoordinadores();
 
   if (isStaff) {
-    // Staff: pinta selector para elegir un coordinador
-    await showStaffSelector(coordinadores, user);
+    await showStaffSelector(coordinadores, user);    // staff elige coordinador
   } else {
-    // No staff: intenta resolver su registro de coordinador por email o nombre
-    const miReg = findCoordinadorForUser(coordinadores, user);
+    const miReg = findCoordinadorForUser(coordinadores, user); // auto-resolver
     await loadGruposForCoordinador(miReg, user);
   }
 });
@@ -75,8 +84,7 @@ async function loadCoordinadores(){
 
 // ====== Staff selector ======
 async function showStaffSelector(coordinadores, user){
-  // Inserta barra staff si no existe
-  let wrap = document.querySelector('.wrap');
+  const wrap = document.querySelector('.wrap');
   let bar = document.getElementById('staffBar');
   if (!bar) {
     bar = document.createElement('div');
@@ -95,23 +103,19 @@ async function showStaffSelector(coordinadores, user){
 
   sel.onchange = async () => {
     const id = sel.value;
-    const elegido = coordinadores.find(c => c.id === id);
-    await loadGruposForCoordinador(elegido || null, user);
+    const elegido = coordinadores.find(c => c.id === id) || null;
+    localStorage.setItem('rt_staff_coord', id || '');
+    await loadGruposForCoordinador(elegido, user);
   };
 
-  // Si tenías uno seleccionado previamente (localStorage)
   const last = localStorage.getItem('rt_staff_coord');
   if (last && coordinadores.find(c=>c.id===last)) {
     sel.value = last;
     const elegido = coordinadores.find(c => c.id === last);
     await loadGruposForCoordinador(elegido, user);
   } else {
-    // inicial: vacío
     renderGrupos([], user);
   }
-
-  // Guarda selección
-  sel.addEventListener('change', ()=> localStorage.setItem('rt_staff_coord', sel.value));
 }
 
 // ====== Resolver coordinador de un usuario (no staff) ======
@@ -120,13 +124,13 @@ function findCoordinadorForUser(coordinadores, user){
   // 1) match por email
   let c = coordinadores.find(x => x.email && x.email.toLowerCase() === email);
   if (c) return c;
-  // 2) match por nombre normalizado (displayName vs. lista)
+  // 2) match por nombre normalizado
   const disp = norm(user.displayName || '');
   if (disp) {
     c = coordinadores.find(x => norm(x.nombre) === disp);
     if (c) return c;
   }
-  // 3) fallback: usar el propio email como "filtro"
+  // 3) fallback: usa su propio email/nombre
   return { id:'self', nombre: user.displayName || email, email };
 }
 
@@ -140,23 +144,26 @@ async function loadGruposForCoordinador(coord, user){
   const wanted = [];
 
   // datos del coordinador elegido
-  const email = (coord?.email || '').toLowerCase();
-  const ncoor = norm(coord?.nombre || '');
+  const emailElegido = (coord?.email || '').toLowerCase();
+  const nombreElegido = norm(coord?.nombre || '');
+
+  const isSelf = !coord || coord.id === 'self' || emailElegido === (user.email||'').toLowerCase();
 
   all.forEach(d => {
     const g = { id: d.id, ...d.data() };
 
-    // Candidatos de coincidencia:
+    // Candidatos de coincidencia en el grupo
     const gName = norm(g.coordinador || g.coordinadorNombre || '');
     const gEmail = (g.coordinadorEmail || '').toLowerCase();
     const arrEmails = (g.coordinadoresEmails || []).map(x => (x||'').toLowerCase());
-    const arrUids   = (g.coordinadores || []); // por si acaso
+    const arrUids   = Array.isArray(g.coordinadores) ? g.coordinadores : [];
 
     // Regla de match (OR):
     const match =
-      (email && gEmail === email) ||
-      (email && arrEmails.includes(email)) ||
-      (ncoor && gName && gName === ncoor);
+      (emailElegido && gEmail === emailElegido) ||
+      (emailElegido && arrEmails.includes(emailElegido)) ||
+      (nombreElegido && gName && gName === nombreElegido) ||
+      (isSelf && arrUids.includes(user.uid));   // por si el grupo usa UIDs
 
     if (match) wanted.push(g);
   });
@@ -205,7 +212,7 @@ async function renderGrupos(grupos, user){
   }
 }
 
-// ====== Actividades + guardar asistencia (dentro del grupo en subcolección o campo, adapta a tu modelo) ======
+// ====== Actividades + guardar asistencia dentro del doc del grupo ======
 async function renderActs(grupo, fechaISO, cont, user){
   cont.innerHTML = '';
   const acts = (grupo.itinerario && grupo.itinerario[fechaISO]) || [];
@@ -215,7 +222,8 @@ async function renderActs(grupo, fechaISO, cont, user){
   }
 
   for (const act of acts){
-    const plan = calcPlan(act, grupo);
+    const plan  = calcPlan(act, grupo);
+    const saved = getSavedAsistencia(grupo, fechaISO, act.actividad);
 
     const div = document.createElement('div');
     div.className = 'act';
@@ -223,8 +231,8 @@ async function renderActs(grupo, fechaISO, cont, user){
       <h4>${act.actividad || 'Actividad'}</h4>
       <div class="meta">${act.horaInicio||'--:--'}–${act.horaFin||'--:--'} · Plan: <strong>${plan}</strong> pax</div>
       <div class="row">
-        <input type="number" min="0" inputmode="numeric" placeholder="Asistentes" />
-        <textarea placeholder="Notas (opcional)"></textarea>
+        <input type="number" min="0" inputmode="numeric" placeholder="Asistentes" value="${saved?.paxFinal ?? ''}"/>
+        <textarea placeholder="Notas (opcional)">${saved?.notas ?? ''}</textarea>
         <button>Guardar</button>
       </div>
     `;
@@ -237,22 +245,19 @@ async function renderActs(grupo, fechaISO, cont, user){
     btn.onclick = async ()=>{
       btn.disabled = true;
       try{
-        // Opción A: guardar en mapa dentro del grupo (asistencias.FECHA.SLUG)
         const refGrupo = doc(db,'grupos', grupo.id);
-        const key = `asistencias.${fechaISO}.${slug(act.actividad||'actividad')}`;
-        await updateDoc(refGrupo, {
-          [key]: {
-            paxFinal: Number(inp.value||0),
-            notas: txt.value || '',
-            byUid: auth.currentUser.uid,
-            byEmail: (auth.currentUser.email||'').toLowerCase(),
-            updatedAt: serverTimestamp()
-          }
-        });
+        const keyPath  = `asistencias.${fechaISO}.${slug(act.actividad||'actividad')}`;
+        const data = {
+          paxFinal: Number(inp.value||0),
+          notas: txt.value || '',
+          byUid:  auth.currentUser.uid,
+          byEmail:(auth.currentUser.email||'').toLowerCase(),
+          updatedAt: serverTimestamp()
+        };
+        await updateDoc(refGrupo, { [keyPath]: data });
 
-        // // Opción B (si prefieres subcolección):
-        // const ref = doc(db,'grupos',grupo.id,'asistencias', `${fechaISO}_${slug(act.actividad||'actividad')}`);
-        // await setDoc(ref, { ...payload }, { merge:true });
+        // actualizar en memoria para mantener prellenado
+        setSavedAsistenciaLocal(grupo, fechaISO, act.actividad, { ...data });
 
         btn.textContent = 'Guardado';
         setTimeout(()=>{ btn.textContent='Guardar'; btn.disabled=false; }, 900);
