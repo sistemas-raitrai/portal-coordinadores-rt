@@ -2,28 +2,36 @@
 // Requiere: firebase-init-portal.js en la misma carpeta.
 
 import { app, db } from './firebase-init-portal.js';
+import { getAuth, onAuthStateChanged, signOut }
+  from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
-  getAuth, onAuthStateChanged, signOut
-} from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
-import {
-  collection, getDocs, getDoc, doc, setDoc, serverTimestamp
+  collection, getDocs, getDoc, doc, setDoc, serverTimestamp,
+  query, where                        // <-- añade estos
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 
 const auth = getAuth(app);
 document.getElementById('logout').onclick = () =>
   signOut(auth).then(()=>location='index.html');
 
-// ---- Guardia de acceso por rol ----
 onAuthStateChanged(auth, async (user) => {
-  if (!user) return location = 'index.html';
-  const token = await user.getIdTokenResult(true);
-  const role  = token.claims.role;
-  if (!['coordinador','supervisor','admin'].includes(role)) {
-    alert('No tienes permisos para usar este portal.');
-    return location = 'index.html';
-  }
+  if (!user) return location.href = 'index.html';
   load(user);
 });
+
+async function load(user){
+  const cont = document.getElementById('grupos');
+  cont.textContent = 'Cargando tus grupos…';
+
+  // 🔑 Trae SOLO los grupos donde el usuario esté asignado
+  const q = query(collection(db,'grupos'),
+                  where('coordinadores','array-contains', user.uid));
+  const snap = await getDocs(q);
+  const mis = [];
+  snap.forEach(d => { const g = d.data(); g.id = d.id; mis.push(g); });
+  mis.sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
+  renderGrupos(mis, user);
+}
+
 
 // ======================
 // Carga y render de grupos
