@@ -1,68 +1,177 @@
-// coordinadores.js — Portal de Coordinadores RT
+// coordinadores.js — Portal de Coordinadores RT (cruce por staff / coordinador)
 import { app, db } from './firebase-init-portal.js';
 import { getAuth, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
-  collection, getDocs, getDoc, doc, setDoc, serverTimestamp,
-  query, where
+  collection, getDocs, doc, updateDoc, serverTimestamp,
+  query, where, getDoc
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 
 const auth = getAuth(app);
 document.getElementById('logout').onclick = () =>
   signOut(auth).then(()=>location='index.html');
 
+// ---- STAFF permitido (sistema principal) ----
+const STAFF_EMAILS = new Set([
+  "aleoperaciones@raitrai.cl",
+  "tomas@raitrai.cl",
+  "operaciones@raitrai.cl",
+  "anamaria@raitrai.cl",
+  "sistemas@raitrai.cl",
+].map(e => e.toLowerCase()));
+
+// ---- Normalizador: sin tildes/espacios/punt., lower ----
+const norm = (s='') => s
+  .toString()
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // quita diacríticos
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g,''); // quita espacios/puntuación
+
+// ---- util: slug para clave de actividad ----
+const slug = s => norm(s).slice(0,60);
+
+// ---- UI helpers ----
+function putText(id, txt){ const el = document.getElementById(id); if (el) el.textContent = txt; }
+function fmt(iso){ if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'}); }
+function rangoFechas(ini, fin){ const out=[]; if(!ini||!fin) return out; const a=new Date(ini+'T00:00:00'), b=new Date(fin+'T00:00:00'); for(let d=new Date(a); d<=b; d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10)); return out; }
+function calcPlan(actividad, grupo){ const a=actividad||{}; const ad=Number(a.adultos||0), es=Number(a.estudiantes||0); const porAct=(ad+es)>0?(ad+es):null; return porAct ?? Number(grupo.cantidadgrupo||0); }
+
+// ====== Arranque ======
 onAuthStateChanged(auth, async (user) => {
   if (!user) return location.href = 'index.html';
-  load(user);
+
+  const email = (user.email||'').toLowerCase();
+  const isStaff = STAFF_EMAILS.has(email);
+
+  // Carga lista de coordinadores (colección "coordinadores": campos esperados {nombre, email})
+  const coordinadores = await loadCoordinadores();
+
+  if (isStaff) {
+    // Staff: pinta selector para elegir un coordinador
+    await showStaffSelector(coordinadores, user);
+  } else {
+    // No staff: intenta resolver su registro de coordinador por email o nombre
+    const miReg = findCoordinadorForUser(coordinadores, user);
+    await loadGruposForCoordinador(miReg, user);
+  }
 });
 
-// ========= SOLO ESTA load =========
-async function load(user){
-  const cont = document.getElementById('grupos');
-  cont.textContent = 'Cargando tus grupos…';
-
-  // Trae SOLO los grupos donde el usuario esté asignado
-  const q = query(collection(db,'grupos'),
-                  where('coordinadores','array-contains', user.uid));
-  const snap = await getDocs(q);
-  const mis = [];
-  snap.forEach(d => { const g = d.data(); g.id = d.id; mis.push(g); });
-
-  mis.sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
-  renderGrupos(mis, user);
+// ====== Lee coleccion "coordinadores" ======
+async function loadCoordinadores(){
+  const snap = await getDocs(collection(db,'coordinadores'));
+  const list = [];
+  snap.forEach(d=>{
+    const x = d.data();
+    list.push({
+      id: d.id,
+      nombre: (x.nombre || x.Nombre || x.coordinador || '').toString(),
+      email: (x.email || x.correo || '').toString().toLowerCase(),
+    });
+  });
+  // ordena por nombre
+  list.sort((a,b)=> a.nombre.localeCompare(b.nombre, 'es', {sensitivity:'base'}));
+  return list;
 }
 
-function fmt(iso){
-  if (!iso) return '';
-  const d = new Date(iso+'T00:00:00');
-  return d.toLocaleDateString('es-CL', {weekday:'short', day:'2-digit', month:'short'});
-}
-
-function rangoFechas(ini, fin){
-  const out=[]; if(!ini||!fin) return out;
-  const a=new Date(ini+'T00:00:00'), b=new Date(fin+'T00:00:00');
-  for(let d=new Date(a); d<=b; d.setDate(d.getDate()+1)){
-    out.push(d.toISOString().slice(0,10));
+// ====== Staff selector ======
+async function showStaffSelector(coordinadores, user){
+  // Inserta barra staff si no existe
+  let wrap = document.querySelector('.wrap');
+  let bar = document.getElementById('staffBar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'staffBar';
+    bar.style.cssText = 'margin:12px 0 8px; padding:8px; border:1px solid #223053; border-radius:12px; background:#0f1530;';
+    bar.innerHTML = `
+      <label style="display:block; margin-bottom:6px; color:#cbd5e1">Ver viajes por coordinador</label>
+      <select id="coordSelect" style="width:100%; padding:.55rem; border-radius:10px; border:1px solid #334155; background:#0b1329; color:#e5e7eb"></select>
+    `;
+    wrap.prepend(bar);
   }
-  return out;
+
+  const sel = document.getElementById('coordSelect');
+  sel.innerHTML = `<option value="">— Selecciona coordinador —</option>` +
+    coordinadores.map(c => `<option value="${c.id}">${c.nombre} — ${c.email||'sin correo'}</option>`).join('');
+
+  sel.onchange = async () => {
+    const id = sel.value;
+    const elegido = coordinadores.find(c => c.id === id);
+    await loadGruposForCoordinador(elegido || null, user);
+  };
+
+  // Si tenías uno seleccionado previamente (localStorage)
+  const last = localStorage.getItem('rt_staff_coord');
+  if (last && coordinadores.find(c=>c.id===last)) {
+    sel.value = last;
+    const elegido = coordinadores.find(c => c.id === last);
+    await loadGruposForCoordinador(elegido, user);
+  } else {
+    // inicial: vacío
+    renderGrupos([], user);
+  }
+
+  // Guarda selección
+  sel.addEventListener('change', ()=> localStorage.setItem('rt_staff_coord', sel.value));
 }
 
-const slug = s => (s||'').toLowerCase().normalize('NFKD')
-  .replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'-').slice(0,60);
-
-function calcPlan(actividad, grupo){
-  const a = actividad || {};
-  const ad = Number(a.adultos||0), es = Number(a.estudiantes||0);
-  const porAct = (ad+es)>0 ? (ad+es) : null;
-  return porAct ?? Number(grupo.cantidadgrupo||0);
+// ====== Resolver coordinador de un usuario (no staff) ======
+function findCoordinadorForUser(coordinadores, user){
+  const email = (user.email||'').toLowerCase();
+  // 1) match por email
+  let c = coordinadores.find(x => x.email && x.email.toLowerCase() === email);
+  if (c) return c;
+  // 2) match por nombre normalizado (displayName vs. lista)
+  const disp = norm(user.displayName || '');
+  if (disp) {
+    c = coordinadores.find(x => norm(x.nombre) === disp);
+    if (c) return c;
+  }
+  // 3) fallback: usar el propio email como "filtro"
+  return { id:'self', nombre: user.displayName || email, email };
 }
 
+// ====== Cargar grupos para un coordinador (staff o no staff) ======
+async function loadGruposForCoordinador(coord, user){
+  const cont = document.getElementById('grupos');
+  cont.textContent = 'Cargando grupos…';
+
+  // Trae TODOS los grupos (lectura pública). Luego filtramos en cliente
+  const all = await getDocs(collection(db,'grupos'));
+  const wanted = [];
+
+  // datos del coordinador elegido
+  const email = (coord?.email || '').toLowerCase();
+  const ncoor = norm(coord?.nombre || '');
+
+  all.forEach(d => {
+    const g = { id: d.id, ...d.data() };
+
+    // Candidatos de coincidencia:
+    const gName = norm(g.coordinador || g.coordinadorNombre || '');
+    const gEmail = (g.coordinadorEmail || '').toLowerCase();
+    const arrEmails = (g.coordinadoresEmails || []).map(x => (x||'').toLowerCase());
+    const arrUids   = (g.coordinadores || []); // por si acaso
+
+    // Regla de match (OR):
+    const match =
+      (email && gEmail === email) ||
+      (email && arrEmails.includes(email)) ||
+      (ncoor && gName && gName === ncoor);
+
+    if (match) wanted.push(g);
+  });
+
+  wanted.sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
+  renderGrupos(wanted, user);
+}
+
+// ====== Render ======
 async function renderGrupos(grupos, user){
   const cont = document.getElementById('grupos');
   cont.innerHTML = '';
 
   if (!grupos.length){
-    cont.innerHTML = '<p class="muted">No tienes grupos asignados.</p>';
+    cont.innerHTML = '<p class="muted">No hay grupos para el coordinador seleccionado.</p>';
     return;
   }
 
@@ -91,20 +200,12 @@ async function renderGrupos(grupos, user){
       };
       pills.appendChild(pill);
     });
+
     if (fechas[0]) renderActs(g, fechas[0], card.querySelector(`#acts-${g.id}`), user);
   }
 }
 
-// ======================
-// Actividades + Asistencia (subcolección)
-// ======================
-async function getAsistenciaDoc(grupoId, fecha, actName){
-  const id = `${fecha}_${slug(actName)}`;
-  const ref = doc(db, 'grupos', grupoId, 'asistencias', id);
-  const snap = await getDoc(ref);
-  return { ref, data: snap.exists()? snap.data(): null };
-}
-
+// ====== Actividades + guardar asistencia (dentro del grupo en subcolección o campo, adapta a tu modelo) ======
 async function renderActs(grupo, fechaISO, cont, user){
   cont.innerHTML = '';
   const acts = (grupo.itinerario && grupo.itinerario[fechaISO]) || [];
@@ -115,24 +216,19 @@ async function renderActs(grupo, fechaISO, cont, user){
 
   for (const act of acts){
     const plan = calcPlan(act, grupo);
-    const { ref, data } = await getAsistenciaDoc(grupo.id, fechaISO, act.actividad||'actividad');
 
     const div = document.createElement('div');
     div.className = 'act';
     div.innerHTML = `
       <h4>${act.actividad || 'Actividad'}</h4>
       <div class="meta">${act.horaInicio||'--:--'}–${act.horaFin||'--:--'} · Plan: <strong>${plan}</strong> pax</div>
-      <div class="prov"></div>
       <div class="row">
-        <input type="number" min="0" inputmode="numeric" placeholder="Asistentes" value="${data?.paxAsistentes ?? ''}" />
-        <textarea placeholder="Notas (opcional)">${data?.notas ?? ''}</textarea>
+        <input type="number" min="0" inputmode="numeric" placeholder="Asistentes" />
+        <textarea placeholder="Notas (opcional)"></textarea>
         <button>Guardar</button>
       </div>
-      <div class="muted" style="margin-top:.3rem">${data?'Última actualización disponible.':''}</div>
     `;
     cont.appendChild(div);
-
-    injectProveedorInfo(div.querySelector('.prov'), act);
 
     const inp = div.querySelector('input');
     const txt = div.querySelector('textarea');
@@ -140,52 +236,31 @@ async function renderActs(grupo, fechaISO, cont, user){
 
     btn.onclick = async ()=>{
       btn.disabled = true;
-      const paxAsist = Number(inp.value||0);
-      const payload = {
-        grupoId: grupo.id,
-        fechaISO,
-        actividad: act.actividad||'',
-        horaInicio: act.horaInicio||'',
-        paxPlanificados: plan,
-        paxAsistentes: paxAsist,
-        notas: txt.value||'',
-        registradoPorUid: user.uid,
-        registradoPorEmail: user.email,
-        updatedAt: serverTimestamp(),
-        createdAt: data?.createdAt ?? serverTimestamp()
-      };
-      await setDoc(ref, payload, { merge:true });
-      btn.textContent = 'Guardado';
-      setTimeout(()=>{ btn.textContent='Guardar'; btn.disabled=false; }, 1000);
+      try{
+        // Opción A: guardar en mapa dentro del grupo (asistencias.FECHA.SLUG)
+        const refGrupo = doc(db,'grupos', grupo.id);
+        const key = `asistencias.${fechaISO}.${slug(act.actividad||'actividad')}`;
+        await updateDoc(refGrupo, {
+          [key]: {
+            paxFinal: Number(inp.value||0),
+            notas: txt.value || '',
+            byUid: auth.currentUser.uid,
+            byEmail: (auth.currentUser.email||'').toLowerCase(),
+            updatedAt: serverTimestamp()
+          }
+        });
+
+        // // Opción B (si prefieres subcolección):
+        // const ref = doc(db,'grupos',grupo.id,'asistencias', `${fechaISO}_${slug(act.actividad||'actividad')}`);
+        // await setDoc(ref, { ...payload }, { merge:true });
+
+        btn.textContent = 'Guardado';
+        setTimeout(()=>{ btn.textContent='Guardar'; btn.disabled=false; }, 900);
+      }catch(e){
+        console.error(e);
+        btn.disabled = false;
+        alert('No se pudo guardar la asistencia.');
+      }
     };
   }
-}
-
-// ======================
-// Catálogos (opcional)
-// ======================
-let _SERV = null, _PROV = null;
-
-async function ensureCatalogos(){
-  if (_SERV && _PROV) return;
-  try{
-    const s = await getDocs(collection(db, 'Servicios/BRASIL/Listado'));
-    _SERV = {}; s.forEach(d=>{ const x=d.data(); _SERV[x.servicio]=x; });
-  }catch{ _SERV = {}; }
-  try{
-    const p = await getDocs(collection(db, 'Proveedores/BRASIL/Listado'));
-    _PROV = {}; p.forEach(d=>{ const x=d.data(); _PROV[x.proveedor]=x; });
-  }catch{ _PROV = {}; }
-}
-
-async function injectProveedorInfo(node, act){
-  node.textContent = '';
-  await ensureCatalogos();
-  const s = _SERV?.[act?.actividad||''];
-  if (!s){ node.innerHTML = '<span class="muted">Sin ficha de servicio</span>'; return; }
-  const prov = _PROV?.[s.proveedor||''];
-  node.innerHTML = `
-    <div>Proveedor: <strong>${s.proveedor||'—'}</strong>${prov? ` · ${prov?.telefono||''} · ${prov?.correo||''}`:''}</div>
-    ${s.restricciones? `<div class="muted">Restricciones: ${s.restricciones}</div>`:''}
-  `;
 }
