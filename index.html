@@ -13,18 +13,27 @@ input{border:1px solid #d1d5db}button{border:0;background:#111827;color:#fff;fon
 <button id="btn">Ingresar</button><div id="msg" class="err"></div></div>
 
 <script type="module">
-import { auth } from './firebase-init-portal.js';
-import { signInWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
-document.getElementById('btn').onclick = async ()=>{
-  const email = email.value.trim(), pass = document.getElementById('pass').value;
-  const msg = document.getElementById('msg'); msg.textContent='';
-  try{
-    const { user } = await signInWithEmailAndPassword(auth, email, pass);
-    const tok = await user.getIdTokenResult(true);
-    if (!['coordinador','supervisor','admin'].includes(tok.claims.role)) {
-      msg.textContent = 'Tu cuenta no tiene rol de coordinador.'; return;
-    }
-    location = 'coordinadores.html';
-  }catch(e){ msg.textContent = e.code || 'Error de acceso'; }
-};
-</script></body></html>
+  import { auth } from './firebase-init-portal.js';
+  import { signInWithEmailAndPassword }
+    from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
+
+  const emailEl = document.getElementById('email');
+  const passEl  = document.getElementById('pass');
+  const btn     = document.getElementById('btn');
+  const msg     = document.getElementById('msg');
+
+  btn.onclick = login;
+  passEl.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+
+  async function login(){
+    msg.textContent = ''; btn.disabled = true;
+    try{
+      await signInWithEmailAndPassword(auth, emailEl.value.trim(), passEl.value);
+      location.href = 'coordinadores.html';
+    }catch(e){ msg.textContent = e.code || 'Error de acceso'; }
+    finally{ btn.disabled = false; }
+  }
+</script>
+
+</body>
+</html>
