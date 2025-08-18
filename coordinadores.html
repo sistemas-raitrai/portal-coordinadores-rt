@@ -3,49 +3,80 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Coordinadores | RT</title>
-  <link rel="icon" href="RaitraiLogo.png"/>
+  <title>COORDINADORES | RT</title>
+  <link rel="icon" href="Logo Raitrai.png"/>
   <style>
     :root{--muted:#9aa3b2;--acc:#3b82f6}
     *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:linear-gradient(180deg,#0b1020,#111827);color:#e5e7eb}
-    header{display:flex;gap:.75rem;align-items:center;padding:.8rem 1rem;border-bottom:1px solid #1f2937;background:rgba(0,0,0,.25);backdrop-filter:blur(6px);position:sticky;top:0;z-index:10}
+    body{
+      margin:0;
+      font-family:system-ui,Segoe UI,Roboto,Arial;
+      background:linear-gradient(180deg,#0b1020,#111827);
+      color:#e5e7eb;
+    }
+    header{
+      display:flex;gap:.75rem;align-items:center;
+      padding:.8rem 1rem;border-bottom:1px solid #1f2937;
+      background:rgba(0,0,0,.25);backdrop-filter:blur(6px);
+      position:sticky;top:0;z-index:10;text-transform:uppercase;
+    }
     header img{height:28px}
     header .cta{margin-left:auto}
-    header button{background:#fff;color:#111827;border:0;border-radius:999px;padding:.4rem .9rem;font-weight:700;cursor:pointer}
-    .wrap{padding:1rem;max-width:880px;margin:0 auto}
-    .group-card{background:linear-gradient(180deg,#121734,#0f1530);border:1px solid #1f2a44;border-radius:16px;padding:12px;margin-bottom:14px}
+    header button{
+      background:#fff;color:#111827;border:0;border-radius:999px;
+      padding:.4rem .9rem;font-weight:700;cursor:pointer
+    }
+
+    /* CONTENEDOR CENTRAL CONSISTENTE */
+    .wrap{padding:16px;max-width:980px;margin:0 auto}
+
+    /* Tarjetas (mismo ancho/márgenes) */
+    .group-card{
+      background:linear-gradient(180deg,#121734,#0f1530);
+      border:1px solid #1f2a44;border-radius:16px;
+      padding:12px;margin:12px 0;
+    }
     .group-card h3{margin:0 0 .2rem;font-size:1.05rem}
     .group-sub{color:var(--muted);font-size:.9rem}
+
     .date-pills{display:flex;gap:.5rem;overflow:auto;padding:.5rem 0;margin-top:.5rem}
     .pill{white-space:nowrap;border:1px solid #27324f;border-radius:999px;padding:.4rem .7rem;font-size:.9rem;cursor:pointer}
     .pill.active{background:var(--acc);border-color:var(--acc);color:#fff}
+
     .acts{margin-top:.8rem;display:grid;gap:.6rem}
     .act{background:#0f1530;border:1px solid #223053;border-radius:14px;padding:.8rem}
     .act h4{margin:.1rem 0;font-size:1rem}
     .meta{color:var(--muted);font-size:.88rem;margin-bottom:.5rem}
     .prov{margin-top:.45rem;color:#cbd5e1;font-size:.86rem}
+
     .row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
     .row input[type="number"]{width:110px;padding:.55rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:#e5e7eb}
+    .row input[type="text"]{flex:1;min-width:220px;padding:.55rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:#e5e7eb}
     .row textarea{flex:1;min-width:220px;min-height:44px;padding:.55rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:#e5e7eb}
     .row button{border:0;border-radius:10px;padding:.6rem .9rem;font-weight:700;background:#16a34a;color:#fff;cursor:pointer}
+
     .muted{color:var(--muted)}
     .loader{padding:1.25rem;text-align:center;color:var(--muted)}
+
+    /* MAYÚSCULAS VISUALES (inputs libres) */
+    .group-card, .pill, .meta, .group-sub, label, button, select, option { text-transform:uppercase; }
+    input, textarea { text-transform:none; }
   </style>
 </head>
 <body>
   <header>
-    <img src="RaitraiLogo.png" alt="Rai Trai"/>
+    <img src="Logo Raitrai.png" alt="Rai Trai"/>
     <strong>Coordinadores</strong>
     <div class="cta"><button id="logout">Salir</button></div>
   </header>
 
   <div class="wrap">
+    <!-- Aquí arriba el JS inserta primero la barra "VER VIAJES POR COORDINADOR"
+         y justo DESPUÉS la barra de navegación (anterior/selector/siguiente) -->
     <div id="grupos" class="loader">Cargando tus grupos…</div>
     <p class="muted" id="hint">Selecciona una fecha para ver y registrar asistencia.</p>
   </div>
 
-  <!-- tu init con el config de la segunda Web App -->
   <script type="module" src="./coordinadores.js"></script>
 </body>
 </html>
