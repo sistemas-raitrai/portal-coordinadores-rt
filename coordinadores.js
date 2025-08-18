@@ -1,10 +1,11 @@
 /* coordinadores.js — Portal de Coordinadores RT
    - Robusto a cambios de esquema en Firestore (nombres/formatos de campos)
-   - Staff selector (elige coordinador) + resolución automática para no-staff
-   - Lectura de grupos y fallback vía collectionGroup('conjuntos') → viajes[]
+   - Staff selector (elige coordinador) + resolución automática no-staff
+   - Lectura de grupos + fallback por collectionGroup('conjuntos') → viajes[]
+   - IDs CSS-safe para evitar errores con querySelector()
    - Itinerario normalizado (objeto por fecha o array legado)
-   - Registro de asistencia dentro del doc del grupo (asistencias.FECHA.SLUG)
-   - Sin uso de `||` dentro de template strings para evitar SyntaxError en pegados
+   - Registro de asistencia en asistencias.FECHA.SLUG
+   - Sin uso de `||` dentro de template strings
 */
 
 import { app, db } from './firebase-init-portal.js';
@@ -36,13 +37,20 @@ const STAFF_EMAILS = new Set([
 ].map(e => e.toLowerCase()));
 
 /* =========================================================
-   2) Utilitarios (normalizadores, fechas, etc.)
+   2) Utilitarios
    ========================================================= */
 const norm = (s = '') => s.toString()
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, '');
 
 const slug = (s) => norm(s).slice(0, 60);
+
+// Genera un ID seguro para CSS/DOM (reemplaza espacios y símbolos)
+function cssSafeId(prefix, raw) {
+  const base = String(raw == null ? '' : raw)
+    .replace(/[^A-Za-z0-9_-]/g, '_'); // solo letras, números, _ y -
+  return prefix + '_' + base;          // siempre inicia con letra
+}
 
 // Fecha → 'YYYY-MM-DD' desde ISO string, Timestamp o Date
 function toISO(x) {
@@ -90,8 +98,7 @@ function normalizeItinerario(raw) {
     }
     return map;
   }
-  // Se asume objeto { "YYYY-MM-DD": [ ... ] }
-  return raw;
+  return raw; // se asume { 'YYYY-MM-DD': [ ... ] }
 }
 
 const arrify = (v) => Array.isArray(v) ? v
@@ -119,12 +126,21 @@ function emailsOf(g) {
 function uidsOf(g) {
   const out = new Set();
   const push = (x) => { if (x) out.add(String(x)); };
-  push(g && (g.coordinadorUid || g.coordinadorId));
+  push(g && (g.coordinadorUid || g.coordinadorId)); // a veces usan esto como "uid"
   if (g && g.coordinador && g.coordinador.uid) push(g.coordinador.uid);
   arrify((g && g.coordinadoresUids) || (g && g.coordinadoresIds) || (g && g.coordinadores)).forEach(x => {
     if (x && typeof x === 'object' && x.uid) push(x.uid);
     else push(x);
   });
+  return Array.from(out);
+}
+
+// Doc IDs de coordinador (cuando en grupos guardan la referencia al doc de /coordinadores)
+function coordDocIdsOf(g) {
+  const out = new Set();
+  const push = (x) => { if (x) out.add(String(x)); };
+  push(g && g.coordinadorId);
+  arrify(g && g.coordinadoresIds).forEach(push);
   return Array.from(out);
 }
 
@@ -145,7 +161,7 @@ function getSavedAsistencia(grupo, fechaISO, actividad) {
   if (!byDate) return null;
   const key = slug(actividad || 'actividad');
   if (Object.prototype.hasOwnProperty.call(byDate, key)) return byDate[key];
-  // Tolerar claves antiguas (mismo slug)
+  // tolerar claves antiguas (mismo slug)
   const keys = Object.keys(byDate);
   for (const k of keys) { if (slug(k) === key) return byDate[k]; }
   return null;
@@ -170,7 +186,7 @@ function calcPlan(actividad, grupo) {
 }
 
 /* =========================================================
-   5) Arranque (onAuthStateChanged)
+   5) Arranque
    ========================================================= */
 onAuthStateChanged(auth, async (user) => {
   if (!user) {
@@ -301,6 +317,7 @@ async function loadGruposForCoordinador(coord, user) {
 
   const emailElegido = ((coord && coord.email) ? coord.email : '').toLowerCase();
   const uidElegido = (coord && coord.uid) ? String(coord.uid) : '';
+  const docIdElegido = (coord && coord.id) ? String(coord.id) : '';
   const nombreElegido = norm((coord && coord.nombre) ? coord.nombre : '');
   const isSelf = !coord || coord.id === 'self' || emailElegido === (user.email || '').toLowerCase();
 
@@ -315,11 +332,13 @@ async function loadGruposForCoordinador(coord, user) {
 
     const gEmails = emailsOf(raw);
     const gUids = uidsOf(raw);
+    const gDocIds = coordDocIdsOf(raw);
     const gNames = nombresOf(raw);
 
     const match =
       (emailElegido && gEmails.indexOf(emailElegido) !== -1) ||
       (uidElegido && gUids.indexOf(uidElegido) !== -1) ||
+      (docIdElegido && gDocIds.indexOf(docIdElegido) !== -1) ||
       (nombreElegido && gNames.indexOf(nombreElegido) !== -1) ||
       (isSelf && gUids.indexOf(user.uid) !== -1);
 
@@ -332,12 +351,14 @@ async function loadGruposForCoordinador(coord, user) {
       const queries = [];
       if (uidElegido) queries.push(query(collectionGroup(db, 'conjuntos'), where('coordinadorId', '==', uidElegido)));
       if (emailElegido) queries.push(query(collectionGroup(db, 'conjuntos'), where('coordinadorEmail', '==', emailElegido)));
+      if (docIdElegido) queries.push(query(collectionGroup(db, 'conjuntos'), where('coordinadorDocId', '==', docIdElegido)));
 
       const ids = new Set();
       for (const qy of queries) {
         const ss = await getDocs(qy);
         ss.forEach((docu) => {
-          const v = (docu.data() && docu.data().viajes) ? docu.data().viajes : [];
+          const data = docu.data();
+          const v = (data && data.viajes) ? data.viajes : [];
           v.forEach((id) => ids.add(String(id)));
         });
       }
@@ -372,12 +393,13 @@ async function loadGruposForCoordinador(coord, user) {
     fin: g.fechaFin,
     emails: emailsOf(g),
     uids: uidsOf(g),
+    coordDocIds: coordDocIdsOf(g),
     nombres: nombresOf(g),
   })));
 }
 
 /* =========================================================
-   10) Render de grupos (sin `||` dentro de templates)
+   10) Render de grupos (IDs CSS-safe)
    ========================================================= */
 async function renderGrupos(grupos, user) {
   const cont = document.getElementById('grupos');
@@ -400,18 +422,22 @@ async function renderGrupos(grupos, user) {
       : (g && g.pax != null) ? g.pax : 0;
     const subTxt = destinoTxt + ' · ' + programaTxt + ' · ' + paxTxt + ' pax';
 
+    // IDs seguros
+    const pillsId = cssSafeId('pills', g.id);
+    const actsId  = cssSafeId('acts',  g.id);
+
     const card = document.createElement('div');
     card.className = 'group-card';
-    card.innerHTML = (
+    card.setAttribute('data-gid', String(g.id)); // guardamos el id real por si acaso
+    card.innerHTML =
       '<h3>' + nombreTxt + '</h3>' +
       '<div class="group-sub">' + subTxt + '</div>' +
-      '<div class="date-pills" id="pills-' + g.id + '"></div>' +
-      '<div class="acts" id="acts-' + g.id + '"></div>'
-    );
+      '<div class="date-pills" id="' + pillsId + '"></div>' +
+      '<div class="acts" id="' + actsId + '"></div>';
     cont.appendChild(card);
 
     const fechas = rangoFechas(g && g.fechaInicio, g && g.fechaFin);
-    const pills = card.querySelector('#pills-' + g.id);
+    const pills = card.querySelector('#' + pillsId);
 
     fechas.forEach((f, i) => {
       const pill = document.createElement('div');
@@ -422,15 +448,15 @@ async function renderGrupos(grupos, user) {
       pill.onclick = () => {
         pills.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
         pill.classList.add('active');
-        renderActs(g, f, card.querySelector('#acts-' + g.id), user);
+        renderActs(g, f, card.querySelector('#' + actsId), user);
       };
       pills.appendChild(pill);
     });
 
     if (fechas[0]) {
-      renderActs(g, fechas[0], card.querySelector('#acts-' + g.id), user);
+      renderActs(g, fechas[0], card.querySelector('#' + actsId), user);
     } else {
-      card.querySelector('#acts-' + g.id).innerHTML = '<div class="muted">Fechas no definidas.</div>';
+      card.querySelector('#' + actsId).innerHTML = '<div class="muted">Fechas no definidas.</div>';
     }
   }
 }
@@ -460,15 +486,14 @@ async function renderActs(grupo, fechaISO, cont, user) {
 
     const div = document.createElement('div');
     div.className = 'act';
-    div.innerHTML = (
+    div.innerHTML =
       '<h4>' + actName + '</h4>' +
       '<div class="meta">' + horaIni + '–' + horaFin + ' · Plan: <strong>' + plan + '</strong> pax</div>' +
       '<div class="row">' +
         '<input type="number" min="0" inputmode="numeric" placeholder="Asistentes" value="' + paxFinalInit + '"/>' +
         '<textarea placeholder="Notas (opcional)">' + notasInit + '</textarea>' +
         '<button>Guardar</button>' +
-      '</div>'
-    );
+      '</div>';
     cont.appendChild(div);
 
     const inp = div.querySelector('input');
@@ -487,8 +512,8 @@ async function renderActs(grupo, fechaISO, cont, user) {
           byEmail: String(auth.currentUser.email || '').toLowerCase(),
           updatedAt: serverTimestamp(),
         };
-        const payload = {};   // evitar propiedades computadas dentro del literal
-        payload[keyPath] = data;
+        const payload = {};
+        payload[keyPath] = data; // evitar propiedades computadas inline
         await updateDoc(refGrupo, payload);
 
         setSavedAsistenciaLocal(grupo, fechaISO, actName, { ...data });
