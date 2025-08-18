@@ -1,8 +1,9 @@
 /* coordinadores.js — Portal Coordinadores RT (modo 1-viaje-a-la-vez)
-   - Orden por cercanía a hoy, navegación Prev/Sig y deep link ?g=&f=
-   - Resumen: Hotel (hotelAssignments + hoteles) y Vuelos (vuelos.grupoIds)
+   - Orden por cercanía a hoy, navegación Prev/Sig + deep link ?g=&f=
+   - Resumen: HOTEL (hotelAssignments + hoteles) y VUELOS (vuelos.grupoIds)
    - Itinerario: asistencia + bitácora por actividad + ficha Servicio + Voucher
    - Robusto a cambios de esquema; IDs CSS-safe; sin "||" en templates
+   - Alineación y mayúsculas visuales; barra Staff primero que navegación
 */
 
 import { app, db } from './firebase-init-portal.js';
@@ -27,11 +28,13 @@ const STAFF_EMAILS = new Set([
 /* ============== Utils ============== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = (s) => norm(s).slice(0,60);
-const cssSafeId = (prefix, raw) => prefix + '_' + String(raw==null?'':raw).replace(/[^A-Za-z0-9_-]/g,'_');
 
 function toISO(x){
   if(!x) return '';
-  if (typeof x==='string'){ if (/^\d{4}-\d{2}-\d{2}$/.test(x)) return x; const d=new Date(x); return isNaN(d)?'':d.toISOString().slice(0,10); }
+  if (typeof x==='string'){
+    if (/^\d{4}-\d{2}-\d{2}$/.test(x)) return x;
+    const d=new Date(x); return isNaN(d)?'':d.toISOString().slice(0,10);
+  }
   if (x && typeof x==='object' && 'seconds' in x) return new Date(x.seconds*1000).toISOString().slice(0,10);
   if (x instanceof Date) return x.toISOString().slice(0,10);
   return '';
@@ -39,12 +42,22 @@ function toISO(x){
 function fmt(iso){ if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'}); }
 function rangoFechas(ini, fin){ const out=[]; const A=toISO(ini), B=toISO(fin); if(!A||!B) return out; const a=new Date(A+'T00:00:00'), b=new Date(B+'T00:00:00'); for(let d=new Date(a); d<=b; d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10)); return out; }
 function parseQS(){ const p=new URLSearchParams(location.search); return { g: p.get('g')||'', f: p.get('f')||'' }; }
+function updateQS(g, f){
+  const p=new URLSearchParams(location.search);
+  if (g) p.set('g', String(g)); else p.delete('g');
+  if (f) p.set('f', String(f)); else p.delete('f');
+  history.replaceState(null,'',`${location.pathname}?${p.toString()}`);
+}
 
 /* ===== itinerario tolerante (objeto o array legado) ===== */
 function normalizeItinerario(raw){
   if (!raw) return {};
   if (Array.isArray(raw)){
-    const map={}; for(const item of raw){ const f=toISO(item && item.fecha); if(!f) continue; if(!map[f]) map[f]=[]; map[f].push({...item}); }
+    const map={};
+    for(const item of raw){
+      const f=toISO(item && item.fecha); if(!f) continue;
+      if(!map[f]) map[f]=[]; map[f].push({...item});
+    }
     return map;
   }
   return raw;
@@ -61,10 +74,21 @@ function nombresOf(g){ const out=new Set(), push=s=>{ if(s) out.add(norm(String(
 function getSavedAsistencia(grupo, fechaISO, actividad){
   const byDate = grupo?.asistencias?.[fechaISO]; if(!byDate) return null;
   const key = slug(actividad||'actividad'); if (Object.prototype.hasOwnProperty.call(byDate,key)) return byDate[key];
-  for (const k of Object.keys(byDate)) if (slug(k)===key) return byDate[k]; return null;
+  for (const k of Object.keys(byDate)) if (slug(k)===key) return byDate[k];
+  return null;
 }
-function setSavedAsistenciaLocal(grupo, fechaISO, actividad, data){ const key=slug(actividad||'actividad'); if(!grupo.asistencias) grupo.asistencias={}; if(!grupo.asistencias[fechaISO]) grupo.asistencias[fechaISO]={}; grupo.asistencias[fechaISO][key]=data; }
-function calcPlan(actividad, grupo){ const a=actividad||{}; const ad=Number(a.adultos||0), es=Number(a.estudiantes||0); const suma=ad+es; if (suma>0) return suma; const base=(grupo && (grupo.cantidadgrupo!=null?grupo.cantidadgrupo:grupo.pax)); return Number(base||0); }
+function setSavedAsistenciaLocal(grupo, fechaISO, actividad, data){
+  const key=slug(actividad||'actividad');
+  if(!grupo.asistencias) grupo.asistencias={};
+  if(!grupo.asistencias[fechaISO]) grupo.asistencias[fechaISO]={};
+  grupo.asistencias[fechaISO][key]=data;
+}
+function calcPlan(actividad, grupo){
+  const a=actividad||{}; const ad=Number(a.adultos||0), es=Number(a.estudiantes||0);
+  const suma=ad+es; if (suma>0) return suma;
+  const base=(grupo && (grupo.cantidadgrupo!=null?grupo.cantidadgrupo:grupo.pax));
+  return Number(base||0);
+}
 
 /* ===== estado global ===== */
 const state = {
@@ -94,31 +118,71 @@ onAuthStateChanged(auth, async (user) => {
   }
 });
 
-/* ============== Leer coordinadores ============== */
+/* ============== Leer coordinadores (SIN DUPLICADOS) ============== */
 async function loadCoordinadores(){
   const snap = await getDocs(collection(db,'coordinadores'));
-  const list=[]; snap.forEach(d=>{ const x=d.data()||{}; list.push({
-    id:d.id, nombre:String(x.nombre||x.Nombre||x.coordinador||''), email:String(x.email||x.correo||x.mail||'').toLowerCase(), uid:String(x.uid||x.userId||'')
-  });});
-  list.sort((a,b)=> a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'}));
-  return list;
+  const rows=[];
+  snap.forEach(d=>{
+    const x=d.data()||{};
+    rows.push({
+      id:d.id,
+      nombre:String(x.nombre||x.Nombre||x.coordinador||'').trim(),
+      email:String(x.email||x.correo||x.mail||'').trim().toLowerCase(),
+      uid:String(x.uid||x.userId||'').trim()
+    });
+  });
+
+  // dedup por email, luego por nombre normalizado (si no tienen email)
+  const byEmail = new Map();
+  for (const r of rows) if (r.email && !byEmail.has(r.email)) byEmail.set(r.email, r);
+
+  const byName = new Map();
+  for (const r of rows) {
+    if (r.email) continue;
+    const k = norm(r.nombre);
+    if (!k) continue;
+    if (!byName.has(k) || r.nombre.length > byName.get(k).nombre.length) byName.set(k, r);
+  }
+
+  const out = [...byEmail.values(), ...byName.values()]
+    .filter(r=>r.nombre)
+    .sort((a,b)=> a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'}));
+
+  return out;
 }
 
-/* ============== Staff selector ============== */
+/* ============== Staff selector (PRIMERO EN LA PÁGINA) ============== */
 async function showStaffSelector(coordinadores, user){
   const wrap=document.querySelector('.wrap');
   let bar=document.getElementById('staffBar');
   if(!bar){
     bar=document.createElement('div');
-    bar.id='staffBar'; bar.style.cssText='margin:12px 0 8px; padding:8px; border:1px solid #223053; border-radius:12px; background:#0f1530;';
-    bar.innerHTML='<label style="display:block; margin-bottom:6px; color:#cbd5e1">Ver viajes por coordinador</label><select id="coordSelect" style="width:100%; padding:.55rem; border-radius:10px; border:1px solid #334155; background:#0b1329; color:#e5e7eb"></select>';
-    if (wrap) wrap.prepend(bar);
+    bar.id='staffBar';
+    bar.className='group-card';
+    bar.innerHTML = `
+      <label style="display:block; margin-bottom:6px; color:#cbd5e1">VER VIAJES POR COORDINADOR</label>
+      <select id="coordSelect" style="width:100%; padding:.6rem .7rem; border-radius:10px; border:1px solid #334155; background:#0b1329; color:#e5e7eb"></select>
+    `;
+    // PRIMERO que todo:
+    wrap.prepend(bar);
   }
-  const sel=document.getElementById('coordSelect'); sel.textContent='';
-  const opt0=document.createElement('option'); opt0.value=''; opt0.textContent='— Selecciona coordinador —'; sel.appendChild(opt0);
-  coordinadores.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=(c.nombre||'')+' — '+(c.email||'sin correo'); sel.appendChild(o); });
-  sel.onchange=async()=>{ const id=sel.value; const elegido=coordinadores.find(c=>c.id===id)||null; localStorage.setItem('rt_staff_coord', id||''); await loadGruposForCoordinador(elegido, state.user); };
-  const last=localStorage.getItem('rt_staff_coord'); if(last && coordinadores.find(c=>c.id===last)){ sel.value=last; const elegido=coordinadores.find(c=>c.id===last); await loadGruposForCoordinador(elegido, state.user); }
+  const sel=document.getElementById('coordSelect');
+  sel.innerHTML = `<option value="">— SELECCIONA COORDINADOR —</option>` +
+    coordinadores.map(c=>`<option value="${c.id}">${c.nombre} — ${c.email||'SIN CORREO'}</option>`).join('');
+
+  sel.onchange=async()=>{
+    const id=sel.value;
+    const elegido=coordinadores.find(c=>c.id===id)||null;
+    localStorage.setItem('rt_staff_coord', id||'');
+    await loadGruposForCoordinador(elegido, state.user);
+  };
+
+  const last=localStorage.getItem('rt_staff_coord');
+  if(last && coordinadores.find(c=>c.id===last)){
+    sel.value=last;
+    const elegido=coordinadores.find(c=>c.id===last);
+    await loadGruposForCoordinador(elegido, state.user);
+  }
 }
 
 /* ============== Resolver coordinador usuario no-staff ============== */
@@ -153,30 +217,44 @@ async function loadGruposForCoordinador(coord, user){
       numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || d.id)
     };
     const gEmails=emailsOf(raw), gUids=uidsOf(raw), gDocIds=coordDocIdsOf(raw), gNames=nombresOf(raw);
-    const match=(emailElegido && gEmails.includes(emailElegido)) || (uidElegido && gUids.includes(uidElegido)) || (docIdElegido && gDocIds.includes(docIdElegido)) || (nombreElegido && gNames.includes(nombreElegido)) || (isSelf && gUids.includes(user.uid));
+    const match=(emailElegido && gEmails.includes(emailElegido)) ||
+                (uidElegido && gUids.includes(uidElegido)) ||
+                (docIdElegido && gDocIds.includes(docIdElegido)) ||
+                (nombreElegido && gNames.includes(nombreElegido)) ||
+                (isSelf && gUids.includes(user.uid));
     if (match) wanted.push(g);
   });
 
-  // Fallback por conjuntos->viajes
+  // Fallback por posibles "conjuntos"
   if (wanted.length===0 && coord && coord.id!=='self'){
     try{
-      const qs=[]; if(uidElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorId','==',uidElegido)));
+      const qs=[];
+      if(uidElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorId','==',uidElegido)));
       if(emailElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorEmail','==',emailElegido)));
       if(docIdElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorDocId','==',docIdElegido)));
       const ids=new Set();
-      for(const qy of qs){ const ss=await getDocs(qy); ss.forEach(docu=>{ const v=docu.data()?.viajes || []; v.forEach(id=>ids.add(String(id))); }); }
-      for(const id of ids){ const ref=doc(db,'grupos',id); const dd=await getDoc(ref); if(dd.exists()){ const raw={id:dd.id, ...dd.data()}; wanted.push({
-        ...raw,
-        fechaInicio: toISO(raw.fechaInicio||raw.inicio||raw.fecha_ini),
-        fechaFin: toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
-        itinerario: normalizeItinerario(raw.itinerario),
-        asistencias: raw.asistencias || {},
-        numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || dd.id)
-      });}}
+      for(const qy of qs){
+        const ss=await getDocs(qy);
+        ss.forEach(docu=>{ const v=docu.data()?.viajes || []; v.forEach(id=>ids.add(String(id))); });
+      }
+      for(const id of ids){
+        const ref=doc(db,'grupos',id); const dd=await getDoc(ref);
+        if(dd.exists()){
+          const raw={id:dd.id, ...dd.data()};
+          wanted.push({
+            ...raw,
+            fechaInicio: toISO(raw.fechaInicio||raw.inicio||raw.fecha_ini),
+            fechaFin: toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
+            itinerario: normalizeItinerario(raw.itinerario),
+            asistencias: raw.asistencias || {},
+            numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || dd.id)
+          });
+        }
+      }
     }catch(e){ console.warn('Fallback conjuntos no disponible:', e); }
   }
 
-  // Ordenar por cercanía (próximos primero)
+  // Orden por cercanía (próximos primero)
   const hoy = toISO(new Date());
   const futuros = wanted.filter(g => (g.fechaInicio||'') >= hoy).sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
   const pasados = wanted.filter(g => (g.fechaInicio||'') < hoy).sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
@@ -192,12 +270,15 @@ async function loadGruposForCoordinador(coord, user){
     idx = byNum>=0?byNum:(byId>=0?byId:0);
   } else {
     const last = localStorage.getItem('rt_last_group');
-    if (last){ const i = state.ordenados.findIndex(x=> x.id===last || x.numeroNegocio===last); if (i>=0) idx=i; }
+    if (last){
+      const i = state.ordenados.findIndex(x=> x.id===last || x.numeroNegocio===last);
+      if (i>=0) idx=i;
+    }
   }
   state.idx = Math.max(0, Math.min(idx, state.ordenados.length-1));
 
   renderOneGroup(state.ordenados[state.idx], qsF);
-  renderNavBar();
+  renderNavBar(); // se inserta DESPUÉS de staffBar si existe
 }
 
 /* ============== Barra navegación (prev/sig + selector) ============== */
@@ -206,20 +287,42 @@ function renderNavBar(){
   let nb=document.getElementById('navBar');
   if(!nb){
     nb=document.createElement('div'); nb.id='navBar';
-    nb.style.cssText='margin:8px 0 12px; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;';
-    nb.innerHTML='<button id="btnPrev">‹ Anterior</button><button id="btnNext">Siguiente ›</button><select id="allTrips" style="min-width:260px"></select>';
-    wrap.prepend(nb);
-    const styleBtn='background:#1f2937;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:.45rem .8rem;cursor:pointer';
+    nb.className='group-card';
+    nb.innerHTML='<div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">'+
+      '<button id="btnPrev">‹ ANTERIOR</button>'+
+      '<select id="allTrips" style="min-width:260px; flex:1"></select>'+
+      '<button id="btnNext">SIGUIENTE ›</button>'+
+    '</div>';
+    // Insertar DESPUÉS de staffBar para que Staff quede primero
+    const staff = document.getElementById('staffBar');
+    if (staff && staff.parentNode) staff.parentNode.insertBefore(nb, staff.nextSibling);
+    else wrap.prepend(nb);
+
+    const styleBtn='background:#1f2937;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:.45rem .8rem;cursor:pointer;text-transform:uppercase';
     nb.querySelector('#btnPrev').style.cssText=styleBtn;
     nb.querySelector('#btnNext').style.cssText=styleBtn;
-    nb.querySelector('#allTrips').style.cssText='padding:.5rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:#e5e7eb';
+    nb.querySelector('#allTrips').style.cssText='padding:.5rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:#e5e7eb;text-transform:uppercase';
   }
   const sel=nb.querySelector('#allTrips'); sel.textContent='';
-  state.ordenados.forEach((g,i)=>{ const o=document.createElement('option'); const name=(g.nombreGrupo||g.aliasGrupo||g.id); const date=(g.fechaInicio||'')+(g.fechaFin?(' → '+g.fechaFin):''); o.value=String(i); o.textContent=`${name} — ${date}`; sel.appendChild(o); });
+  state.ordenados.forEach((g,i)=>{
+    const o=document.createElement('option');
+    const name=(g.nombreGrupo||g.aliasGrupo||g.id);
+    const date=(g.fechaInicio||'')+(g.fechaFin?(' → '+g.fechaFin):'');
+    o.value=String(i); o.textContent=`${name} — ${date}`;
+    sel.appendChild(o);
+  });
   sel.value=String(state.idx);
-  nb.querySelector('#btnPrev').onclick=()=>{ if(state.idx>0){ state.idx--; renderOneGroup(state.ordenados[state.idx]); sel.value=String(state.idx);} };
-  nb.querySelector('#btnNext').onclick=()=>{ if(state.idx<state.ordenados.length-1){ state.idx++; renderOneGroup(state.ordenados[state.idx]); sel.value=String(state.idx);} };
-  sel.onchange=()=>{ state.idx=Number(sel.value||0); renderOneGroup(state.ordenados[state.idx]); };
+
+  const goIdx=(i)=>{
+    if(i<0 || i>=state.ordenados.length) return;
+    state.idx=i;
+    renderOneGroup(state.ordenados[state.idx]);
+    sel.value=String(state.idx);
+  };
+
+  nb.querySelector('#btnPrev').onclick=()=> goIdx(state.idx-1);
+  nb.querySelector('#btnNext').onclick=()=> goIdx(state.idx+1);
+  sel.onchange = ()=> goIdx(Number(sel.value||0));
 }
 
 /* ============== Vista 1 viaje ============== */
@@ -227,12 +330,15 @@ function renderOneGroup(g, preferDate){
   const cont=document.getElementById('grupos'); if(!cont) return;
   cont.innerHTML='';
 
-  if(!g){ cont.innerHTML='<p class="muted">No hay viajes.</p>'; return; }
+  if(!g){ cont.innerHTML='<p class="muted">NO HAY VIAJES.</p>'; return; }
   localStorage.setItem('rt_last_group', g.id);
+  updateQS(g.numeroNegocio || g.id, preferDate || '');
 
   // encabezado
-  const titulo = (g.nombreGrupo!=null && g.nombreGrupo!=='') ? g.nombreGrupo : (g.aliasGrupo!=null && g.aliasGrupo!=='') ? g.aliasGrupo : g.id;
-  const sub = String(g.destino||'') + ' · ' + String(g.programa||'') + ' · ' + (g.cantidadgrupo!=null ? g.cantidadgrupo : (g.pax!=null ? g.pax : 0)) + ' pax';
+  const titulo = (g.nombreGrupo!=null && g.nombreGrupo!=='') ? g.nombreGrupo
+                : (g.aliasGrupo!=null && g.aliasGrupo!=='') ? g.aliasGrupo : g.id;
+  const pax = (g.cantidadgrupo!=null ? g.cantidadgrupo : (g.pax!=null ? g.pax : 0));
+  const sub = String(g.destino||'') + ' · ' + String(g.programa||'') + ' · ' + pax + ' PAX';
   const rango = (g.fechaInicio||'') + (g.fechaFin?(' — '+g.fechaFin):'');
 
   const header=document.createElement('div');
@@ -244,17 +350,17 @@ function renderOneGroup(g, preferDate){
   cont.appendChild(header);
 
   // tabs
-  const tabs=document.createElement('div'); tabs.style.cssText='margin-top:10px';
+  const tabs=document.createElement('div'); tabs.className='group-card';
   tabs.innerHTML =
     '<div id="tabs" style="display:flex; gap:.5rem; margin-bottom:.6rem">'+
-      '<button id="tabResumen">Resumen</button>'+
-      '<button id="tabItin">Itinerario</button>'+
+      '<button id="tabResumen">RESUMEN</button>'+
+      '<button id="tabItin">ITINERARIO</button>'+
     '</div>'+
     '<div id="paneResumen"></div>'+
     '<div id="paneItin" style="display:none"></div>';
   cont.appendChild(tabs);
 
-  const styleTab='background:#0b1329;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:.45rem .8rem;cursor:pointer';
+  const styleTab='background:#0b1329;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:.45rem .8rem;cursor:pointer;text-transform:uppercase';
   tabs.querySelector('#tabResumen').style.cssText=styleTab;
   tabs.querySelector('#tabItin').style.cssText=styleTab;
 
@@ -270,19 +376,18 @@ function renderOneGroup(g, preferDate){
 
 /* ============== Resumen (Hotel + Vuelos) ============== */
 async function renderResumen(g, pane){
-  pane.innerHTML='<div class="loader">Cargando resumen…</div>';
-
+  pane.innerHTML='<div class="loader">CARGANDO RESUMEN…</div>';
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid; gap:.8rem';
   pane.innerHTML='';
 
   // Hotel
   const hotelBox=document.createElement('div'); hotelBox.className='act';
-  hotelBox.innerHTML='<h4>Hotel</h4><div class="muted">Buscando asignación…</div>';
+  hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">BUSCANDO ASIGNACIÓN…</div>';
   wrap.appendChild(hotelBox);
 
   // Vuelos
   const vuelosBox=document.createElement('div'); vuelosBox.className='act';
-  vuelosBox.innerHTML='<h4>Transporte / Vuelos</h4><div class="muted">Buscando vuelos…</div>';
+  vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">BUSCANDO VUELOS…</div>';
   wrap.appendChild(vuelosBox);
 
   pane.appendChild(wrap);
@@ -290,25 +395,25 @@ async function renderResumen(g, pane){
   // ---- HOTEL ----
   try{
     const h = await loadHotelInfo(g);
-    if (!h){ hotelBox.innerHTML='<h4>Hotel</h4><div class="muted">Sin asignación de hotel.</div>'; }
+    if (!h){ hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN DE HOTEL.</div>'; }
     else{
-      const nombre = h.hotelNombre || h.hotel?.nombre || 'Hotel asignado';
+      const nombre = h.hotelNombre || h.hotel?.nombre || 'HOTEL ASIGNADO';
       const dir = h.hotel?.direccion || '';
       const contacto = [h.hotel?.contactoNombre, h.hotel?.contactoTelefono, h.hotel?.contactoCorreo].filter(Boolean).join(' · ');
       const fechas = (h.checkIn||'') + (h.checkOut?(' → '+h.checkOut):'');
       hotelBox.innerHTML =
         '<h4>'+nombre+'</h4>'+
         '<div class="meta">'+ (h.destino||'') +'</div>'+
-        '<div class="prov">'+ (dir||'') +'</div>'+
-        '<div class="meta">Check-in/out: '+ fechas +'</div>'+
+        (dir?('<div class="prov">'+dir+'</div>'):'')+
+        (fechas?('<div class="meta">CHECK-IN/OUT: '+ fechas +'</div>'):'')+
         (contacto ? ('<div class="meta">'+ contacto +'</div>') : '');
     }
-  }catch(e){ hotelBox.innerHTML='<h4>Hotel</h4><div class="muted">No fue posible cargar.</div>'; console.error(e); }
+  }catch(e){ hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">NO FUE POSIBLE CARGAR.</div>'; console.error(e); }
 
   // ---- VUELOS ----
   try{
     const vuelos = await loadVuelosInfo(g);
-    if (!vuelos.length){ vuelosBox.innerHTML='<h4>Transporte / Vuelos</h4><div class="muted">Sin vuelos registrados.</div>'; }
+    if (!vuelos.length){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS REGISTRADOS.</div>'; }
     else{
       const list=document.createElement('div');
       vuelos.forEach(v=>{
@@ -318,24 +423,22 @@ async function renderResumen(g, pane){
         const tip = v.tipoVuelo ? (' ('+v.tipoVuelo+')') : '';
         const item=document.createElement('div');
         item.className='meta';
-        item.textContent = titulo + ' · ' + linea + tip;
+        item.textContent = (titulo ? (titulo + ' · ') : '') + linea + tip;
         list.appendChild(item);
       });
-      vuelosBox.innerHTML='<h4>Transporte / Vuelos</h4>';
+      vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4>';
       vuelosBox.appendChild(list);
     }
-  }catch(e){ vuelosBox.innerHTML='<h4>Transporte / Vuelos</h4><div class="muted">No fue posible cargar.</div>'; console.error(e); }
+  }catch(e){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">NO FUE POSIBLE CARGAR.</div>'; console.error(e); }
 }
 
 async function loadHotelInfo(g){
   const key = g.numeroNegocio;
   if (state.cache.hotel.has(key)) return state.cache.hotel.get(key);
 
-  // buscar asignaciones por grupoId == numeroNegocio
   const qs = await getDocs(query(collection(db,'hotelAssignments'), where('grupoId','==', String(key))));
   if (qs.empty){ state.cache.hotel.set(key, null); return null; }
 
-  // elegir mejor asignación (que cruce rango; si hay varias, la de checkIn más cercana)
   const rango = { ini: toISO(g.fechaInicio), fin: toISO(g.fechaFin) };
   let elegido=null, score=1e15;
   qs.forEach(d=>{
@@ -349,7 +452,6 @@ async function loadHotelInfo(g){
     if (s < score){ score=s; elegido={ id:d.id, ...x }; }
   });
 
-  // traer ficha de hotel si hay id
   let hotelDoc=null;
   if (elegido?.hotelId){
     const hd = await getDoc(doc(db,'hoteles', String(elegido.hotelId)));
@@ -364,14 +466,12 @@ async function loadVuelosInfo(g){
   const key = g.numeroNegocio;
   if (state.cache.vuelos.has(key)) return state.cache.vuelos.get(key);
 
-  // primero: query eficiente por grupoIds
   let found=[];
   try{
     const qs = await getDocs(query(collection(db,'vuelos'), where('grupoIds','array-contains', String(key))));
     qs.forEach(d=> found.push({ id:d.id, ...d.data() }));
   }catch(e){ console.warn('Query vuelos por grupoIds falló/índice:', e); }
 
-  // fallback: escanear y filtrar por grupos[].id
   if (!found.length){
     const ss = await getDocs(collection(db,'vuelos'));
     ss.forEach(d=>{
@@ -381,7 +481,6 @@ async function loadVuelosInfo(g){
     });
   }
 
-  // orden simple por fechaIda asc
   found.sort((a,b)=> (toISO(a.fechaIda)||'').localeCompare(toISO(b.fechaIda)||''));
   state.cache.vuelos.set(key, found);
   return found;
@@ -391,9 +490,8 @@ async function loadVuelosInfo(g){
 function renderItinerario(g, pane, preferDate){
   pane.innerHTML='';
   const fechas = rangoFechas(g.fechaInicio, g.fechaFin);
-  if (!fechas.length){ pane.innerHTML='<div class="muted">Fechas no definidas.</div>'; return; }
+  if (!fechas.length){ pane.innerHTML='<div class="muted">FECHAS NO DEFINIDAS.</div>'; return; }
 
-  // pills de fechas
   const pillsWrap=document.createElement('div'); pillsWrap.className='date-pills';
   pane.appendChild(pillsWrap);
 
@@ -405,7 +503,7 @@ function renderItinerario(g, pane, preferDate){
   fechas.forEach((f)=>{
     const pill=document.createElement('div');
     pill.className='pill'+(f===startDate?' active':''); pill.textContent=fmt(f); pill.title=f; pill.dataset.fecha=f;
-    pill.onclick=()=>{ pillsWrap.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); pill.classList.add('active'); renderActs(g, f, actsWrap); localStorage.setItem('rt_last_date_'+g.id, f); };
+    pill.onclick=()=>{ pillsWrap.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); pill.classList.add('active'); renderActs(g, f, actsWrap); localStorage.setItem('rt_last_date_'+g.id, f); updateQS(g.numeroNegocio||g.id, f); };
     pillsWrap.appendChild(pill);
   });
 
@@ -413,12 +511,13 @@ function renderItinerario(g, pane, preferDate){
   if (lastSaved && fechas.includes(lastSaved)) startDate = lastSaved;
 
   renderActs(g, startDate, actsWrap);
+  updateQS(g.numeroNegocio||g.id, startDate);
 }
 
 async function renderActs(grupo, fechaISO, cont){
   cont.innerHTML='';
   const acts = (grupo.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
-  if (!acts.length){ cont.innerHTML='<div class="muted">Sin actividades para este día.</div>'; return; }
+  if (!acts.length){ cont.innerHTML='<div class="muted">SIN ACTIVIDADES PARA ESTE DÍA.</div>'; return; }
 
   for (const act of acts){
     const plan = calcPlan(act, grupo);
@@ -428,32 +527,32 @@ async function renderActs(grupo, fechaISO, cont){
     const horaFin = (act.horaFin!=null && act.horaFin!=='') ? act.horaFin : '--:--';
     const paxFinalInit = (saved && saved.paxFinal!=null) ? saved.paxFinal : '';
     const notasInit = (saved && saved.notas) ? saved.notas : '';
-    const actName = (act.actividad!=null && act.actividad!=='') ? act.actividad : 'Actividad';
+    const actName = (act.actividad!=null && act.actividad!=='') ? act.actividad : 'ACTIVIDAD';
     const actKey = slug(actName);
 
     const div=document.createElement('div'); div.className='act';
     div.innerHTML =
       '<h4>'+ actName +'</h4>'+
-      '<div class="meta">'+ horaIni +'–'+ horaFin +' · Plan: <strong>'+ plan +'</strong> pax</div>'+
+      '<div class="meta">'+ horaIni +'–'+ horaFin +' · PLAN: <strong>'+ plan +'</strong> PAX</div>'+
       '<div class="row">'+
-        '<input type="number" min="0" inputmode="numeric" placeholder="Asistentes" />'+
-        '<textarea placeholder="Notas (opcional)"></textarea>'+
-        '<button class="btnSave">Guardar</button>'+
-        '<button class="btnServicio">Ficha</button>'+
-        '<button class="btnVoucher" style="display:none">Voucher</button>'+
+        '<input type="number" min="0" inputmode="numeric" placeholder="ASISTENTES" />'+
+        '<textarea placeholder="NOTAS (OPCIONAL)"></textarea>'+
+        '<button class="btnSave">GUARDAR</button>'+
+        '<button class="btnServicio">FICHA</button>'+
+        '<button class="btnVoucher" style="display:none">VOUCHER</button>'+
       '</div>'+
       '<div class="bitacora" style="margin-top:.5rem">'+
-        '<div class="muted" style="margin-bottom:.25rem">Bitácora</div>'+
+        '<div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>'+
         '<div class="bitItems" style="display:grid; gap:.35rem"></div>'+
         '<div class="row" style="margin-top:.35rem">'+
-          '<input class="bitInput" type="text" placeholder="Añadir nota..."/>'+
-          '<button class="bitAdd">Agregar</button>'+
+          '<input class="bitInput" type="text" placeholder="AÑADIR NOTA..."/>'+
+          '<button class="bitAdd">AGREGAR</button>'+
         '</div>'+
       '</div>';
     cont.appendChild(div);
 
     // set initial values
-    div.querySelector('input').value = paxFinalInit;
+    div.querySelector('input[type="number"]').value = paxFinalInit;
     div.querySelector('textarea').value = notasInit;
 
     // --- Guardar asistencia ---
@@ -463,7 +562,7 @@ async function renderActs(grupo, fechaISO, cont){
         const refGrupo = doc(db,'grupos', grupo.id);
         const keyPath = 'asistencias.'+fechaISO+'.'+actKey;
         const data = {
-          paxFinal: Number(div.querySelector('input').value || 0),
+          paxFinal: Number(div.querySelector('input[type="number"]').value || 0),
           notas: String(div.querySelector('textarea').value || ''),
           byUid: auth.currentUser.uid,
           byEmail: String(auth.currentUser.email||'').toLowerCase(),
@@ -472,8 +571,8 @@ async function renderActs(grupo, fechaISO, cont){
         const payload={}; payload[keyPath]=data;
         await updateDoc(refGrupo, payload);
         setSavedAsistenciaLocal(grupo, fechaISO, actName, { ...data });
-        btn.textContent='Guardado'; setTimeout(()=>{ btn.textContent='Guardar'; btn.disabled=false; }, 900);
-      }catch(e){ console.error(e); btn.disabled=false; alert('No se pudo guardar la asistencia.'); }
+        btn.textContent='GUARDADO'; setTimeout(()=>{ btn.textContent='GUARDAR'; btn.disabled=false; }, 900);
+      }catch(e){ console.error(e); btn.disabled=false; alert('NO SE PUDO GUARDAR LA ASISTENCIA.'); }
     };
 
     // --- Bitácora: cargar y agregar ---
@@ -489,7 +588,7 @@ async function renderActs(grupo, fechaISO, cont){
           texto, byUid: auth.currentUser.uid, byEmail: String(auth.currentUser.email||'').toLowerCase(), ts: serverTimestamp()
         });
         inp.value=''; await loadBitacora(grupo.id, fechaISO, actKey, itemsWrap);
-      }catch(e){ console.error(e); alert('No se pudo guardar la nota.'); }
+      }catch(e){ console.error(e); alert('NO SE PUDO GUARDAR LA NOTA.'); }
     };
 
     // --- Ficha Servicio + Voucher ---
@@ -498,10 +597,10 @@ async function renderActs(grupo, fechaISO, cont){
 
     btnServicio.onclick = async ()=>{
       const sid = String(act.servicioId || act.servicioDocId || '').trim();
-      if (!sid){ openModal('<div class="muted">Sin ficha de servicio asociada a esta actividad.</div>'); return; }
+      if (!sid){ openModal('<div class="muted">SIN FICHA DE SERVICIO ASOCIADA A ESTA ACTIVIDAD.</div>'); return; }
       try{
         const sdoc = await getDoc(doc(db,'Servicios', sid));
-        if (!sdoc.exists()){ openModal('<div class="muted">Servicio no encontrado.</div>'); return; }
+        if (!sdoc.exists()){ openModal('<div class="muted">SERVICIO NO ENCONTRADO.</div>'); return; }
         const s = { id:sdoc.id, ...sdoc.data() };
         const nombre = String(s.nombre || actName);
         const contacto = [s.contactoNombre, s.contactoTelefono, s.contactoCorreo].filter(Boolean).join(' · ');
@@ -513,18 +612,18 @@ async function renderActs(grupo, fechaISO, cont){
 
         const html =
           '<h3 style="margin-top:0">'+nombre+'</h3>'+
-          (ciudad?('<div class="meta">Ciudad: '+ciudad+'</div>'):'')+
-          (contacto?('<div class="meta">Contacto: '+contacto+'</div>'):'')+
-          (indic?('<div class="prov">Indicaciones: '+indic+'</div>'):'')+
-          (forma?('<div class="meta">Forma de pago: '+forma+'</div>'):'')+
+          (ciudad?('<div class="meta">CIUDAD: '+ciudad+'</div>'):'')+
+          (contacto?('<div class="meta">CONTACTO: '+contacto+'</div>'):'')+
+          (indic?('<div class="prov">INDICACIONES: '+indic+'</div>'):'')+
+          (forma?('<div class="meta">FORMA DE PAGO: '+forma+'</div>'):'')+
           ((voucherTipo==='fisico' || voucherTipo==='físico' || voucherTipo==='electronico' || voucherTipo==='electrónico') ?
-            ('<div class="meta">Voucher: '+(s.voucherTipo||'')+'</div>' + (voucherUrl?('<div class="meta"><a href="'+voucherUrl+'" target="_blank" rel="noopener">Abrir voucher</a></div>'):''))
-            : '<div class="meta">Voucher: No aplica</div>');
+            ('<div class="meta">VOUCHER: '+(s.voucherTipo||'')+'</div>' + (voucherUrl?('<div class="meta"><a href="'+voucherUrl+'" target="_blank" rel="noopener">ABRIR VOUCHER</a></div>'):'')) :
+            '<div class="meta">VOUCHER: NO APLICA</div>');
         openModal(html);
-      }catch(e){ console.error(e); openModal('<div class="muted">Error al cargar el servicio.</div>'); }
+      }catch(e){ console.error(e); openModal('<div class="muted">ERROR AL CARGAR EL SERVICIO.</div>'); }
     };
 
-    // Mostrar botón Voucher si el servicio viene en el item (sin modal)
+    // Mostrar botón Voucher directo si aplica
     (async ()=>{
       try{
         const sid = String(act.servicioId || act.servicioDocId || '').trim();
@@ -535,7 +634,7 @@ async function renderActs(grupo, fechaISO, cont){
         const t=String(s.voucherTipo||'').toLowerCase();
         if (t==='fisico'||t==='físico'||t==='electronico'||t==='electrónico'){
           btnVoucher.style.display='';
-          btnVoucher.onclick=()=>{ const url=s.voucherUrl||s.voucherURL||''; if(url) window.open(url,'_blank'); else openModal('<div class="muted">Voucher sin URL. Revise indicaciones del servicio.</div>'); };
+          btnVoucher.onclick=()=>{ const url=s.voucherUrl||s.voucherURL||''; if(url) window.open(url,'_blank'); else openModal('<div class="muted">VOUCHER SIN URL. REVISE INDICACIONES DEL SERVICIO.</div>'); };
         }
       }catch(e){ btnVoucher.style.display='none'; }
     })();
@@ -543,14 +642,14 @@ async function renderActs(grupo, fechaISO, cont){
 }
 
 async function loadBitacora(grupoId, fechaISO, actKey, wrap){
-  wrap.innerHTML='<div class="muted">Cargando…</div>';
+  wrap.innerHTML='<div class="muted">CARGANDO…</div>';
   try{
     const coll = collection(db, 'grupos', grupoId, 'bitacora', `${fechaISO}-${actKey}`, 'items');
     const qs = await getDocs(query(coll, orderBy('ts','desc'), limit(50)));
     const frag=document.createDocumentFragment();
     qs.forEach(d=>{
       const x=d.data()||{};
-      const quien = String(x.byEmail || x.byUid || 'usuario');
+      const quien = String(x.byEmail || x.byUid || 'USUARIO');
       const cuando = x.ts?.seconds ? new Date(x.ts.seconds*1000) : null;
       const hora = cuando ? cuando.toLocaleString('es-CL') : '';
       const div=document.createElement('div');
@@ -559,8 +658,8 @@ async function loadBitacora(grupoId, fechaISO, actKey, wrap){
       frag.appendChild(div);
     });
     wrap.innerHTML=''; wrap.appendChild(frag);
-    if (!qs.size) wrap.innerHTML='<div class="muted">Aún no hay notas.</div>';
-  }catch(e){ console.error(e); wrap.innerHTML='<div class="muted">No se pudo cargar la bitácora.</div>'; }
+    if (!qs.size) wrap.innerHTML='<div class="muted">AÚN NO HAY NOTAS.</div>';
+  }catch(e){ console.error(e); wrap.innerHTML='<div class="muted">NO SE PUDO CARGAR LA BITÁCORA.</div>'; }
 }
 
 /* ============== Modal simple ============== */
@@ -573,6 +672,6 @@ function openModal(html){
     m.onclick=(e)=>{ if(e.target===m) m.remove(); };
     document.body.appendChild(m);
   }
-  const box=m.querySelector('#rtBox'); box.innerHTML=html;
+  m.querySelector('#rtBox').innerHTML=html;
   m.style.display='flex';
 }
