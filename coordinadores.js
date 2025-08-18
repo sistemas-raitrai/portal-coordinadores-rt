@@ -1,9 +1,9 @@
-// coordinadores.js — Portal de Coordinadores RT (staff + cruce coordinadores + asistencia)
+// coordinadores.js — Portal de Coordinadores RT (robusto a cambios de esquema)
 import { app, db } from './firebase-init-portal.js';
 import { getAuth, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
-  collection, getDocs, doc, updateDoc, serverTimestamp,
+  collection, collectionGroup, getDocs, getDoc, doc, updateDoc, serverTimestamp,
   query, where
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 
@@ -20,31 +20,128 @@ const STAFF_EMAILS = new Set([
   "sistemas@raitrai.cl",
 ].map(e => e.toLowerCase()));
 
-// ---- Normalizador: sin tildes/espacios/punt., lower ----
-const norm = (s='') => s
-  .toString()
-  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')   // quita diacríticos
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g,'');                        // quita espacios/puntuación
+// ---- Normalizadores ----
+const norm = (s='') => s.toString()
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase().replace(/[^a-z0-9]+/g,'');
 
-// ---- util: slug para clave de actividad ----
 const slug = s => norm(s).slice(0,60);
 
-// ---- UI helpers ----
-function fmt(iso){ if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'}); }
-function rangoFechas(ini, fin){ const out=[]; if(!ini||!fin) return out; const a=new Date(ini+'T00:00:00'), b=new Date(fin+'T00:00:00'); for(let d=new Date(a); d<=b; d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10)); return out; }
-function calcPlan(actividad, grupo){ const a=actividad||{}; const ad=Number(a.adultos||0), es=Number(a.estudiantes||0); const porAct=(ad+es)>0?(ad+es):null; return porAct ?? Number(grupo.cantidadgrupo||0); }
+// Fecha → 'YYYY-MM-DD' desde ISO, Timestamp o Date
+function toISO(x){
+  if(!x) return '';
+  if (typeof x === 'string'){
+    if (/^\d{4}-\d{2}-\d{2}$/.test(x)) return x;
+    const d = new Date(x);
+    return isNaN(d) ? '' : d.toISOString().slice(0,10);
+  }
+  if (x && typeof x === 'object' && 'seconds' in x){ // Firestore Timestamp
+    const d = new Date(x.seconds * 1000);
+    return d.toISOString().slice(0,10);
+  }
+  if (x instanceof Date){
+    return x.toISOString().slice(0,10);
+  }
+  return '';
+}
 
-// === Helpers de asistencia (leer/actualizar en memoria) ===
+function fmt(iso){
+  if(!iso) return '';
+  const d=new Date(iso+'T00:00:00');
+  return d.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'});
+}
+function rangoFechas(ini, fin){
+  const out=[]; const A=toISO(ini), B=toISO(fin);
+  if(!A||!B) return out;
+  const a=new Date(A+'T00:00:00'), b=new Date(B+'T00:00:00');
+  for(let d=new Date(a); d<=b; d.setDate(d.getDate()+1)){
+    out.push(d.toISOString().slice(0,10));
+  }
+  return out;
+}
+
+// ---- Itinerario: soporta objeto por fecha o array legado [{fecha, ...}] ----
+function normalizeItinerario(raw){
+  if (!raw) return {};
+  if (Array.isArray(raw)){
+    const map = {};
+    for (const item of raw){
+      const f = toISO(item?.fecha);
+      if (!f) continue;
+      if (!map[f]) map[f] = [];
+      map[f].push({...item});
+    }
+    return map;
+  }
+  // se asume objeto { "YYYY-MM-DD": [ ... ] }
+  return raw;
+}
+
+// ---- Extracción tolerante de coordinadores desde un grupo ----
+const arrify = v => Array.isArray(v) ? v : (v && typeof v==='object' ? Object.values(v) : (v ? [v] : []));
+
+function emailsOf(g){
+  const out = new Set();
+  const push = e => e && out.add(String(e).toLowerCase());
+  push(g.coordinadorEmail);
+  push(g?.coordinador?.email);
+  (arrify(g.coordinadoresEmails)).forEach(e => push(e));
+  // a veces guardan objeto {email:true}
+  if (g.coordinadoresEmailsObj && typeof g.coordinadoresEmailsObj==='object'){
+    Object.keys(g.coordinadoresEmailsObj).forEach(push);
+  }
+  // strings sueltos
+  (arrify(g.coordinadores)).forEach(x=>{
+    if (x && typeof x==='object' && x.email) push(x.email);
+    else if (typeof x==='string' && x.includes('@')) push(x);
+  });
+  return [...out];
+}
+function uidsOf(g){
+  const out = new Set();
+  const push = x => x && out.add(String(x));
+  push(g.coordinadorUid || g.coordinadorId);
+  if (g?.coordinador?.uid) push(g.coordinador.uid);
+  (arrify(g.coordinadoresUids || g.coordinadoresIds || g.coordinadores)).forEach(x=>{
+    if (x && typeof x==='object' && x.uid) push(x.uid);
+    else push(x);
+  });
+  return [...out];
+}
+function nombresOf(g){
+  const out = new Set();
+  const push = s => s && out.add(norm(String(s)));
+  push(g.coordinadorNombre || g.coordinador);
+  if (g?.coordinador?.nombre) push(g.coordinador.nombre);
+  (arrify(g.coordinadoresNombres)).forEach(push);
+  return [...out];
+}
+
+// === Helpers de asistencia (buscar por slug o clave equivalente) ===
 function getSavedAsistencia(grupo, fechaISO, actividad) {
+  const d = grupo?.asistencias?.[fechaISO];
+  if (!d) return null;
   const key = slug(actividad || 'actividad');
-  return grupo?.asistencias?.[fechaISO]?.[key] || null;
+  if (d[key]) return d[key];
+  // tolera claves antiguas
+  for (const k of Object.keys(d)){
+    if (slug(k) === key) return d[k];
+  }
+  return null;
 }
 function setSavedAsistenciaLocal(grupo, fechaISO, actividad, data) {
   const key = slug(actividad || 'actividad');
   if (!grupo.asistencias) grupo.asistencias = {};
   if (!grupo.asistencias[fechaISO]) grupo.asistencias[fechaISO] = {};
   grupo.asistencias[fechaISO][key] = data;
+}
+
+// === Plan estimado de la actividad
+function calcPlan(actividad, grupo){
+  const a=actividad||{};
+  const ad=Number(a.adultos||0), es=Number(a.estudiantes||0);
+  const porAct=(ad+es)>0?(ad+es):null;
+  return porAct ?? Number(grupo.cantidadgrupo||grupo.pax||0) || 0;
 }
 
 // ====== Arranque ======
@@ -54,30 +151,29 @@ onAuthStateChanged(auth, async (user) => {
   const email = (user.email||'').toLowerCase();
   const isStaff = STAFF_EMAILS.has(email);
 
-  // Carga lista de coordinadores (colección "coordinadores": campos esperados {nombre, email})
   const coordinadores = await loadCoordinadores();
 
   if (isStaff) {
-    await showStaffSelector(coordinadores, user);    // staff elige coordinador
+    await showStaffSelector(coordinadores, user);
   } else {
-    const miReg = findCoordinadorForUser(coordinadores, user); // auto-resolver
+    const miReg = findCoordinadorForUser(coordinadores, user);
     await loadGruposForCoordinador(miReg, user);
   }
 });
 
-// ====== Lee coleccion "coordinadores" ======
+// ====== Lee coleccion "coordinadores" (tolerante a claves) ======
 async function loadCoordinadores(){
   const snap = await getDocs(collection(db,'coordinadores'));
   const list = [];
   snap.forEach(d=>{
-    const x = d.data();
+    const x = d.data()||{};
     list.push({
       id: d.id,
       nombre: (x.nombre || x.Nombre || x.coordinador || '').toString(),
-      email: (x.email || x.correo || '').toString().toLowerCase(),
+      email: (x.email || x.correo || x.mail || '').toString().toLowerCase(),
+      uid: (x.uid || x.userId || '').toString()
     });
   });
-  // ordena por nombre
   list.sort((a,b)=> a.nombre.localeCompare(b.nombre, 'es', {sensitivity:'base'}));
   return list;
 }
@@ -99,7 +195,7 @@ async function showStaffSelector(coordinadores, user){
 
   const sel = document.getElementById('coordSelect');
   sel.innerHTML = `<option value="">— Selecciona coordinador —</option>` +
-    coordinadores.map(c => `<option value="${c.id}">${c.nombre} — ${c.email||'sin correo'}</option>`).join('');
+    coordinadores.map(c => `<option value="${c.id}" data-email="${c.email}" data-uid="${c.uid}">${c.nombre} — ${c.email||'sin correo'}</option>`).join('');
 
   sel.onchange = async () => {
     const id = sel.value;
@@ -121,55 +217,104 @@ async function showStaffSelector(coordinadores, user){
 // ====== Resolver coordinador de un usuario (no staff) ======
 function findCoordinadorForUser(coordinadores, user){
   const email = (user.email||'').toLowerCase();
-  // 1) match por email
+  const uid = user.uid;
   let c = coordinadores.find(x => x.email && x.email.toLowerCase() === email);
   if (c) return c;
-  // 2) match por nombre normalizado
+  if (uid){
+    c = coordinadores.find(x => x.uid && x.uid === uid);
+    if (c) return c;
+  }
   const disp = norm(user.displayName || '');
   if (disp) {
     c = coordinadores.find(x => norm(x.nombre) === disp);
     if (c) return c;
   }
-  // 3) fallback: usa su propio email/nombre
-  return { id:'self', nombre: user.displayName || email, email };
+  return { id:'self', nombre: user.displayName || email, email, uid };
 }
 
-// ====== Cargar grupos para un coordinador (staff o no staff) ======
+// ====== Cargar grupos para un coordinador ======
 async function loadGruposForCoordinador(coord, user){
   const cont = document.getElementById('grupos');
   cont.textContent = 'Cargando grupos…';
 
-  // Trae TODOS los grupos (lectura pública). Luego filtramos en cliente
-  const all = await getDocs(collection(db,'grupos'));
+  const allSnap = await getDocs(collection(db,'grupos'));
   const wanted = [];
-
-  // datos del coordinador elegido
   const emailElegido = (coord?.email || '').toLowerCase();
+  const uidElegido   = (coord?.uid || '').toString();
   const nombreElegido = norm(coord?.nombre || '');
-
   const isSelf = !coord || coord.id === 'self' || emailElegido === (user.email||'').toLowerCase();
 
-  all.forEach(d => {
-    const g = { id: d.id, ...d.data() };
+  allSnap.forEach(d => {
+    const raw = { id:d.id, ...d.data() };
+    const g = {
+      ...raw,
+      // normalizaciones mínimas que usaremos después:
+      fechaInicio: toISO(raw.fechaInicio || raw.inicio || raw.fecha_ini),
+      fechaFin:    toISO(raw.fechaFin || raw.fin || raw.fecha_fin),
+      itinerario:  normalizeItinerario(raw.itinerario),
+      asistencias: raw.asistencias || {}
+    };
 
-    // Candidatos de coincidencia en el grupo
-    const gName = norm(g.coordinador || g.coordinadorNombre || '');
-    const gEmail = (g.coordinadorEmail || '').toLowerCase();
-    const arrEmails = (g.coordinadoresEmails || []).map(x => (x||'').toLowerCase());
-    const arrUids   = Array.isArray(g.coordinadores) ? g.coordinadores : [];
+    // Candidatos
+    const gEmails = emailsOf(raw);         // todas las formas de email
+    const gUids   = uidsOf(raw);           // todas las formas de uid/id
+    const gNames  = nombresOf(raw);        // nombres normalizados
 
     // Regla de match (OR):
     const match =
-      (emailElegido && gEmail === emailElegido) ||
-      (emailElegido && arrEmails.includes(emailElegido)) ||
-      (nombreElegido && gName && gName === nombreElegido) ||
-      (isSelf && arrUids.includes(user.uid));   // por si el grupo usa UIDs
+      (emailElegido && gEmails.includes(emailElegido)) ||
+      (uidElegido && gUids.includes(uidElegido)) ||
+      (nombreElegido && gNames.includes(nombreElegido)) ||
+      (isSelf && gUids.includes(user.uid)); // por si almacenaron el propio uid
 
     if (match) wanted.push(g);
   });
 
+  // Fallback: usa collectionGroup('conjuntos') → viajes[]
+  if (wanted.length === 0 && coord && coord.id !== 'self'){
+    try{
+      const qs = [];
+      if (uidElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorId','==', uidElegido)));
+      if (emailElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorEmail','==', emailElegido)));
+      const ids = new Set();
+      for (const qy of qs){
+        const ss = await getDocs(qy);
+        ss.forEach(docu=>{
+          const v = docu.data()?.viajes || [];
+          v.forEach(id => ids.add(String(id)));
+        });
+      }
+      // traer los grupos por id
+      for (const id of ids){
+        const ref = doc(db,'grupos', id);
+        const dd = await getDoc(ref);
+        if (dd.exists()){
+          const raw = { id: dd.id, ...dd.data() };
+          wanted.push({
+            ...raw,
+            fechaInicio: toISO(raw.fechaInicio || raw.inicio || raw.fecha_ini),
+            fechaFin:    toISO(raw.fechaFin || raw.fin || raw.fecha_fin),
+            itinerario:  normalizeItinerario(raw.itinerario),
+            asistencias: raw.asistencias || {}
+          });
+        }
+      }
+    }catch(e){
+      console.warn('Fallback collectionGroup(conjuntos) no disponible/indizado:', e);
+    }
+  }
+
+  // Orden y render
   wanted.sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
   renderGrupos(wanted, user);
+
+  // Diagnóstico en consola (primeros 3)
+  console.info('[Portal Coord] grupos cargados:', wanted.length);
+  console.table(wanted.slice(0,3).map(g=>({
+    id:g.id, inicio:g.fechaInicio, fin:g.fechaFin,
+    emails: emailsOf(g), uids: uidsOf(g),
+    nombres: nombresOf(g)
+  })));
 }
 
 // ====== Render ======
@@ -186,8 +331,8 @@ async function renderGrupos(grupos, user){
     const card = document.createElement('div');
     card.className = 'group-card';
     card.innerHTML = `
-      <h3>${g.nombreGrupo || g.id}</h3>
-      <div class="group-sub">${g.destino||''} · ${g.programa||''} · ${g.cantidadgrupo||0} pax</div>
+      <h3>${g.nombreGrupo || g.aliasGrupo || g.id}</h3>
+      <div class="group-sub">${g.destino||''} · ${g.programa||''} · ${(g.cantidadgrupo||g.pax||0)} pax</div>
       <div class="date-pills" id="pills-${g.id}"></div>
       <div class="acts" id="acts-${g.id}"></div>
     `;
@@ -198,7 +343,9 @@ async function renderGrupos(grupos, user){
     fechas.forEach((f,i)=>{
       const pill = document.createElement('div');
       pill.className = 'pill'+(i===0?' active':'');
+
       pill.textContent = fmt(f);
+      pill.title = f; // tooltip ISO
       pill.dataset.fecha = f;
       pill.onclick = ()=> {
         pills.querySelectorAll('.pill').forEach(p=>p.classList.remove('active'));
@@ -208,7 +355,9 @@ async function renderGrupos(grupos, user){
       pills.appendChild(pill);
     });
 
+    // primera fecha
     if (fechas[0]) renderActs(g, fechas[0], card.querySelector(`#acts-${g.id}`), user);
+    else card.querySelector(`#acts-${g.id}`).innerHTML = '<div class="muted">Fechas no definidas.</div>';
   }
 }
 
@@ -256,7 +405,6 @@ async function renderActs(grupo, fechaISO, cont, user){
         };
         await updateDoc(refGrupo, { [keyPath]: data });
 
-        // actualizar en memoria para mantener prellenado
         setSavedAsistenciaLocal(grupo, fechaISO, act.actividad, { ...data });
 
         btn.textContent = 'Guardado';
