@@ -186,16 +186,29 @@ async function showStaffSelector(coordinadores, user){
     bar = document.createElement('div');
     bar.id = 'staffBar';
     bar.style.cssText = 'margin:12px 0 8px; padding:8px; border:1px solid #223053; border-radius:12px; background:#0f1530;';
-    bar.innerHTML = `
-      <label style="display:block; margin-bottom:6px; color:#cbd5e1">Ver viajes por coordinador</label>
-      <select id="coordSelect" style="width:100%; padding:.55rem; border-radius:10px; border:1px solid #334155; background:#0b1329; color:#e5e7eb"></select>
-    `;
+    bar.innerHTML = (
+      '<label style="display:block; margin-bottom:6px; color:#cbd5e1">Ver viajes por coordinador</label>' +
+      '<select id="coordSelect" style="width:100%; padding:.55rem; border-radius:10px; border:1px solid #334155; background:#0b1329; color:#e5e7eb"></select>'
+    );
     wrap.prepend(bar);
   }
 
   const sel = document.getElementById('coordSelect');
-  sel.innerHTML = `<option value="">— Selecciona coordinador —</option>` +
-    coordinadores.map(c => `<option value="${c.id}" data-email="${c.email}" data-uid="${c.uid}">${c.nombre} — ${c.email||'sin correo'}</option>`).join('');
+  // Limpiar y poblar sin templates
+  sel.textContent = '';
+  const opt0 = document.createElement('option');
+  opt0.value = '';
+  opt0.textContent = '— Selecciona coordinador —';
+  sel.appendChild(opt0);
+
+  coordinadores.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    if (c.email) opt.setAttribute('data-email', String(c.email));
+    if (c.uid)   opt.setAttribute('data-uid', String(c.uid));
+    opt.textContent = (c.nombre || '') + ' — ' + (c.email ? String(c.email) : 'sin correo');
+    sel.appendChild(opt);
+  });
 
   sel.onchange = async () => {
     const id = sel.value;
