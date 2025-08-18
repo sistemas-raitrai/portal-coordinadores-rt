@@ -1,11 +1,7 @@
-/* coordinadores.js — Portal Coordinadores RT (modo 1-viaje-a-la-vez)
-   - Orden por cercanía a hoy, navegación Prev/Sig + deep link ?g=&f=
-   - Resumen: HOTEL (hotelAssignments + hoteles) y VUELOS (vuelos.grupoIds)
-   - Itinerario: asistencia + bitácora por actividad + ficha Servicio + Voucher
-   - Robusto a cambios de esquema; IDs CSS-safe; sin "||" en templates
-   - Alineación y mayúsculas visuales; barra Staff primero que navegación
+/* coordinadores.js — Portal Coordinadores RT
+   Alinea paneles, muestra estadísticas globales y mantiene el flujo:
+   selector → estadísticas → navegación → viaje (resumen/itinerario)
 */
-
 import { app, db } from './firebase-init-portal.js';
 import { getAuth, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
@@ -14,91 +10,108 @@ import {
   serverTimestamp, query, where, orderBy, limit
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 
-/* ============== Auth + salir ============== */
+/* ============== Auth ============== */
 const auth = getAuth(app);
 const logoutBtn = document.getElementById('logout');
 if (logoutBtn) logoutBtn.onclick = () => signOut(auth).then(() => (location = 'index.html'));
 
 /* ============== Staff permitido ============== */
-const STAFF_EMAILS = new Set([
-  'aleoperaciones@raitrai.cl','tomas@raitrai.cl','operaciones@raitrai.cl',
-  'anamaria@raitrai.cl','sistemas@raitrai.cl',
-].map(e => e.toLowerCase()));
+const STAFF_EMAILS = new Set(
+  ['aleoperaciones@raitrai.cl','tomas@raitrai.cl','operaciones@raitrai.cl','anamaria@raitrai.cl','sistemas@raitrai.cl']
+  .map(e=>e.toLowerCase())
+);
 
 /* ============== Utils ============== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
-const slug = (s) => norm(s).slice(0,60);
-
-function toISO(x){
+const slug = s => norm(s).slice(0,60);
+const toISO = (x)=>{
   if(!x) return '';
-  if (typeof x==='string'){
-    if (/^\d{4}-\d{2}-\d{2}$/.test(x)) return x;
-    const d=new Date(x); return isNaN(d)?'':d.toISOString().slice(0,10);
-  }
+  if (typeof x==='string'){ if (/^\d{4}-\d{2}-\d{2}$/.test(x)) return x; const d=new Date(x); return isNaN(d)?'':d.toISOString().slice(0,10); }
   if (x && typeof x==='object' && 'seconds' in x) return new Date(x.seconds*1000).toISOString().slice(0,10);
   if (x instanceof Date) return x.toISOString().slice(0,10);
   return '';
-}
-function fmt(iso){ if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'}); }
-function rangoFechas(ini, fin){ const out=[]; const A=toISO(ini), B=toISO(fin); if(!A||!B) return out; const a=new Date(A+'T00:00:00'), b=new Date(B+'T00:00:00'); for(let d=new Date(a); d<=b; d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10)); return out; }
-function parseQS(){ const p=new URLSearchParams(location.search); return { g: p.get('g')||'', f: p.get('f')||'' }; }
-function updateQS(g, f){
-  const p=new URLSearchParams(location.search);
-  if (g) p.set('g', String(g)); else p.delete('g');
-  if (f) p.set('f', String(f)); else p.delete('f');
-  history.replaceState(null,'',`${location.pathname}?${p.toString()}`);
-}
+};
+const daysInclusive = (ini, fin)=>{
+  const a = toISO(ini), b = toISO(fin); if(!a||!b) return 0;
+  return Math.max(1, Math.round((new Date(b)-new Date(a))/86400000)+1);
+};
+const rangoFechas = (ini, fin)=>{
+  const out=[]; const A=toISO(ini), B=toISO(fin); if(!A||!B) return out;
+  for(let d=new Date(A+'T00:00:00'); d<=new Date(B+'T00:00:00'); d.setDate(d.getDate()+1))
+    out.push(d.toISOString().slice(0,10));
+  return out;
+};
+const parseQS = ()=>{ const p=new URLSearchParams(location.search); return { g:p.get('g')||'', f:p.get('f')||'' }; };
+const fmt = iso => { if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'}); };
 
-/* ===== itinerario tolerante (objeto o array legado) ===== */
+/* tolerancia de itinerario (obj o array legado) */
 function normalizeItinerario(raw){
   if (!raw) return {};
   if (Array.isArray(raw)){
-    const map={};
-    for(const item of raw){
-      const f=toISO(item && item.fecha); if(!f) continue;
-      if(!map[f]) map[f]=[]; map[f].push({...item});
-    }
+    const map={}; for(const item of raw){ const f=toISO(item && item.fecha); if(!f) continue; (map[f] ||= []).push({...item}); }
     return map;
   }
   return raw;
 }
 
-/* ===== extracción tolerante de campos de grupos ===== */
+/* extracción tolerante desde grupos */
 const arrify = v => Array.isArray(v) ? v : (v && typeof v==='object' ? Object.values(v) : (v ? [v] : []));
-function emailsOf(g){ const out=new Set(), push=e=>{if(e) out.add(String(e).toLowerCase());}; push(g?.coordinadorEmail); push(g?.coordinador?.email); arrify(g?.coordinadoresEmails).forEach(push); if(g?.coordinadoresEmailsObj) Object.keys(g.coordinadoresEmailsObj).forEach(push); arrify(g?.coordinadores).forEach(x=>{ if (x?.email) push(x.email); else if (typeof x==='string'&&x.includes('@')) push(x); }); return [...out]; }
-function uidsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); }; push(g?.coordinadorUid||g?.coordinadorId); if (g?.coordinador?.uid) push(g.coordinador.uid); arrify(g?.coordinadoresUids||g?.coordinadoresIds||g?.coordinadores).forEach(x=>{ if (x?.uid) push(x.uid); else push(x); }); return [...out]; }
+function emailsOf(g){ const out=new Set(), push=e=>{if(e) out.add(String(e).toLowerCase());};
+  push(g?.coordinadorEmail); push(g?.coordinador?.email);
+  arrify(g?.coordinadoresEmails).forEach(push);
+  if(g?.coordinadoresEmailsObj) Object.keys(g.coordinadoresEmailsObj).forEach(push);
+  arrify(g?.coordinadores).forEach(x=>{ if (x?.email) push(x.email); else if (typeof x==='string'&&x.includes('@')) push(x); });
+  return [...out];
+}
+function uidsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); };
+  push(g?.coordinadorUid||g?.coordinadorId);
+  if (g?.coordinador?.uid) push(g.coordinador.uid);
+  arrify(g?.coordinadoresUids||g?.coordinadoresIds||g?.coordinadores).forEach(x=>{ if (x?.uid) push(x.uid); else push(x); });
+  return [...out];
+}
 function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); }; push(g?.coordinadorId); arrify(g?.coordinadoresIds).forEach(push); return [...out]; }
 function nombresOf(g){ const out=new Set(), push=s=>{ if(s) out.add(norm(String(s))); }; push(g?.coordinadorNombre||g?.coordinador); if (g?.coordinador?.nombre) push(g.coordinador.nombre); arrify(g?.coordinadoresNombres).forEach(push); return [...out]; }
 
-/* ===== asistencia helpers ===== */
+/* asistencia helpers */
 function getSavedAsistencia(grupo, fechaISO, actividad){
   const byDate = grupo?.asistencias?.[fechaISO]; if(!byDate) return null;
-  const key = slug(actividad||'actividad'); if (Object.prototype.hasOwnProperty.call(byDate,key)) return byDate[key];
+  const key = slug(actividad||'actividad');
+  if (Object.prototype.hasOwnProperty.call(byDate,key)) return byDate[key];
   for (const k of Object.keys(byDate)) if (slug(k)===key) return byDate[k];
   return null;
 }
 function setSavedAsistenciaLocal(grupo, fechaISO, actividad, data){
-  const key=slug(actividad||'actividad');
-  if(!grupo.asistencias) grupo.asistencias={};
-  if(!grupo.asistencias[fechaISO]) grupo.asistencias[fechaISO]={};
-  grupo.asistencias[fechaISO][key]=data;
+  const key=slug(actividad||'actividad'); (grupo.asistencias ||= {}); (grupo.asistencias[fechaISO] ||= {}); grupo.asistencias[fechaISO][key]=data;
 }
 function calcPlan(actividad, grupo){
-  const a=actividad||{}; const ad=Number(a.adultos||0), es=Number(a.estudiantes||0);
-  const suma=ad+es; if (suma>0) return suma;
+  const a=actividad||{}; const ad=Number(a.adultos||0), es=Number(a.estudiantes||0); const suma=ad+es;
+  if (suma>0) return suma;
   const base=(grupo && (grupo.cantidadgrupo!=null?grupo.cantidadgrupo:grupo.pax));
   return Number(base||0);
 }
+const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
 
-/* ===== estado global ===== */
+/* estado */
 const state = {
-  user: null,
-  coordinadores: [],
-  grupos: [],
-  ordenados: [],
-  idx: 0,
-  cache: { hotel: new Map(), vuelos: new Map(), servicios: new Map() }
+  user:null,
+  coordinadores:[],
+  grupos:[],
+  ordenados:[],
+  idx:0,
+  cache:{ hotel:new Map(), vuelos:new Map() }
 };
+
+/* helpers UI: paneles alineados */
+function ensurePanel(id, html=''){
+  let p = document.getElementById(id);
+  if (!p){
+    p = document.createElement('div');
+    p.id = id; p.className = 'panel';
+    document.querySelector('.wrap').prepend(p);
+  }
+  if (html) p.innerHTML = html;
+  return p;
+}
 
 /* ============== Arranque ============== */
 onAuthStateChanged(auth, async (user) => {
@@ -118,74 +131,43 @@ onAuthStateChanged(auth, async (user) => {
   }
 });
 
-/* ============== Leer coordinadores (SIN DUPLICADOS) ============== */
+/* ============== Cargar coordinadores ============== */
 async function loadCoordinadores(){
   const snap = await getDocs(collection(db,'coordinadores'));
-  const rows=[];
-  snap.forEach(d=>{
-    const x=d.data()||{};
-    rows.push({
-      id:d.id,
-      nombre:String(x.nombre||x.Nombre||x.coordinador||'').trim(),
-      email:String(x.email||x.correo||x.mail||'').trim().toLowerCase(),
-      uid:String(x.uid||x.userId||'').trim()
-    });
-  });
-
-  // dedup por email, luego por nombre normalizado (si no tienen email)
-  const byEmail = new Map();
-  for (const r of rows) if (r.email && !byEmail.has(r.email)) byEmail.set(r.email, r);
-
-  const byName = new Map();
-  for (const r of rows) {
-    if (r.email) continue;
-    const k = norm(r.nombre);
-    if (!k) continue;
-    if (!byName.has(k) || r.nombre.length > byName.get(k).nombre.length) byName.set(k, r);
-  }
-
-  const out = [...byEmail.values(), ...byName.values()]
-    .filter(r=>r.nombre)
-    .sort((a,b)=> a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'}));
-
-  return out;
+  const list=[]; snap.forEach(d=>{ const x=d.data()||{}; list.push({
+    id:d.id, nombre:String(x.nombre||x.Nombre||x.coordinador||''), email:String(x.email||x.correo||x.mail||'').toLowerCase(), uid:String(x.uid||x.userId||'')
+  });});
+  list.sort((a,b)=> a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'}));
+  // eliminar duplicados por (nombre/email) exacto
+  const seen=new Set(), dedup=[]; for(const c of list){ const k=(c.nombre+'|'+c.email).toLowerCase(); if(!seen.has(k)){ seen.add(k); dedup.push(c); } }
+  return dedup;
 }
 
-/* ============== Staff selector (PRIMERO EN LA PÁGINA) ============== */
+/* ============== Selector Staff ============== */
 async function showStaffSelector(coordinadores, user){
-  const wrap=document.querySelector('.wrap');
-  let bar=document.getElementById('staffBar');
-  if(!bar){
-    bar=document.createElement('div');
-    bar.id='staffBar';
-    bar.className='group-card';
-    bar.innerHTML = `
-      <label style="display:block; margin-bottom:6px; color:#cbd5e1">VER VIAJES POR COORDINADOR</label>
-      <select id="coordSelect" style="width:100%; padding:.6rem .7rem; border-radius:10px; border:1px solid #334155; background:#0b1329; color:#e5e7eb"></select>
-    `;
-    // PRIMERO que todo:
-    wrap.prepend(bar);
-  }
-  const sel=document.getElementById('coordSelect');
-  sel.innerHTML = `<option value="">— SELECCIONA COORDINADOR —</option>` +
-    coordinadores.map(c=>`<option value="${c.id}">${c.nombre} — ${c.email||'SIN CORREO'}</option>`).join('');
-
-  sel.onchange=async()=>{
-    const id=sel.value;
-    const elegido=coordinadores.find(c=>c.id===id)||null;
+  const bar = ensurePanel('staffBar',
+    '<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>'+
+    '<select id="coordSelect"></select>'
+  );
+  const sel = bar.querySelector('#coordSelect');
+  sel.innerHTML = '<option value="">— SELECCIONA COORDINADOR —</option>' +
+    coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'')} — ${c.email||'SIN CORREO'}</option>`).join('');
+  sel.onchange = async ()=>{
+    const id = sel.value;
+    const elegido = coordinadores.find(c=>c.id===id) || null;
     localStorage.setItem('rt_staff_coord', id||'');
     await loadGruposForCoordinador(elegido, state.user);
   };
 
-  const last=localStorage.getItem('rt_staff_coord');
-  if(last && coordinadores.find(c=>c.id===last)){
-    sel.value=last;
-    const elegido=coordinadores.find(c=>c.id===last);
+  const last = localStorage.getItem('rt_staff_coord');
+  if (last && coordinadores.find(c=>c.id===last)){
+    sel.value = last;
+    const elegido = coordinadores.find(c=>c.id===last);
     await loadGruposForCoordinador(elegido, state.user);
   }
 }
 
-/* ============== Resolver coordinador usuario no-staff ============== */
+/* ============== Resolver coordinador (no staff) ============== */
 function findCoordinadorForUser(coordinadores, user){
   const email=(user.email||'').toLowerCase(), uid=user.uid;
   let c = coordinadores.find(x=> x.email && x.email.toLowerCase()===email); if(c) return c;
@@ -194,9 +176,9 @@ function findCoordinadorForUser(coordinadores, user){
   return { id:'self', nombre: user.displayName || email, email, uid };
 }
 
-/* ============== Carga de grupos para el coordinador ============== */
+/* ============== Cargar grupos del coordinador ============== */
 async function loadGruposForCoordinador(coord, user){
-  const cont=document.getElementById('grupos'); if (cont) cont.textContent='Cargando grupos…';
+  const cont=document.getElementById('grupos'); if (cont) cont.textContent='CARGANDO GRUPOS…';
 
   const allSnap=await getDocs(collection(db,'grupos'));
   const wanted=[];
@@ -217,51 +199,39 @@ async function loadGruposForCoordinador(coord, user){
       numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || d.id)
     };
     const gEmails=emailsOf(raw), gUids=uidsOf(raw), gDocIds=coordDocIdsOf(raw), gNames=nombresOf(raw);
-    const match=(emailElegido && gEmails.includes(emailElegido)) ||
-                (uidElegido && gUids.includes(uidElegido)) ||
-                (docIdElegido && gDocIds.includes(docIdElegido)) ||
-                (nombreElegido && gNames.includes(nombreElegido)) ||
+    const match=(emailElegido && gEmails.includes(emailElegido)) || (uidElegido && gUids.includes(uidElegido)) ||
+                (docIdElegido && gDocIds.includes(docIdElegido)) || (nombreElegido && gNames.includes(nombreElegido)) ||
                 (isSelf && gUids.includes(user.uid));
     if (match) wanted.push(g);
   });
 
-  // Fallback por posibles "conjuntos"
+  // fallback por conjuntos (si fuese necesario)
   if (wanted.length===0 && coord && coord.id!=='self'){
     try{
-      const qs=[];
-      if(uidElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorId','==',uidElegido)));
+      const qs=[]; if(uidElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorId','==',uidElegido)));
       if(emailElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorEmail','==',emailElegido)));
       if(docIdElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorDocId','==',docIdElegido)));
       const ids=new Set();
-      for(const qy of qs){
-        const ss=await getDocs(qy);
-        ss.forEach(docu=>{ const v=docu.data()?.viajes || []; v.forEach(id=>ids.add(String(id))); });
-      }
-      for(const id of ids){
-        const ref=doc(db,'grupos',id); const dd=await getDoc(ref);
-        if(dd.exists()){
-          const raw={id:dd.id, ...dd.data()};
-          wanted.push({
-            ...raw,
-            fechaInicio: toISO(raw.fechaInicio||raw.inicio||raw.fecha_ini),
-            fechaFin: toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
-            itinerario: normalizeItinerario(raw.itinerario),
-            asistencias: raw.asistencias || {},
-            numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || dd.id)
-          });
-        }
-      }
+      for(const qy of qs){ const ss=await getDocs(qy); ss.forEach(docu=>{ (docu.data()?.viajes||[]).forEach(id=>ids.add(String(id))); }); }
+      for(const id of ids){ const ref=doc(db,'grupos',id); const dd=await getDoc(ref); if(dd.exists()){ const raw={id:dd.id, ...dd.data()}; wanted.push({
+        ...raw, fechaInicio:toISO(raw.fechaInicio||raw.inicio||raw.fecha_ini), fechaFin:toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
+        itinerario:normalizeItinerario(raw.itinerario), asistencias:raw.asistencias||{}, numeroNegocio:String(raw.numeroNegocio||raw.id||dd.id)
+      });}}
     }catch(e){ console.warn('Fallback conjuntos no disponible:', e); }
   }
 
-  // Orden por cercanía (próximos primero)
+  // ordenar por “próximos primero”
   const hoy = toISO(new Date());
   const futuros = wanted.filter(g => (g.fechaInicio||'') >= hoy).sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
   const pasados = wanted.filter(g => (g.fechaInicio||'') < hoy).sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
   state.grupos = wanted;
   state.ordenados = [...futuros, ...pasados];
 
-  // Elegir índice inicial: ?g= o último o 0
+  /* estadísticas globales */
+  renderStats(state.ordenados);
+
+  /* navegación y primer viaje */
+  // índice inicial por ?g= o por último visto
   const { g:qsG, f:qsF } = parseQS();
   let idx = 0;
   if (qsG){
@@ -270,59 +240,63 @@ async function loadGruposForCoordinador(coord, user){
     idx = byNum>=0?byNum:(byId>=0?byId:0);
   } else {
     const last = localStorage.getItem('rt_last_group');
-    if (last){
-      const i = state.ordenados.findIndex(x=> x.id===last || x.numeroNegocio===last);
-      if (i>=0) idx=i;
-    }
+    if (last){ const i = state.ordenados.findIndex(x=> x.id===last || x.numeroNegocio===last); if (i>=0) idx=i; }
   }
   state.idx = Math.max(0, Math.min(idx, state.ordenados.length-1));
 
+  renderNavBar();
   renderOneGroup(state.ordenados[state.idx], qsF);
-  renderNavBar(); // se inserta DESPUÉS de staffBar si existe
 }
 
-/* ============== Barra navegación (prev/sig + selector) ============== */
-function renderNavBar(){
-  const wrap=document.querySelector('.wrap'); if(!wrap) return;
-  let nb=document.getElementById('navBar');
-  if(!nb){
-    nb=document.createElement('div'); nb.id='navBar';
-    nb.className='group-card';
-    nb.innerHTML='<div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">'+
-      '<button id="btnPrev">‹ ANTERIOR</button>'+
-      '<select id="allTrips" style="min-width:260px; flex:1"></select>'+
-      '<button id="btnNext">SIGUIENTE ›</button>'+
-    '</div>';
-    // Insertar DESPUÉS de staffBar para que Staff quede primero
-    const staff = document.getElementById('staffBar');
-    if (staff && staff.parentNode) staff.parentNode.insertBefore(nb, staff.nextSibling);
-    else wrap.prepend(nb);
-
-    const styleBtn='background:#1f2937;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:.45rem .8rem;cursor:pointer;text-transform:uppercase';
-    nb.querySelector('#btnPrev').style.cssText=styleBtn;
-    nb.querySelector('#btnNext').style.cssText=styleBtn;
-    nb.querySelector('#allTrips').style.cssText='padding:.5rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:#e5e7eb;text-transform:uppercase';
+/* ============== Estadísticas globales (panel) ============== */
+function renderStats(list){
+  const p = ensurePanel('statsPanel');
+  if (!list.length){
+    p.innerHTML = '<div class="muted">SIN VIAJES PARA EL COORDINADOR SELECCIONADO.</div>';
+    return;
   }
-  const sel=nb.querySelector('#allTrips'); sel.textContent='';
+  const n = list.length;
+  const minIni = list.map(g=>g.fechaInicio).filter(Boolean).sort()[0] || '';
+  const maxFin = list.map(g=>g.fechaFin).filter(Boolean).sort().slice(-1)[0] || '';
+  const totalDias = list.reduce((sum,g)=> sum + daysInclusive(g.fechaInicio,g.fechaFin), 0);
+  const destinos = [...new Set(list.map(g=>(g.destino||'').toString().trim()).filter(Boolean))];
+  const paxTot = list.reduce((s,g)=> s + paxOf(g), 0);
+  const paxPorViaje = list.map(g=> `${(g.aliasGrupo||g.nombreGrupo||g.id)} (${paxOf(g)} pax)`).join(' · ');
+
+  p.innerHTML = `
+    <div style="display:grid;gap:.4rem">
+      <div class="meta">TOTAL VIAJES: <strong>${n}</strong> · TOTAL DÍAS: <strong>${totalDias}</strong></div>
+      <div class="meta">RANGO GLOBAL: ${minIni||'—'} — ${maxFin||'—'}</div>
+      <div class="meta">DESTINOS: ${destinos.length? destinos.join(' · ') : '—'}</div>
+      <div class="meta">PAX TOTALES: ${paxTot}</div>
+      <div class="meta">PAX POR VIAJE: ${paxPorViaje || '—'}</div>
+    </div>
+  `;
+}
+
+/* ============== Barra navegación (panel) ============== */
+function renderNavBar(){
+  const p = ensurePanel('navPanel',
+    '<div id="navBar">'+
+      '<button id="btnPrev">‹ ANTERIOR</button>'+
+      '<select id="allTrips"></select>'+
+      '<button id="btnNext">SIGUIENTE ›</button>'+
+    '</div>'
+  );
+  const sel = p.querySelector('#allTrips');
+  sel.textContent = '';
   state.ordenados.forEach((g,i)=>{
-    const o=document.createElement('option');
     const name=(g.nombreGrupo||g.aliasGrupo||g.id);
-    const date=(g.fechaInicio||'')+(g.fechaFin?(' → '+g.fechaFin):'');
-    o.value=String(i); o.textContent=`${name} — ${date}`;
-    sel.appendChild(o);
+    const date=(g.fechaInicio||'')+(g.fechaFin?(' — '+g.fechaFin):'');
+    const opt=document.createElement('option');
+    opt.value=String(i); opt.textContent=`${name} (${date})`;
+    sel.appendChild(opt);
   });
   sel.value=String(state.idx);
 
-  const goIdx=(i)=>{
-    if(i<0 || i>=state.ordenados.length) return;
-    state.idx=i;
-    renderOneGroup(state.ordenados[state.idx]);
-    sel.value=String(state.idx);
-  };
-
-  nb.querySelector('#btnPrev').onclick=()=> goIdx(state.idx-1);
-  nb.querySelector('#btnNext').onclick=()=> goIdx(state.idx+1);
-  sel.onchange = ()=> goIdx(Number(sel.value||0));
+  p.querySelector('#btnPrev').onclick = ()=>{ if(state.idx>0){ state.idx--; renderOneGroup(state.ordenados[state.idx]); sel.value=String(state.idx);} };
+  p.querySelector('#btnNext').onclick = ()=>{ if(state.idx<state.ordenados.length-1){ state.idx++; renderOneGroup(state.ordenados[state.idx]); sel.value=String(state.idx);} };
+  sel.onchange = ()=>{ state.idx=Number(sel.value||0); renderOneGroup(state.ordenados[state.idx]); };
 }
 
 /* ============== Vista 1 viaje ============== */
@@ -332,43 +306,36 @@ function renderOneGroup(g, preferDate){
 
   if(!g){ cont.innerHTML='<p class="muted">NO HAY VIAJES.</p>'; return; }
   localStorage.setItem('rt_last_group', g.id);
-  updateQS(g.numeroNegocio || g.id, preferDate || '');
 
-  // encabezado
-  const titulo = (g.nombreGrupo!=null && g.nombreGrupo!=='') ? g.nombreGrupo
-                : (g.aliasGrupo!=null && g.aliasGrupo!=='') ? g.aliasGrupo : g.id;
-  const pax = (g.cantidadgrupo!=null ? g.cantidadgrupo : (g.pax!=null ? g.pax : 0));
-  const sub = String(g.destino||'') + ' · ' + String(g.programa||'') + ' · ' + pax + ' PAX';
-  const rango = (g.fechaInicio||'') + (g.fechaFin?(' — '+g.fechaFin):'');
+  const titulo = (g.nombreGrupo || g.aliasGrupo || g.id);
+  const sub = `${g.destino||''} · ${g.programa||''} · ${(g.cantidadgrupo ?? g.pax ?? 0)} PAX`;
+  const rango = `${g.fechaInicio||''} — ${g.fechaFin||''}`;
 
   const header=document.createElement('div');
   header.className='group-card';
-  header.innerHTML =
-    '<h3 style="margin:.1rem 0">'+ titulo +'</h3>'+
-    '<div class="group-sub">'+ sub +'</div>'+
-    '<div class="muted" style="margin-top:4px">'+ rango +'</div>';
+  header.innerHTML = `
+    <h3>${titulo}</h3>
+    <div class="group-sub">${sub}</div>
+    <div class="muted" style="margin-top:4px">${rango}</div>
+  `;
   cont.appendChild(header);
 
-  // tabs
-  const tabs=document.createElement('div'); tabs.className='group-card';
-  tabs.innerHTML =
-    '<div id="tabs" style="display:flex; gap:.5rem; margin-bottom:.6rem">'+
-      '<button id="tabResumen">RESUMEN</button>'+
-      '<button id="tabItin">ITINERARIO</button>'+
-    '</div>'+
-    '<div id="paneResumen"></div>'+
-    '<div id="paneItin" style="display:none"></div>';
+  const tabs=document.createElement('div');
+  tabs.innerHTML = `
+    <div style="display:flex;gap:.5rem;margin:.6rem 0">
+      <button id="tabResumen" style="background:#0b1329;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:.45rem .8rem;cursor:pointer">RESUMEN</button>
+      <button id="tabItin"    style="background:#0b1329;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:.45rem .8rem;cursor:pointer">ITINERARIO</button>
+    </div>
+    <div id="paneResumen"></div>
+    <div id="paneItin" style="display:none"></div>
+  `;
   cont.appendChild(tabs);
-
-  const styleTab='background:#0b1329;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:.45rem .8rem;cursor:pointer;text-transform:uppercase';
-  tabs.querySelector('#tabResumen').style.cssText=styleTab;
-  tabs.querySelector('#tabItin').style.cssText=styleTab;
 
   const paneResumen=tabs.querySelector('#paneResumen');
   const paneItin=tabs.querySelector('#paneItin');
 
   tabs.querySelector('#tabResumen').onclick=()=>{ paneResumen.style.display=''; paneItin.style.display='none'; };
-  tabs.querySelector('#tabItin').onclick=()=>{ paneResumen.style.display='none'; paneItin.style.display=''; };
+  tabs.querySelector('#tabItin').onclick   =()=>{ paneResumen.style.display='none'; paneItin.style.display=''; };
 
   renderResumen(g, paneResumen);
   renderItinerario(g, paneItin, preferDate);
@@ -377,40 +344,39 @@ function renderOneGroup(g, preferDate){
 /* ============== Resumen (Hotel + Vuelos) ============== */
 async function renderResumen(g, pane){
   pane.innerHTML='<div class="loader">CARGANDO RESUMEN…</div>';
-  const wrap=document.createElement('div'); wrap.style.cssText='display:grid; gap:.8rem';
+
+  const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem';
   pane.innerHTML='';
 
-  // Hotel
   const hotelBox=document.createElement('div'); hotelBox.className='act';
   hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">BUSCANDO ASIGNACIÓN…</div>';
   wrap.appendChild(hotelBox);
 
-  // Vuelos
   const vuelosBox=document.createElement('div'); vuelosBox.className='act';
   vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">BUSCANDO VUELOS…</div>';
   wrap.appendChild(vuelosBox);
 
   pane.appendChild(wrap);
 
-  // ---- HOTEL ----
+  // HOTEL
   try{
     const h = await loadHotelInfo(g);
-    if (!h){ hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN DE HOTEL.</div>'; }
+    if (!h){ hotelBox.innerHTML='<h4>HOTEL ASIGNADO</h4><div class="muted">SIN ASIGNACIÓN DE HOTEL.</div>'; }
     else{
       const nombre = h.hotelNombre || h.hotel?.nombre || 'HOTEL ASIGNADO';
+      const fechas = `${h.checkIn||''} — ${h.checkOut||''}`;
       const dir = h.hotel?.direccion || '';
       const contacto = [h.hotel?.contactoNombre, h.hotel?.contactoTelefono, h.hotel?.contactoCorreo].filter(Boolean).join(' · ');
-      const fechas = (h.checkIn||'') + (h.checkOut?(' → '+h.checkOut):'');
-      hotelBox.innerHTML =
-        '<h4>'+nombre+'</h4>'+
-        '<div class="meta">'+ (h.destino||'') +'</div>'+
-        (dir?('<div class="prov">'+dir+'</div>'):'')+
-        (fechas?('<div class="meta">CHECK-IN/OUT: '+ fechas +'</div>'):'')+
-        (contacto ? ('<div class="meta">'+ contacto +'</div>') : '');
+      hotelBox.innerHTML = `
+        <h4>${nombre}</h4>
+        ${dir? `<div class="prov">${dir}</div>`:''}
+        <div class="meta">CHECK-IN/OUT: ${fechas}</div>
+        ${contacto? `<div class="meta">${contacto}</div>`:''}
+      `;
     }
-  }catch(e){ hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">NO FUE POSIBLE CARGAR.</div>'; console.error(e); }
+  }catch(e){ console.error(e); hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">NO FUE POSIBLE CARGAR.</div>'; }
 
-  // ---- VUELOS ----
+  // VUELOS
   try{
     const vuelos = await loadVuelosInfo(g);
     if (!vuelos.length){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS REGISTRADOS.</div>'; }
@@ -419,99 +385,67 @@ async function renderResumen(g, pane){
       vuelos.forEach(v=>{
         const titulo = (v.numero ? ('#'+v.numero+' — ') : '') + (v.proveedor || '');
         const ida = toISO(v.fechaIda), vuelta = toISO(v.fechaVuelta);
-        const linea = (v.origen||'')+' → '+(v.destino||'') + (ida?(' · ' + ida):'') + (vuelta?(' → '+vuelta):'');
+        const linea = `${v.origen||''} — ${v.destino||''} ${ida?(' · '+ida):''}${vuelta?(' — '+vuelta):''}`;
         const tip = v.tipoVuelo ? (' ('+v.tipoVuelo+')') : '';
-        const item=document.createElement('div');
-        item.className='meta';
-        item.textContent = (titulo ? (titulo + ' · ') : '') + linea + tip;
+        const item=document.createElement('div'); item.className='meta'; item.textContent = `${titulo} · ${linea}${tip}`;
         list.appendChild(item);
       });
       vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4>';
       vuelosBox.appendChild(list);
     }
-  }catch(e){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">NO FUE POSIBLE CARGAR.</div>'; console.error(e); }
+  }catch(e){ console.error(e); vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">NO FUE POSIBLE CARGAR.</div>'; }
 }
 
 async function loadHotelInfo(g){
   const key = g.numeroNegocio;
   if (state.cache.hotel.has(key)) return state.cache.hotel.get(key);
-
   const qs = await getDocs(query(collection(db,'hotelAssignments'), where('grupoId','==', String(key))));
   if (qs.empty){ state.cache.hotel.set(key, null); return null; }
-
-  const rango = { ini: toISO(g.fechaInicio), fin: toISO(g.fechaFin) };
-  let elegido=null, score=1e15;
+  let elegido=null, score=1e15; const rango={ini:toISO(g.fechaInicio), fin:toISO(g.fechaFin)};
   qs.forEach(d=>{
-    const x=d.data()||{};
-    const ci = toISO(x.checkIn), co = toISO(x.checkOut);
-    let s=5e14;
-    if (ci && co && rango.ini && rango.fin){
-      const overlap = !(co < rango.ini || ci > rango.fin);
-      s = overlap ? 0 : Math.abs(new Date(ci) - new Date(rango.ini));
-    }
-    if (s < score){ score=s; elegido={ id:d.id, ...x }; }
+    const x=d.data()||{}; const ci=toISO(x.checkIn), co=toISO(x.checkOut);
+    let s=5e14; if (ci && co && rango.ini && rango.fin){ const overlap = !(co < rango.ini || ci > rango.fin); s = overlap ? 0 : Math.abs(new Date(ci) - new Date(rango.ini)); }
+    if (s<score){ score=s; elegido={ id:d.id, ...x }; }
   });
-
-  let hotelDoc=null;
-  if (elegido?.hotelId){
-    const hd = await getDoc(doc(db,'hoteles', String(elegido.hotelId)));
-    if (hd.exists()) hotelDoc = { id: hd.id, ...hd.data() };
-  }
-  const out = { ...elegido, hotel: hotelDoc, hotelNombre: elegido?.nombre || elegido?.hotelNombre || hotelDoc?.nombre || '', destino: hotelDoc?.destino || '' };
-  state.cache.hotel.set(key, out);
-  return out;
+  let hotelDoc=null; if (elegido?.hotelId){ const hd=await getDoc(doc(db,'hoteles', String(elegido.hotelId))); if (hd.exists()) hotelDoc={ id:hd.id, ...hd.data() }; }
+  const out = { ...elegido, hotel:hotelDoc, hotelNombre: elegido?.nombre || elegido?.hotelNombre || hotelDoc?.nombre || '' };
+  state.cache.hotel.set(key, out); return out;
 }
 
 async function loadVuelosInfo(g){
-  const key = g.numeroNegocio;
-  if (state.cache.vuelos.has(key)) return state.cache.vuelos.get(key);
-
-  let found=[];
-  try{
-    const qs = await getDocs(query(collection(db,'vuelos'), where('grupoIds','array-contains', String(key))));
+  const key=g.numeroNegocio; if (state.cache.vuelos.has(key)) return state.cache.vuelos.get(key);
+  let found=[]; try{
+    const qs=await getDocs(query(collection(db,'vuelos'), where('grupoIds','array-contains', String(key))));
     qs.forEach(d=> found.push({ id:d.id, ...d.data() }));
-  }catch(e){ console.warn('Query vuelos por grupoIds falló/índice:', e); }
-
+  }catch(e){ /* índice faltante */ }
   if (!found.length){
-    const ss = await getDocs(collection(db,'vuelos'));
-    ss.forEach(d=>{
-      const v=d.data()||{}; const arr=Array.isArray(v.grupos)?v.grupos:[];
-      const hit = arr.some(x=> String(x?.id||'')===String(key));
-      if (hit) found.push({ id:d.id, ...v });
-    });
+    const ss=await getDocs(collection(db,'vuelos'));
+    ss.forEach(d=>{ const v=d.data()||{}; const arr=Array.isArray(v.grupos)?v.grupos:[]; if (arr.some(x=> String(x?.id||'')===String(key))) found.push({ id:d.id, ...v }); });
   }
-
-  found.sort((a,b)=> (toISO(a.fechaIda)||'').localeCompare(toISO(b.fechaIda)||''));
-  state.cache.vuelos.set(key, found);
-  return found;
+  found.sort((a,b)=> (toISO(a.fechaIda)||'').localeCompare(toISO(b.fechaIda)||'')); state.cache.vuelos.set(key, found); return found;
 }
 
-/* ============== Itinerario + asistencia + bitácora + servicios ============== */
+/* ============== Itinerario + asistencia + bitácora ============== */
 function renderItinerario(g, pane, preferDate){
   pane.innerHTML='';
   const fechas = rangoFechas(g.fechaInicio, g.fechaFin);
   if (!fechas.length){ pane.innerHTML='<div class="muted">FECHAS NO DEFINIDAS.</div>'; return; }
 
-  const pillsWrap=document.createElement('div'); pillsWrap.className='date-pills';
-  pane.appendChild(pillsWrap);
-
+  const pillsWrap=document.createElement('div'); pillsWrap.className='date-pills'; pane.appendChild(pillsWrap);
   const actsWrap=document.createElement('div'); actsWrap.className='acts'; pane.appendChild(actsWrap);
 
   const hoy=toISO(new Date());
-  let startDate = preferDate || ( (hoy>=fechas[0] && hoy<=fechas[fechas.length-1]) ? hoy : fechas[0] );
+  let startDate = preferDate || ( (hoy>=fechas[0] && hoy<=fechas.at(-1)) ? hoy : fechas[0] );
 
-  fechas.forEach((f)=>{
-    const pill=document.createElement('div');
-    pill.className='pill'+(f===startDate?' active':''); pill.textContent=fmt(f); pill.title=f; pill.dataset.fecha=f;
-    pill.onclick=()=>{ pillsWrap.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); pill.classList.add('active'); renderActs(g, f, actsWrap); localStorage.setItem('rt_last_date_'+g.id, f); updateQS(g.numeroNegocio||g.id, f); };
+  fechas.forEach(f=>{
+    const pill=document.createElement('div'); pill.className='pill'+(f===startDate?' active':''); pill.textContent=fmt(f); pill.title=f; pill.dataset.fecha=f;
+    pill.onclick=()=>{ pillsWrap.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); pill.classList.add('active'); renderActs(g, f, actsWrap); localStorage.setItem('rt_last_date_'+g.id, f); };
     pillsWrap.appendChild(pill);
   });
 
   const lastSaved = localStorage.getItem('rt_last_date_'+g.id);
   if (lastSaved && fechas.includes(lastSaved)) startDate = lastSaved;
-
   renderActs(g, startDate, actsWrap);
-  updateQS(g.numeroNegocio||g.id, startDate);
 }
 
 async function renderActs(grupo, fechaISO, cont){
@@ -523,46 +457,44 @@ async function renderActs(grupo, fechaISO, cont){
     const plan = calcPlan(act, grupo);
     const saved = getSavedAsistencia(grupo, fechaISO, act.actividad);
 
-    const horaIni = (act.horaInicio!=null && act.horaInicio!=='') ? act.horaInicio : '--:--';
-    const horaFin = (act.horaFin!=null && act.horaFin!=='') ? act.horaFin : '--:--';
-    const paxFinalInit = (saved && saved.paxFinal!=null) ? saved.paxFinal : '';
-    const notasInit = (saved && saved.notas) ? saved.notas : '';
-    const actName = (act.actividad!=null && act.actividad!=='') ? act.actividad : 'ACTIVIDAD';
-    const actKey = slug(actName);
+    const horaIni = act.horaInicio || '--:--';
+    const horaFin = act.horaFin    || '--:--';
+    const paxFinalInit = (saved?.paxFinal ?? '');
+    const notasInit    = (saved?.notas ?? '');
+    const actName = act.actividad || 'ACTIVIDAD';
+    const actKey  = slug(actName);
 
     const div=document.createElement('div'); div.className='act';
-    div.innerHTML =
-      '<h4>'+ actName +'</h4>'+
-      '<div class="meta">'+ horaIni +'–'+ horaFin +' · PLAN: <strong>'+ plan +'</strong> PAX</div>'+
-      '<div class="row">'+
-        '<input type="number" min="0" inputmode="numeric" placeholder="ASISTENTES" />'+
-        '<textarea placeholder="NOTAS (OPCIONAL)"></textarea>'+
-        '<button class="btnSave">GUARDAR</button>'+
-        '<button class="btnServicio">FICHA</button>'+
-        '<button class="btnVoucher" style="display:none">VOUCHER</button>'+
-      '</div>'+
-      '<div class="bitacora" style="margin-top:.5rem">'+
-        '<div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>'+
-        '<div class="bitItems" style="display:grid; gap:.35rem"></div>'+
-        '<div class="row" style="margin-top:.35rem">'+
-          '<input class="bitInput" type="text" placeholder="AÑADIR NOTA..."/>'+
-          '<button class="bitAdd">AGREGAR</button>'+
-        '</div>'+
-      '</div>';
+    div.innerHTML = `
+      <h4>${actName}</h4>
+      <div class="meta">${horaIni}–${horaFin} · PLAN: <strong>${plan}</strong> PAX</div>
+      <div class="row">
+        <input type="number" min="0" inputmode="numeric" placeholder="ASISTENTES"/>
+        <textarea placeholder="NOTAS (OPCIONAL)"></textarea>
+        <button class="btnSave">GUARDAR</button>
+      </div>
+      <div class="bitacora" style="margin-top:.5rem">
+        <div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>
+        <div class="bitItems" style="display:grid;gap:.35rem"></div>
+        <div class="row" style="margin-top:.35rem">
+          <input class="bitInput" type="text" placeholder="AÑADIR NOTA..."/>
+          <button class="bitAdd">AGREGAR</button>
+        </div>
+      </div>
+    `;
     cont.appendChild(div);
 
-    // set initial values
-    div.querySelector('input[type="number"]').value = paxFinalInit;
+    div.querySelector('input').value = paxFinalInit;
     div.querySelector('textarea').value = notasInit;
 
-    // --- Guardar asistencia ---
+    // Guardar asistencia
     div.querySelector('.btnSave').onclick = async ()=>{
       const btn = div.querySelector('.btnSave'); btn.disabled=true;
       try{
         const refGrupo = doc(db,'grupos', grupo.id);
-        const keyPath = 'asistencias.'+fechaISO+'.'+actKey;
+        const keyPath = `asistencias.${fechaISO}.${actKey}`;
         const data = {
-          paxFinal: Number(div.querySelector('input[type="number"]').value || 0),
+          paxFinal: Number(div.querySelector('input').value || 0),
           notas: String(div.querySelector('textarea').value || ''),
           byUid: auth.currentUser.uid,
           byEmail: String(auth.currentUser.email||'').toLowerCase(),
@@ -575,7 +507,7 @@ async function renderActs(grupo, fechaISO, cont){
       }catch(e){ console.error(e); btn.disabled=false; alert('NO SE PUDO GUARDAR LA ASISTENCIA.'); }
     };
 
-    // --- Bitácora: cargar y agregar ---
+    // Bitácora
     const itemsWrap = div.querySelector('.bitItems');
     await loadBitacora(grupo.id, fechaISO, actKey, itemsWrap);
 
@@ -584,60 +516,10 @@ async function renderActs(grupo, fechaISO, cont){
       const texto = (inp.value||'').trim(); if (!texto) return;
       try{
         const coll = collection(db, 'grupos', grupo.id, 'bitacora', `${fechaISO}-${actKey}`, 'items');
-        await addDoc(coll, {
-          texto, byUid: auth.currentUser.uid, byEmail: String(auth.currentUser.email||'').toLowerCase(), ts: serverTimestamp()
-        });
+        await addDoc(coll, { texto, byUid: auth.currentUser.uid, byEmail: String(auth.currentUser.email||'').toLowerCase(), ts: serverTimestamp() });
         inp.value=''; await loadBitacora(grupo.id, fechaISO, actKey, itemsWrap);
       }catch(e){ console.error(e); alert('NO SE PUDO GUARDAR LA NOTA.'); }
     };
-
-    // --- Ficha Servicio + Voucher ---
-    const btnServicio = div.querySelector('.btnServicio');
-    const btnVoucher  = div.querySelector('.btnVoucher');
-
-    btnServicio.onclick = async ()=>{
-      const sid = String(act.servicioId || act.servicioDocId || '').trim();
-      if (!sid){ openModal('<div class="muted">SIN FICHA DE SERVICIO ASOCIADA A ESTA ACTIVIDAD.</div>'); return; }
-      try{
-        const sdoc = await getDoc(doc(db,'Servicios', sid));
-        if (!sdoc.exists()){ openModal('<div class="muted">SERVICIO NO ENCONTRADO.</div>'); return; }
-        const s = { id:sdoc.id, ...sdoc.data() };
-        const nombre = String(s.nombre || actName);
-        const contacto = [s.contactoNombre, s.contactoTelefono, s.contactoCorreo].filter(Boolean).join(' · ');
-        const indic = String(s.indicaciones || s.instrucciones || '');
-        const forma = String(s.formaPago || s.formaDePago || '');
-        const ciudad = String(s.ciudad || '');
-        const voucherTipo = String(s.voucherTipo || '').toLowerCase();
-        const voucherUrl = s.voucherUrl || s.voucherURL || '';
-
-        const html =
-          '<h3 style="margin-top:0">'+nombre+'</h3>'+
-          (ciudad?('<div class="meta">CIUDAD: '+ciudad+'</div>'):'')+
-          (contacto?('<div class="meta">CONTACTO: '+contacto+'</div>'):'')+
-          (indic?('<div class="prov">INDICACIONES: '+indic+'</div>'):'')+
-          (forma?('<div class="meta">FORMA DE PAGO: '+forma+'</div>'):'')+
-          ((voucherTipo==='fisico' || voucherTipo==='físico' || voucherTipo==='electronico' || voucherTipo==='electrónico') ?
-            ('<div class="meta">VOUCHER: '+(s.voucherTipo||'')+'</div>' + (voucherUrl?('<div class="meta"><a href="'+voucherUrl+'" target="_blank" rel="noopener">ABRIR VOUCHER</a></div>'):'')) :
-            '<div class="meta">VOUCHER: NO APLICA</div>');
-        openModal(html);
-      }catch(e){ console.error(e); openModal('<div class="muted">ERROR AL CARGAR EL SERVICIO.</div>'); }
-    };
-
-    // Mostrar botón Voucher directo si aplica
-    (async ()=>{
-      try{
-        const sid = String(act.servicioId || act.servicioDocId || '').trim();
-        if (!sid){ btnVoucher.style.display='none'; return; }
-        const sdoc = await getDoc(doc(db,'Servicios', sid));
-        if (!sdoc.exists()){ btnVoucher.style.display='none'; return; }
-        const s=sdoc.data()||{};
-        const t=String(s.voucherTipo||'').toLowerCase();
-        if (t==='fisico'||t==='físico'||t==='electronico'||t==='electrónico'){
-          btnVoucher.style.display='';
-          btnVoucher.onclick=()=>{ const url=s.voucherUrl||s.voucherURL||''; if(url) window.open(url,'_blank'); else openModal('<div class="muted">VOUCHER SIN URL. REVISE INDICACIONES DEL SERVICIO.</div>'); };
-        }
-      }catch(e){ btnVoucher.style.display='none'; }
-    })();
   }
 }
 
@@ -648,30 +530,13 @@ async function loadBitacora(grupoId, fechaISO, actKey, wrap){
     const qs = await getDocs(query(coll, orderBy('ts','desc'), limit(50)));
     const frag=document.createDocumentFragment();
     qs.forEach(d=>{
-      const x=d.data()||{};
-      const quien = String(x.byEmail || x.byUid || 'USUARIO');
+      const x=d.data()||{}; const quien = String(x.byEmail || x.byUid || 'USUARIO');
       const cuando = x.ts?.seconds ? new Date(x.ts.seconds*1000) : null;
       const hora = cuando ? cuando.toLocaleString('es-CL') : '';
-      const div=document.createElement('div');
-      div.className='meta';
-      div.textContent = '• ' + (x.texto || '') + ' — ' + quien + (hora?(' · '+hora):'');
-      frag.appendChild(div);
+      const div=document.createElement('div'); div.className='meta';
+      div.textContent = `• ${x.texto||''} — ${quien}${hora?(' · '+hora):''}`; frag.appendChild(div);
     });
     wrap.innerHTML=''; wrap.appendChild(frag);
     if (!qs.size) wrap.innerHTML='<div class="muted">AÚN NO HAY NOTAS.</div>';
   }catch(e){ console.error(e); wrap.innerHTML='<div class="muted">NO SE PUDO CARGAR LA BITÁCORA.</div>'; }
-}
-
-/* ============== Modal simple ============== */
-function openModal(html){
-  let m=document.getElementById('rtModal');
-  if(!m){
-    m=document.createElement('div'); m.id='rtModal';
-    m.style.cssText='position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:9999';
-    m.innerHTML='<div id="rtBox" style="max-width:720px; background:#0f1530; border:1px solid #223053; border-radius:14px; padding:16px"></div>';
-    m.onclick=(e)=>{ if(e.target===m) m.remove(); };
-    document.body.appendChild(m);
-  }
-  m.querySelector('#rtBox').innerHTML=html;
-  m.style.display='flex';
 }
