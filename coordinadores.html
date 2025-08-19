@@ -23,7 +23,8 @@
     .panel select{width:100%;padding:.55rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:#e5e7eb}
 
     /* barra navegación */
-    #navBar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+    #navBar{display:grid;gap:.5rem}
+    #navBar .btns{display:flex;gap:.5rem;align-items:center}
     #navBar button{background:#1f2937;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:.45rem .8rem;cursor:pointer}
     #navBar select{min-width:260px}
 
@@ -60,11 +61,14 @@
   </header>
 
   <div class="wrap">
-    <!-- aquí el JS inyecta: selector, estadísticas, navegación -->
-    <div id="grupos" class="loader">Cargando tus grupos…</div>
-    <p class="muted" id="hint">Selecciona una fecha para ver y registrar asistencia.</p>
+    <!-- los 3 paneles los inyecta el JS en este orden:
+         1) #staffBar.panel  2) #navPanel.panel  3) #statsPanel.panel -->
+    <div id="gruposPanel" class="panel">
+      <div id="grupos" class="loader">Cargando tus grupos…</div>
+      <p class="muted" id="hint">Selecciona una fecha para ver y registrar asistencia.</p>
+    </div>
   </div>
 
-  <script type="module" src="./coordinadores.js?v=2"></script>
+  <script type="module" src="./coordinadores.js?v=3"></script>
 </body>
 </html>
