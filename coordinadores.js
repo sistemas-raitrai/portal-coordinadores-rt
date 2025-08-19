@@ -1,10 +1,7 @@
-/* coordinadores.js — Portal Coordinadores RT (v3)
-   - Orden de paneles: staffBar → navPanel → statsPanel → gruposPanel
-   - #grupos dentro de un panel para igual ancho/márgenes
-   - #allTrips con: FILTRO (TODOS), DESTINOS, VIAJES
-   - #statsPanel refleja filtro (todos o por destino)
-   - Fechas en DD-MM-AAAA
+/* coordinadores.js — Portal Coordinadores RT (staff “Todos”, buscador, stats filtradas)
+   Flujo: Selector staff → Stats (según filtro) → Nav (Prev/Sig + select) → Viaje (Resumen/Itinerario)
 */
+
 import { app, db } from './firebase-init-portal.js';
 import { getAuth, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
@@ -24,24 +21,39 @@ const STAFF_EMAILS = new Set(
   .map(e=>e.toLowerCase())
 );
 
-/* ============== Utils de texto/fechas ============== */
-const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
+/* ============== Utils ============== */
+const norm = (s='') =>
+  s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
+
 const slug = s => norm(s).slice(0,60);
 
 const toISO = (x)=>{
   if(!x) return '';
   if (typeof x==='string'){
     if (/^\d{4}-\d{2}-\d{2}$/.test(x)) return x;
-    const d=new Date(x); return isNaN(d)?'':d.toISOString().slice(0,10);
+    const d=new Date(x);
+    return isNaN(d)?'':d.toISOString().slice(0,10);
   }
   if (x && typeof x==='object' && 'seconds' in x) return new Date(x.seconds*1000).toISOString().slice(0,10);
   if (x instanceof Date) return x.toISOString().slice(0,10);
   return '';
 };
 
-const dmy = (iso)=>{ // YYYY-MM-DD -> DD-MM-YYYY
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso||'');
-  return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+const dmy = iso => {
+  if(!iso) return '';
+  const [y,m,d] = iso.split('-');
+  return `${d}-${m}-${y}`;
+};
+
+const parseDateFlexible = (s)=>{
+  // acepta dd-mm-aaaa o yyyy-mm-dd
+  const t = s.trim();
+  if (/^\d{2}-\d{2}-\d{4}$/.test(t)){
+    const [dd,mm,yy] = t.split('-');
+    return `${yy}-${mm}-${dd}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  return '';
 };
 
 const daysInclusive = (ini, fin)=>{
@@ -51,14 +63,17 @@ const daysInclusive = (ini, fin)=>{
 
 const rangoFechas = (ini, fin)=>{
   const out=[]; const A=toISO(ini), B=toISO(fin); if(!A||!B) return out;
-  const da=new Date(A+'T00:00:00'), db=new Date(B+'T00:00:00');
-  for(let d=new Date(da); d<=db; d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10));
+  for(let d=new Date(A+'T00:00:00'); d<=new Date(B+'T00:00:00'); d.setDate(d.getDate()+1))
+    out.push(d.toISOString().slice(0,10));
   return out;
 };
 
 const parseQS = ()=>{ const p=new URLSearchParams(location.search); return { g:p.get('g')||'', f:p.get('f')||'' }; };
+const fmt = iso => { if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'}); };
 
-/* tolerancia de itinerario (obj o array legado) */
+const cleanDest = s => norm(String(s || '').trim());
+
+/* itinerario tolerante (obj o array legado) */
 function normalizeItinerario(raw){
   if (!raw) return {};
   if (Array.isArray(raw)){
@@ -86,6 +101,8 @@ function uidsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); };
 function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); }; push(g?.coordinadorId); arrify(g?.coordinadoresIds).forEach(push); return [...out]; }
 function nombresOf(g){ const out=new Set(), push=s=>{ if(s) out.add(norm(String(s))); }; push(g?.coordinadorNombre||g?.coordinador); if (g?.coordinador?.nombre) push(g.coordinador.nombre); arrify(g?.coordinadoresNombres).forEach(push); return [...out]; }
 
+const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
+
 /* asistencia helpers */
 function getSavedAsistencia(grupo, fechaISO, actividad){
   const byDate = grupo?.asistencias?.[fechaISO]; if(!byDate) return null;
@@ -103,38 +120,34 @@ function calcPlan(actividad, grupo){
   const base=(grupo && (grupo.cantidadgrupo!=null?grupo.cantidadgrupo:grupo.pax));
   return Number(base||0);
 }
-const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
 
-/* ====== Estado ====== */
+/* estado */
 const state = {
   user:null,
   coordinadores:[],
-  grupos:[],
-  ordenados:[],
+  grupos:[],       // universo (según scope: todos o solo del coordinador)
+  ordenados:[],    // ordenados por cercanía
   idx:0,
-  filter: { type:'all', value:null }, // 'all' | 'dest'
-  cache:{ hotel:new Map(), vuelos:new Map() }
+  cache:{ hotel:new Map(), vuelos:new Map() },
+
+  // filtros
+  scope: 'coord',  // 'coord' | 'all'
+  coordId: null,   // id de coordinador si scope='coord'
+  q: '',           // texto de búsqueda
 };
 
-/* ====== Helpers UI: crear paneles y forzar orden ====== */
+/* helpers UI: paneles alineados (siempre insertados ANTES de #grupos para respetar el orden) */
 function ensurePanel(id, html=''){
   let p = document.getElementById(id);
   if (!p){
     p = document.createElement('div');
     p.id = id; p.className = 'panel';
-    document.querySelector('.wrap').prepend(p);
+    const wrap = document.querySelector('.wrap');
+    const anchor = document.getElementById('grupos');
+    wrap.insertBefore(p, anchor);
   }
   if (html) p.innerHTML = html;
-  enforceOrder();
   return p;
-}
-function enforceOrder(){
-  const wrap = document.querySelector('.wrap');
-  const order = ['staffBar','navPanel','statsPanel','gruposPanel'];
-  order.forEach(id=>{
-    const node = document.getElementById(id);
-    if (node) wrap.appendChild(node); // mueve al final en el orden indicado
-  });
 }
 
 /* ============== Arranque ============== */
@@ -142,19 +155,22 @@ onAuthStateChanged(auth, async (user) => {
   if (!user) { location.href='index.html'; return; }
   state.user = user;
 
-  // Asegura que #grupos está dentro de #gruposPanel (panel)
-  ensurePanel('gruposPanel'); // ya existe en el HTML, pero garantizamos orden
-
   const email = (user.email||'').toLowerCase();
   const isStaff = STAFF_EMAILS.has(email);
   const coordinadores = await loadCoordinadores();
   state.coordinadores = coordinadores;
 
+  // #grupos ancho panel
+  const gcont = document.getElementById('grupos');
+  if (gcont) gcont.classList.add('panel');
+
   if (isStaff) {
     await showStaffSelector(coordinadores, user);
   } else {
+    state.scope = 'coord';
     const miReg = findCoordinadorForUser(coordinadores, user);
-    await loadGruposForCoordinador(miReg, user);
+    state.coordId = miReg?.id || null;
+    await loadGruposForScope(user);
   }
 });
 
@@ -165,34 +181,39 @@ async function loadCoordinadores(){
     id:d.id, nombre:String(x.nombre||x.Nombre||x.coordinador||''), email:String(x.email||x.correo||x.mail||'').toLowerCase(), uid:String(x.uid||x.userId||'')
   });});
   list.sort((a,b)=> a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'}));
-  // eliminar duplicados por (nombre|email)
+  // dedupe por nombre|email
   const seen=new Set(), dedup=[]; for(const c of list){ const k=(c.nombre+'|'+c.email).toLowerCase(); if(!seen.has(k)){ seen.add(k); dedup.push(c); } }
   return dedup;
 }
 
-/* ============== Selector Staff ============== */
-async function showStaffSelector(coordinadores){
+/* ============== Selector Staff (incluye "TODOS LOS COORDINADORES") ============== */
+async function showStaffSelector(coordinadores, user){
   const bar = ensurePanel('staffBar',
-    '<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>'+
-    '<select id="coordSelect"></select>'
+    `<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>
+     <select id="coordSelect"></select>`
   );
   const sel = bar.querySelector('#coordSelect');
-  sel.innerHTML = '<option value="">— SELECCIONA COORDINADOR —</option>' +
+
+  sel.innerHTML =
+    `<option value="ALL">TODOS LOS COORDINADORES</option>` +
     coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'')} — ${c.email||'SIN CORREO'}</option>`).join('');
+
   sel.onchange = async ()=>{
-    const id = sel.value;
-    const elegido = state.coordinadores.find(c=>c.id===id) || null;
-    localStorage.setItem('rt_staff_coord', id||'');
-    await loadGruposForCoordinador(elegido, state.user);
+    const val = sel.value;
+    if (val === 'ALL'){ state.scope = 'all'; state.coordId = null; }
+    else { state.scope = 'coord'; state.coordId = val; }
+    localStorage.setItem('rt_staff_coord_scope', state.scope);
+    localStorage.setItem('rt_staff_coord_id', state.coordId||'');
+    await loadGruposForScope(user);
   };
 
-  // selección previa
-  const last = localStorage.getItem('rt_staff_coord');
-  if (last && state.coordinadores.find(c=>c.id===last)){
-    sel.value = last;
-    const elegido = state.coordinadores.find(c=>c.id===last);
-    await loadGruposForCoordinador(elegido, state.user);
-  }
+  // restaurar última selección
+  const lastScope = localStorage.getItem('rt_staff_coord_scope');
+  const lastId    = localStorage.getItem('rt_staff_coord_id') || '';
+  if (lastScope === 'all'){ sel.value = 'ALL'; state.scope='all'; state.coordId=null; }
+  else if (lastId && coordinadores.find(c=>c.id===lastId)){ sel.value = lastId; state.scope='coord'; state.coordId=lastId; }
+
+  await loadGruposForScope(user);
 }
 
 /* ============== Resolver coordinador (no staff) ============== */
@@ -204,17 +225,12 @@ function findCoordinadorForUser(coordinadores, user){
   return { id:'self', nombre: user.displayName || email, email, uid };
 }
 
-/* ============== Cargar grupos del coordinador ============== */
-async function loadGruposForCoordinador(coord, user){
+/* ============== Cargar grupos según scope (ALL / COORD) ============== */
+async function loadGruposForScope(user){
   const cont=document.getElementById('grupos'); if (cont) cont.textContent='CARGANDO GRUPOS…';
 
   const allSnap=await getDocs(collection(db,'grupos'));
   const wanted=[];
-  const emailElegido=(coord?.email||'').toLowerCase();
-  const uidElegido=(coord?.uid||'').toString();
-  const docIdElegido=(coord?.id||'').toString();
-  const nombreElegido=norm(coord?.nombre||'');
-  const isSelf = !coord || coord.id==='self' || emailElegido===(user.email||'').toLowerCase();
 
   allSnap.forEach(d=>{
     const raw={id:d.id, ...d.data()};
@@ -226,41 +242,40 @@ async function loadGruposForCoordinador(coord, user){
       asistencias: raw.asistencias || {},
       numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || d.id)
     };
-    const gEmails=emailsOf(raw), gUids=uidsOf(raw), gDocIds=coordDocIdsOf(raw), gNames=nombresOf(raw);
-    const match=(emailElegido && gEmails.includes(emailElegido)) || (uidElegido && gUids.includes(uidElegido)) ||
-                (docIdElegido && gDocIds.includes(docIdElegido)) || (nombreElegido && gNames.includes(nombreElegido)) ||
-                (isSelf && gUids.includes(user.uid));
-    if (match) wanted.push(g);
-  });
 
-  // fallback por conjuntos (si fuese necesario)
-  if (wanted.length===0 && coord && coord.id!=='self'){
-    try{
-      const qs=[]; if(uidElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorId','==',uidElegido)));
-      if(emailElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorEmail','==',emailElegido)));
-      if(docIdElegido) qs.push(query(collectionGroup(db,'conjuntos'), where('coordinadorDocId','==',docIdElegido)));
-      const ids=new Set();
-      for(const qy of qs){ const ss=await getDocs(qy); ss.forEach(docu=>{ (docu.data()?.viajes||[]).forEach(id=>ids.add(String(id))); }); }
-      for(const id of ids){ const ref=doc(db,'grupos',id); const dd=await getDoc(ref); if(dd.exists()){ const raw={id:dd.id, ...dd.data()}; wanted.push({
-        ...raw, fechaInicio:toISO(raw.fechaInicio||raw.inicio||raw.fecha_ini), fechaFin:toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
-        itinerario:normalizeItinerario(raw.itinerario), asistencias:raw.asistencias||{}, numeroNegocio:String(raw.numeroNegocio||raw.id||dd.id)
-      });}}
-    }catch(e){ console.warn('Fallback conjuntos no disponible:', e); }
-  }
+    // Campos útiles para búsqueda
+    g._search = {
+      name: (g.nombreGrupo || g.aliasGrupo || g.id || '').toString(),
+      destino: (g.destino || '').toString(),
+      programa: (g.programa || '').toString(),
+      coordNombre: (g.coordinadorNombre || g.coordinador?.nombre || '').toString(),
+      coordEmail: (g.coordinadorEmail || g.coordinador?.email || '').toString()
+    };
+
+    // Filtro por scope=coord (cuando aplica)
+    if (state.scope === 'coord'){
+      const emailElegido=(state.coordId && state.coordinadores.find(c=>c.id===state.coordId)?.email || '').toLowerCase();
+      const uidElegido  =(state.coordinadores.find(c=>c.id===state.coordId)?.uid || '').toString();
+      const docIdElegido= state.coordId;
+      const nombreElegido = norm(state.coordinadores.find(c=>c.id===state.coordId)?.nombre || '');
+
+      const gEmails=emailsOf(raw), gUids=uidsOf(raw), gDocIds=coordDocIdsOf(raw), gNames=nombresOf(raw);
+      const match=(emailElegido && gEmails.includes(emailElegido)) ||
+                  (uidElegido && gUids.includes(uidElegido)) ||
+                  (docIdElegido && gDocIds.includes(docIdElegido)) ||
+                  (nombreElegido && gNames.includes(nombreElegido));
+      if (!match) return; // descarta
+    }
+
+    wanted.push(g);
+  });
 
   // ordenar por “próximos primero”
   const hoy = toISO(new Date());
   const futuros = wanted.filter(g => (g.fechaInicio||'') >= hoy).sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
-  const pasados = wanted.filter(g => (g.fechaInicio||'') < hoy).sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||'')); // mantén asc
+  const pasados = wanted.filter(g => (g.fechaInicio||'') < hoy).sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
   state.grupos = wanted;
   state.ordenados = [...futuros, ...pasados];
-
-  // filtro por defecto
-  state.filter = { type:'all', value:null };
-
-  // PANEL: navegación + estadísticas + viaje
-  renderNavBar();
-  renderStatsFiltered();
 
   // índice inicial por ?g= o por último visto
   const { g:qsG, f:qsF } = parseQS();
@@ -274,39 +289,81 @@ async function loadGruposForCoordinador(coord, user){
     if (last){ const i = state.ordenados.findIndex(x=> x.id===last || x.numeroNegocio===last); if (i>=0) idx=i; }
   }
   state.idx = Math.max(0, Math.min(idx, state.ordenados.length-1));
+
+  renderNavBar();              // incluye buscador
+  renderStatsFiltered();       // stats del listado filtrado por q (inicialmente vacío = todos)
   renderOneGroup(state.ordenados[state.idx], qsF);
 }
 
-/* ============== Estadísticas (según filtro) ============== */
-function getFilteredList(){
-  if (state.filter.type==='dest' && state.filter.value){
-    return state.ordenados.filter(g => String(g.destino||'') === state.filter.value);
+/* ============== Filtro por texto (q) sobre el universo ordenado ============== */
+function applyTextFilter(list){
+  const q = (state.q || '').trim();
+  if (!q) return list.slice();
+
+  // Detecta token de rango fecha A..B o fecha simple
+  const tokens = q.split(/\s+/).map(t=>t.trim()).filter(Boolean);
+
+  let clamp = list.slice();
+
+  for (const tk of tokens){
+    if (/^\S+\.\.\S+$/.test(tk)){ // rango "a..b"
+      const [a,b] = tk.split('..').map(parseDateFlexible);
+      if (a && b){
+        clamp = clamp.filter(g => !( (g.fechaFin && g.fechaFin < a) || (g.fechaInicio && g.fechaInicio > b) ));
+        continue;
+      }
+    }
+    const maybeDate = parseDateFlexible(tk);
+    if (maybeDate){
+      clamp = clamp.filter(g => (g.fechaInicio && g.fechaFin && (g.fechaInicio <= maybeDate && maybeDate <= g.fechaFin)));
+      continue;
+    }
+
+    // texto libre contra varios campos (case/accents-insensitive)
+    const nk = norm(tk);
+    clamp = clamp.filter(g=>{
+      const S = g._search || {};
+      return (
+        norm(S.name).includes(nk) ||
+        norm(S.destino).includes(nk) ||
+        norm(S.programa).includes(nk) ||
+        norm(S.coordNombre).includes(nk) ||
+        norm(S.coordEmail).includes(nk) ||
+        norm(g.numeroNegocio).includes(nk)
+      );
+    });
   }
-  return state.ordenados.slice();
+
+  return clamp;
 }
+
+/* ============== Estadísticas globales (del filtrado) ============== */
 function renderStatsFiltered(){
-  renderStats(getFilteredList());
-}
-function renderStats(list){
+  const base = state.ordenados;
+  const list = applyTextFilter(base);
+
   const p = ensurePanel('statsPanel');
   if (!list.length){
-    p.innerHTML = '<div class="muted">SIN VIAJES PARA EL COORDINADOR SELECCIONADO.</div>';
+    p.innerHTML = '<div class="muted">SIN RESULTADOS PARA EL FILTRO ACTUAL.</div>';
+    // también refrescamos nav select a vacío:
+    fillTripsSelect([]);
     return;
   }
-  const labelFiltro = (state.filter.type==='dest')
-    ? `FILTRO: DESTINO — ${state.filter.value}`
-    : 'FILTRO: TODOS';
 
   const n = list.length;
   const minIniISO = list.map(g=>g.fechaInicio).filter(Boolean).sort()[0] || '';
   const maxFinISO = list.map(g=>g.fechaFin).filter(Boolean).sort().slice(-1)[0] || '';
   const totalDias = list.reduce((sum,g)=> sum + daysInclusive(g.fechaInicio,g.fechaFin), 0);
-  const destinos = [...new Set(list.map(g=>(g.destino||'').toString().trim()).filter(Boolean))];
+  const destinos = [...new Set(list.map(g=>(String(g.destino||'').trim())).filter(Boolean))];
   const paxTot = list.reduce((s,g)=> s + paxOf(g), 0);
   const paxPorViaje = list.map(g=> `${(g.aliasGrupo||g.nombreGrupo||g.id)} (${paxOf(g)} PAX)`).join(' · ');
 
+  const labelScope = (state.scope==='all') ? 'ÁMBITO: TODOS LOS COORDINADORES' : 'ÁMBITO: COORDINADOR SELECCIONADO';
+  const labelFiltro = state.q ? `FILTRO TEXTO: “${state.q}”` : 'FILTRO TEXTO: (NINGUNO)';
+
   p.innerHTML = `
     <div style="display:grid;gap:.4rem">
+      <div class="meta">${labelScope}</div>
       <div class="meta">${labelFiltro}</div>
       <div class="meta">TOTAL VIAJES: <strong>${n}</strong> · TOTAL DÍAS: <strong>${totalDias}</strong></div>
       <div class="meta">RANGO GLOBAL: ${minIniISO?dmy(minIniISO):'—'} — ${maxFinISO?dmy(maxFinISO):'—'}</div>
@@ -315,72 +372,98 @@ function renderStats(list){
       <div class="meta">PAX POR VIAJE: ${paxPorViaje || '—'}</div>
     </div>
   `;
+
+  // sincroniza select de viajes con el filtrado actual
+  fillTripsSelect(list);
 }
 
-/* ============== Barra navegación ============== */
+/* ============== Barra navegación (Prev/Sig + buscador + select viajes) ============== */
 function renderNavBar(){
   const p = ensurePanel('navPanel',
-    `<div id="navBar">
-       <div class="btns">
+    `<div id="navBar" style="gap:.6rem;display:grid;grid-template-columns: 1fr;row-gap:.6rem">
+       <div class="row">
          <button id="btnPrev">‹ ANTERIOR</button>
          <button id="btnNext">SIGUIENTE ›</button>
        </div>
+       <input id="searchTrips" type="text" placeholder="BUSCAR: destino, grupo, #negocio, coordinador, 29-11-2025 o 15-11-2025..19-12-2025"/>
        <select id="allTrips"></select>
      </div>`
   );
 
-  const sel = p.querySelector('#allTrips');
+  const search = p.querySelector('#searchTrips');
+  search.value = state.q || '';
+  let tmr=null;
+  search.oninput = ()=>{
+    clearTimeout(tmr);
+    tmr = setTimeout(()=>{
+      state.q = search.value || '';
+      renderStatsFiltered(); // re-hace stats y lista de viajes
+      // mantiene el viaje actual si sigue en el filtrado; si no, pone el primero
+      const list = applyTextFilter(state.ordenados);
+      const currentId = state.ordenados[state.idx]?.id;
+      const i = list.findIndex(g=>g.id===currentId);
+      state.idx = (i>=0 ? state.ordenados.findIndex(x=>x.id===currentId) : state.ordenados.findIndex(x=>x.id==(list[0]?.id)));
+      renderOneGroup(state.ordenados[state.idx]);
+      const sel = p.querySelector('#allTrips');
+      const j = list.findIndex(g=>g.id===state.ordenados[state.idx]?.id);
+      if (j>=0) sel.value = String(j);
+    }, 180);
+  };
+
+  // botones prev/sig (sobre filtrado actual)
+  p.querySelector('#btnPrev').onclick = ()=>{
+    const list = applyTextFilter(state.ordenados);
+    if (!list.length) return;
+    const curId = state.ordenados[state.idx]?.id;
+    const j = list.findIndex(g=>g.id===curId);
+    const j2 = Math.max(0, j-1);
+    const targetId = list[j2].id;
+    state.idx = state.ordenados.findIndex(g=>g.id===targetId);
+    renderOneGroup(state.ordenados[state.idx]);
+    p.querySelector('#allTrips').value = String(j2);
+  };
+  p.querySelector('#btnNext').onclick = ()=>{
+    const list = applyTextFilter(state.ordenados);
+    if (!list.length) return;
+    const curId = state.ordenados[state.idx]?.id;
+    const j = list.findIndex(g=>g.id===curId);
+    const j2 = Math.min(list.length-1, j+1);
+    const targetId = list[j2].id;
+    state.idx = state.ordenados.findIndex(g=>g.id===targetId);
+    renderOneGroup(state.ordenados[state.idx]);
+    p.querySelector('#allTrips').value = String(j2);
+  };
+
+  // rellena select según filtrado actual
+  fillTripsSelect(applyTextFilter(state.ordenados));
+}
+
+/* llena el select de viajes con el listado filtrado */
+function fillTripsSelect(list){
+  const sel = document.getElementById('allTrips');
+  if (!sel) return;
   sel.textContent = '';
-
-  // FILTRO: TODOS
-  const ogFiltro = document.createElement('optgroup'); ogFiltro.label = 'FILTRO';
-  ogFiltro.appendChild(new Option('TODOS', 'all'));
-  sel.appendChild(ogFiltro);
-
-  // DESTINOS
-  const destinos = [...new Set(state.ordenados.map(g=>String(g.destino||'')).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
-  if (destinos.length){
-    const ogDest = document.createElement('optgroup'); ogDest.label = 'DESTINOS';
-    destinos.forEach(d => ogDest.appendChild(new Option(d || '(sin destino)', 'dest:'+d)));
-    sel.appendChild(ogDest);
+  if (!list.length){
+    sel.appendChild(new Option('(SIN RESULTADOS)', ''));
+    return;
   }
-
-  // VIAJES
-  const ogTrips = document.createElement('optgroup'); ogTrips.label = 'VIAJES';
-  state.ordenados.forEach((g,i)=>{
+  list.forEach((g,i)=>{
     const name=(g.nombreGrupo||g.aliasGrupo||g.id);
-    const opt = new Option(
-      `${name} | IDA: ${dmy(g.fechaInicio||'')} VUELTA: ${dmy(g.fechaFin||'')}`,
-      `trip:${i}`
-    );
-    ogTrips.appendChild(opt);
+    const label = `${name} | IDA: ${dmy(g.fechaInicio||'')} VUELTA: ${dmy(g.fechaFin||'')}`;
+    sel.appendChild(new Option(label, String(i)));
   });
-  sel.appendChild(ogTrips);
 
-  // selecciona el viaje actual
-  sel.value = `trip:${state.idx}`;
-
-  // handlers
-  p.querySelector('#btnPrev').onclick = ()=>{ if(state.idx>0){ state.idx--; renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`; } };
-  p.querySelector('#btnNext').onclick = ()=>{ if(state.idx<state.ordenados.length-1){ state.idx++; renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`; } };
+  // posiciona en el índice del filtrado que corresponda al current
+  const curId = state.ordenados[state.idx]?.id;
+  const j = list.findIndex(x=>x.id===curId);
+  sel.value = (j>=0 ? String(j) : '0');
 
   sel.onchange = ()=>{
-    const v = sel.value || '';
-    if (v === 'all'){
-      state.filter = { type:'all', value:null };
-      renderStatsFiltered();
-      // mantiene el viaje actual
-      sel.value = `trip:${state.idx}`;
-    } else if (v.startsWith('dest:')){
-      const dest = v.slice(5);
-      state.filter = { type:'dest', value: dest };
-      renderStatsFiltered();
-      // mantiene el viaje actual
-      sel.value = `trip:${state.idx}`;
-    } else if (v.startsWith('trip:')){
-      state.idx = Number(v.slice(5)) || 0;
-      renderOneGroup(state.ordenados[state.idx]);
-    }
+    const j2 = Number(sel.value||0);
+    const targetId = list[j2]?.id;
+    if (!targetId) return;
+    state.idx = state.ordenados.findIndex(g=>g.id===targetId);
+    renderOneGroup(state.ordenados[state.idx]);
   };
 }
 
@@ -469,9 +552,8 @@ async function renderResumen(g, pane){
       const list=document.createElement('div');
       vuelos.forEach(v=>{
         const titulo = (v.numero ? ('#'+v.numero+' — ') : '') + (v.proveedor || '');
-        const ida = dmy(toISO(v.fechaIda));
-        const vuelta = dmy(toISO(v.fechaVuelta));
-        const linea = `${v.origen||''} — ${v.destino||''} ${ida?(' · '+ida):''}${vuelta?(' — '+vuelta):''}`;
+        const ida = toISO(v.fechaIda), vuelta = toISO(v.fechaVuelta);
+        const linea = `${v.origen||''} — ${v.destino||''} ${ida?(' · '+dmy(ida)) : ''}${vuelta?(' — '+dmy(vuelta)) : ''}`;
         const tip = v.tipoVuelo ? (' ('+v.tipoVuelo+')') : '';
         const item=document.createElement('div'); item.className='meta'; item.textContent = `${titulo} · ${linea}${tip}`;
         list.appendChild(item);
@@ -524,7 +606,7 @@ function renderItinerario(g, pane, preferDate){
   let startDate = preferDate || ( (hoy>=fechas[0] && hoy<=fechas.at(-1)) ? hoy : fechas[0] );
 
   fechas.forEach(f=>{
-    const pill=document.createElement('div'); pill.className='pill'+(f===startDate?' active':''); pill.textContent=dmy(f); pill.title=f; pill.dataset.fecha=f;
+    const pill=document.createElement('div'); pill.className='pill'+(f===startDate?' active':''); pill.textContent=fmt(f); pill.title=dmy(f); pill.dataset.fecha=f;
     pill.onclick=()=>{ pillsWrap.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); pill.classList.add('active'); renderActs(g, f, actsWrap); localStorage.setItem('rt_last_date_'+g.id, f); };
     pillsWrap.appendChild(pill);
   });
