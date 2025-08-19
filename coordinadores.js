@@ -143,27 +143,24 @@ function ensurePanel(id, html = '') {
     p = document.createElement('div');
     p.id = id;
     p.className = 'panel';
-
-    const wrap   = document.querySelector('.wrap');
-    const anchor = document.getElementById('grupos');
-
-    if (wrap) {
-      // si #grupos existe y REALMENTE es hijo de .wrap → insértalo antes
-      if (anchor && wrap.contains(anchor)) {
-        wrap.insertBefore(p, anchor);
-      } else {
-        // fallback seguro: colócalo al final de .wrap
-        wrap.appendChild(p);
-      }
-    } else {
-      // último fallback por si el DOM aún no está listo
-      document.body.appendChild(p);
-    }
+    // lo agregamos sin suponer nada del DOM
+    (document.querySelector('.wrap') || document.body).appendChild(p);
   }
   if (html) p.innerHTML = html;
+  ensureLayoutOrder();  // <-- garantiza el orden deseado
   return p;
 }
 
+function ensureLayoutOrder() {
+  const wrap = document.querySelector('.wrap');
+  if (!wrap) return;
+  // Orden requerido:
+  const order = ['staffBar', 'navPanel', 'statsPanel', 'grupos'];
+  order.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) wrap.appendChild(el);   // appendChild mueve el nodo si ya existe
+  });
+}
 
 /* ============== Arranque ============== */
 onAuthStateChanged(auth, async (user) => {
