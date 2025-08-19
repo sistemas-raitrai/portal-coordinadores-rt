@@ -137,18 +137,33 @@ const state = {
 };
 
 /* helpers UI: paneles alineados (siempre insertados ANTES de #grupos para respetar el orden) */
-function ensurePanel(id, html=''){
+function ensurePanel(id, html = '') {
   let p = document.getElementById(id);
-  if (!p){
+  if (!p) {
     p = document.createElement('div');
-    p.id = id; p.className = 'panel';
-    const wrap = document.querySelector('.wrap');
+    p.id = id;
+    p.className = 'panel';
+
+    const wrap   = document.querySelector('.wrap');
     const anchor = document.getElementById('grupos');
-    wrap.insertBefore(p, anchor);
+
+    if (wrap) {
+      // si #grupos existe y REALMENTE es hijo de .wrap → insértalo antes
+      if (anchor && wrap.contains(anchor)) {
+        wrap.insertBefore(p, anchor);
+      } else {
+        // fallback seguro: colócalo al final de .wrap
+        wrap.appendChild(p);
+      }
+    } else {
+      // último fallback por si el DOM aún no está listo
+      document.body.appendChild(p);
+    }
   }
   if (html) p.innerHTML = html;
   return p;
 }
+
 
 /* ============== Arranque ============== */
 onAuthStateChanged(auth, async (user) => {
