@@ -1,14 +1,16 @@
-/* coordinadores.js — Portal Coordinadores RT (Staff: TODOS, buscador, stats, gastos, alertas, vouchers) */
+/* coordinadores.js — Portal Coordinadores RT (20/08)
+   Staff "Todos", filtro extendido, alertas, gastos con Storage, vouchers y firma (clave/NFC).
+*/
 
 import { app, db } from './firebase-init-portal.js';
 import { getAuth, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
-  collection, collectionGroup, getDocs, getDoc, doc, updateDoc, addDoc, setDoc,
-  serverTimestamp, query, where, orderBy, limit
+  collection, collectionGroup, getDocs, getDoc, doc, updateDoc, addDoc,
+  serverTimestamp, query, where, orderBy, limit, setDoc
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 import {
-  getStorage, ref as storageRef, uploadBytes, getDownloadURL
+  getStorage, ref as sRef, uploadBytes, getDownloadURL
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
 /* ============== Auth ============== */
@@ -24,9 +26,7 @@ const STAFF_EMAILS = new Set(
 );
 
 /* ============== Utils ============== */
-const norm = (s='') =>
-  s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
-
+const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
 
 const toISO = (x)=>{
@@ -41,12 +41,14 @@ const toISO = (x)=>{
   return '';
 };
 
-const dmy = iso => { if(!iso) return ''; const [y,m,d]=iso.split('-'); return `${d}-${m}-${y}`; };
-
-const parseDateFlexible = (s)=>{
-  const t = s.trim();
-  if (/^\d{2}-\d{2}-\d{4}$/.test(t)){ const [dd,mm,yy] = t.split('-'); return `${yy}-${mm}-${dd}`; }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+const dmy = iso => {
+  if(!iso) return '';
+  const [y,m,d] = iso.split('-');
+  return `${d}-${m}-${y}`;
+};
+const ymdFromDMY = (s)=>{
+  const t = (s||'').trim();
+  if (/^\d{2}-\d{2}-\d{4}$/.test(t)){ const [dd,mm,yy]=t.split('-'); return `${yy}-${mm}-${dd}`; }
   return '';
 };
 
@@ -54,20 +56,16 @@ const daysInclusive = (ini, fin)=>{
   const a = toISO(ini), b = toISO(fin); if(!a||!b) return 0;
   return Math.max(1, Math.round((new Date(b)-new Date(a))/86400000)+1);
 };
-
 const rangoFechas = (ini, fin)=>{
   const out=[]; const A=toISO(ini), B=toISO(fin); if(!A||!B) return out;
-  for(let d=new Date(A+'T00:00:00'); d<=new Date(B+'T00:00:00'); d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10));
+  for(let d=new Date(A+'T00:00:00'); d<=new Date(B+'T00:00:00'); d.setDate(d.getDate()+1))
+    out.push(d.toISOString().slice(0,10));
   return out;
 };
-
 const parseQS = ()=>{ const p=new URLSearchParams(location.search); return { g:p.get('g')||'', f:p.get('f')||'' }; };
 const fmt = iso => { if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'}); };
 
 const arrify = v => Array.isArray(v) ? v : (v && typeof v==='object' ? Object.values(v) : (v ? [v] : []));
-const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
-
-/* itinerario tolerante (obj o array legado) */
 function normalizeItinerario(raw){
   if (!raw) return {};
   if (Array.isArray(raw)){
@@ -76,8 +74,6 @@ function normalizeItinerario(raw){
   }
   return raw;
 }
-
-/* extracción tolerante desde grupos */
 function emailsOf(g){ const out=new Set(), push=e=>{if(e) out.add(String(e).toLowerCase());};
   push(g?.coordinadorEmail); push(g?.coordinador?.email);
   arrify(g?.coordinadoresEmails).forEach(push);
@@ -94,25 +90,9 @@ function uidsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); };
 function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); }; push(g?.coordinadorId); arrify(g?.coordinadoresIds).forEach(push); return [...out]; }
 function nombresOf(g){ const out=new Set(), push=s=>{ if(s) out.add(norm(String(s))); }; push(g?.coordinadorNombre||g?.coordinador); if (g?.coordinador?.nombre) push(g.coordinador.nombre); arrify(g?.coordinadoresNombres).forEach(push); return [...out]; }
 
-/* asistencia helpers */
-function getSavedAsistencia(grupo, fechaISO, actividad){
-  const byDate = grupo?.asistencias?.[fechaISO]; if(!byDate) return null;
-  const key = slug(actividad||'actividad');
-  if (Object.prototype.hasOwnProperty.call(byDate,key)) return byDate[key];
-  for (const k of Object.keys(byDate)) if (slug(k)===key) return byDate[k];
-  return null;
-}
-function setSavedAsistenciaLocal(grupo, fechaISO, actividad, data){
-  const key=slug(actividad||'actividad'); (grupo.asistencias ||= {}); (grupo.asistencias[fechaISO] ||= {}); grupo.asistencias[fechaISO][key]=data;
-}
-function calcPlan(actividad, grupo){
-  const a=actividad||{}; const ad=Number(a.adultos||0), es=Number(a.estudiantes||0); const suma=ad+es;
-  if (suma>0) return suma;
-  const base=(grupo && (grupo.cantidadgrupo!=null?grupo.cantidadgrupo:grupo.pax));
-  return Number(base||0);
-}
+const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
 
-/* estado global */
+/* ============== Estado global ============== */
 const state = {
   user:null,
   isStaff:false,
@@ -120,29 +100,29 @@ const state = {
   grupos:[],
   ordenados:[],
   idx:0,
-  cache:{ hotel:new Map(), vuelos:new Map(), tiposCambio:null },
-
-  scope: 'coord',  // 'coord' | 'all'
-  coordId: null,
-  q: ''
+  scope:'coord',  // 'coord' | 'all'
+  coordId:null,
+  q:'',
+  cache:{ hotel:new Map(), vuelos:new Map(), tasas:null },
 };
 
-/* ===== panel helpers ===== */
-function ensurePanel(id, html = '') {
+/* ============== Layout helpers ============== */
+function ensurePanel(id, html=''){
   let p = document.getElementById(id);
-  if (!p) {
+  if (!p){
     p = document.createElement('div');
     p.id = id; p.className = 'panel';
     (document.querySelector('.wrap') || document.body).appendChild(p);
   }
   if (html) p.innerHTML = html;
-  ensureLayoutOrder();
+  ensureLayoutOrder(); // siempre re-ordena
   return p;
 }
-function ensureLayoutOrder() {
-  const wrap = document.querySelector('.wrap'); if (!wrap) return;
-  ['staffBar','navPanel','statsPanel','gruposPanel'].forEach(id=>{
-    const el=document.getElementById(id); if (el) wrap.appendChild(el);
+function ensureLayoutOrder(){
+  const wrap = document.querySelector('.wrap'); if(!wrap) return;
+  // orden: staffBar → statsPanel → navPanel → searchPanel → gruposPanel
+  ['staffBar','statsPanel','navPanel','searchPanel','gruposPanel'].forEach(id=>{
+    const el=document.getElementById(id); if(el) wrap.appendChild(el);
   });
 }
 
@@ -155,20 +135,20 @@ onAuthStateChanged(auth, async (user) => {
   const coordinadores = await loadCoordinadores();
   state.coordinadores = coordinadores;
 
-  // panel de grupos es panel (mismo ancho)
-  const gp=document.getElementById('gruposPanel'); gp?.classList.add('panel');
+  // ancho panel #grupos
+  const gp = document.getElementById('gruposPanel'); if (gp) gp.classList.add('panel');
 
-  if (state.isStaff) {
+  if (state.isStaff){
     await showStaffSelector(coordinadores, user);
-  } else {
-    state.scope = 'coord';
-    const miReg = findCoordinadorForUser(coordinadores, user);
-    state.coordId = miReg?.id || null;
-    await loadGruposForScope(user);
+  }else{
+    state.scope='coord';
+    const mine = findCoordinadorForUser(coordinadores, user);
+    state.coordId = mine?.id || null;
+    await loadGruposForScope();
   }
 });
 
-/* ============== Cargar coordinadores ============== */
+/* ============== Firestore loads ============== */
 async function loadCoordinadores(){
   const snap = await getDocs(collection(db,'coordinadores'));
   const list=[]; snap.forEach(d=>{ const x=d.data()||{}; list.push({
@@ -178,37 +158,6 @@ async function loadCoordinadores(){
   const seen=new Set(), dedup=[]; for(const c of list){ const k=(c.nombre+'|'+c.email).toLowerCase(); if(!seen.has(k)){ seen.add(k); dedup.push(c); } }
   return dedup;
 }
-
-/* ============== Selector Staff (incluye "TODOS") ============== */
-async function showStaffSelector(coordinadores, user){
-  const bar = ensurePanel('staffBar',
-    `<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>
-     <select id="coordSelect"></select>`
-  );
-  const sel = bar.querySelector('#coordSelect');
-
-  sel.innerHTML =
-    `<option value="ALL">TODOS LOS COORDINADORES</option>` +
-    coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'')} — ${c.email||'SIN CORREO'}</option>`).join('');
-
-  sel.onchange = async ()=>{
-    const val = sel.value;
-    if (val === 'ALL'){ state.scope = 'all'; state.coordId = null; }
-    else { state.scope = 'coord'; state.coordId = val; }
-    localStorage.setItem('rt_staff_coord_scope', state.scope);
-    localStorage.setItem('rt_staff_coord_id', state.coordId||'');
-    await loadGruposForScope(user);
-  };
-
-  const lastScope = localStorage.getItem('rt_staff_coord_scope');
-  const lastId    = localStorage.getItem('rt_staff_coord_id') || '';
-  if (lastScope === 'all'){ sel.value = 'ALL'; state.scope='all'; state.coordId=null; }
-  else if (lastId && coordinadores.find(c=>c.id===lastId)){ sel.value = lastId; state.scope='coord'; state.coordId=lastId; }
-
-  await loadGruposForScope(user);
-}
-
-/* ============== Resolver coordinador (no staff) ============== */
 function findCoordinadorForUser(coordinadores, user){
   const email=(user.email||'').toLowerCase(), uid=user.uid;
   let c = coordinadores.find(x=> x.email && x.email.toLowerCase()===email); if(c) return c;
@@ -216,20 +165,7 @@ function findCoordinadorForUser(coordinadores, user){
   const disp=norm(user.displayName||''); if (disp){ c=coordinadores.find(x=> norm(x.nombre)===disp); if(c) return c; }
   return { id:'self', nombre: user.displayName || email, email, uid };
 }
-
-/* ============== Tipos de cambio ============== */
-async function getTiposCambio(){
-  if (state.cache.tiposCambio) return state.cache.tiposCambio;
-  try{
-    const d = await getDoc(doc(db,'config','tiposCambio'));
-    if (d.exists()) { state.cache.tiposCambio = d.data(); return state.cache.tiposCambio; }
-  }catch{}
-  state.cache.tiposCambio = { CLP:1, USD:1, BRL:1, ARS:1 };
-  return state.cache.tiposCambio;
-}
-
-/* ============== Cargar grupos según scope (ALL / COORD) ============== */
-async function loadGruposForScope(user){
+async function loadGruposForScope(){
   const cont=document.getElementById('grupos'); if (cont) cont.textContent='CARGANDO GRUPOS…';
 
   const allSnap=await getDocs(collection(db,'grupos'));
@@ -243,32 +179,17 @@ async function loadGruposForScope(user){
       fechaFin: toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
       itinerario: normalizeItinerario(raw.itinerario),
       asistencias: raw.asistencias || {},
-      numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || d.id)
+      serviciosEstado: raw.serviciosEstado || {},
+      numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || d.id),
+      identificador: String(raw.identificador || raw.codigo || '')
     };
 
-    // index para búsqueda: incluye actividades
-    const actividadesIndex=[];
-    for(const f of Object.keys(g.itinerario||{})){
-      (g.itinerario[f]||[]).forEach(a=>{
-        if (a?.actividad) actividadesIndex.push(String(a.actividad));
-        if (a?.servicioId||a?.servicioDocId) actividadesIndex.push(String(a.servicioId||a.servicioDocId));
-      });
-    }
-    g._search = {
-      name: (g.nombreGrupo || g.aliasGrupo || g.id || '').toString(),
-      destino: (g.destino || '').toString(),
-      programa: (g.programa || '').toString(),
-      coordNombre: (g.coordinadorNombre || g.coordinador?.nombre || '').toString(),
-      coordEmail: (g.coordinadorEmail || g.coordinador?.email || '').toString(),
-      actividades: actividadesIndex.join(' ')
-    };
-
+    /* scope=coord - filtra por el coordinador seleccionado */
     if (state.scope === 'coord'){
       const emailElegido=(state.coordId && state.coordinadores.find(c=>c.id===state.coordId)?.email || '').toLowerCase();
       const uidElegido  =(state.coordinadores.find(c=>c.id===state.coordId)?.uid || '').toString();
       const docIdElegido= state.coordId;
       const nombreElegido = norm(state.coordinadores.find(c=>c.id===state.coordId)?.nombre || '');
-
       const gEmails=emailsOf(raw), gUids=uidsOf(raw), gDocIds=coordDocIdsOf(raw), gNames=nombresOf(raw);
       const match=(emailElegido && gEmails.includes(emailElegido)) ||
                   (uidElegido && gUids.includes(uidElegido)) ||
@@ -277,15 +198,32 @@ async function loadGruposForScope(user){
       if (!match) return;
     }
 
+    // Campos de búsqueda
+    g._search = {
+      name: (g.nombreGrupo || g.aliasGrupo || g.id || '').toString(),
+      destino: (g.destino || '').toString(),
+      programa: (g.programa || '').toString(),
+      coordNombre: (g.coordinadorNombre || g.coordinador?.nombre || '').toString(),
+      coordEmail: (g.coordinadorEmail || g.coordinador?.email || '').toString(),
+      numeroNegocio: g.numeroNegocio,
+      identificador: g.identificador
+    };
+
+    // Indexa NOMBRES de actividades (para búsqueda)
+    const acts = []; Object.values(g.itinerario||{}).forEach(arr=> arr.forEach(a=>acts.push(a?.actividad||'')));
+    g._searchActs = acts.join(' ');
+
     wanted.push(g);
   });
 
+  // ordenar por próximos primero
   const hoy = toISO(new Date());
   const futuros = wanted.filter(g => (g.fechaInicio||'') >= hoy).sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
   const pasados = wanted.filter(g => (g.fechaInicio||'') < hoy).sort((a,b)=> (a.fechaInicio||'').localeCompare(b.fechaInicio||''));
   state.grupos = wanted;
   state.ordenados = [...futuros, ...pasados];
 
+  // índice inicial por ?g= o último visto
   const { g:qsG, f:qsF } = parseQS();
   let idx = 0;
   if (qsG){
@@ -298,151 +236,192 @@ async function loadGruposForScope(user){
   }
   state.idx = Math.max(0, Math.min(idx, state.ordenados.length-1));
 
-  renderNavBar();
-  renderStatsFiltered();
+  renderStatsFiltered(); // primero stats
+  renderNavBar();        // prev/sig + select
+  renderSearchBar();     // buscador debajo del select
   renderOneGroup(state.ordenados[state.idx], qsF);
 }
 
-/* ============== Filtro por texto (q) ============== */
+/* ============== Staff selector ============== */
+async function showStaffSelector(coordinadores){
+  const bar = ensurePanel('staffBar',
+    `<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>
+     <select id="coordSelect"></select>`
+  );
+  const sel = bar.querySelector('#coordSelect');
+  sel.innerHTML =
+    `<option value="ALL">TODOS LOS COORDINADORES</option>` +
+    coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'')} — ${c.email||'SIN CORREO'}</option>`).join('');
+  sel.onchange = async ()=>{
+    const val = sel.value;
+    if (val==='ALL'){ state.scope='all'; state.coordId=null; }
+    else{ state.scope='coord'; state.coordId=val; }
+    localStorage.setItem('rt_staff_coord_scope', state.scope);
+    localStorage.setItem('rt_staff_coord_id', state.coordId||'');
+    await loadGruposForScope();
+  };
+  // restaura última selección
+  const lastScope = localStorage.getItem('rt_staff_coord_scope');
+  const lastId    = localStorage.getItem('rt_staff_coord_id') || '';
+  if (lastScope==='all'){ sel.value='ALL'; state.scope='all'; state.coordId=null; }
+  else if (lastId && coordinadores.find(c=>c.id===lastId)){ sel.value=lastId; state.scope='coord'; state.coordId=lastId; }
+  await loadGruposForScope();
+}
+
+/* ============== Búsqueda de viajes (filtro) ============== */
 function applyTextFilter(list){
   const q = (state.q || '').trim();
   if (!q) return list.slice();
-
   const tokens = q.split(/\s+/).map(t=>t.trim()).filter(Boolean);
   let clamp = list.slice();
 
   for (const tk of tokens){
-    if (/^\S+\.\.\S+$/.test(tk)){ // rango "a..b"
-      const [a,b] = tk.split('..').map(parseDateFlexible);
-      if (a && b){ clamp = clamp.filter(g => !( (g.fechaFin && g.fechaFin < a) || (g.fechaInicio && g.fechaInicio > b) )); continue; }
+    // rango dd-mm-aaaa..dd-mm-aaaa
+    if (/^\d{2}-\d{2}-\d{4}\.\.\d{2}-\d{2}-\d{4}$/.test(tk)){
+      const [a,b] = tk.split('..'); const A=ymdFromDMY(a), B=ymdFromDMY(b);
+      if (A && B){ clamp = clamp.filter(g => !( (g.fechaFin && g.fechaFin < A) || (g.fechaInicio && g.fechaInicio > B) )); continue; }
     }
-    const maybeDate = parseDateFlexible(tk);
-    if (maybeDate){ clamp = clamp.filter(g => (g.fechaInicio && g.fechaFin && (g.fechaInicio <= maybeDate && maybeDate <= g.fechaFin))); continue; }
-
+    // fecha simple dd-mm-aaaa
+    if (/^\d{2}-\d{2}-\d{4}$/.test(tk)){
+      const F=ymdFromDMY(tk);
+      clamp = clamp.filter(g => (g.fechaInicio && g.fechaFin && (g.fechaInicio <= F && F <= g.fechaFin)));
+      continue;
+    }
     const nk = norm(tk);
     clamp = clamp.filter(g=>{
-      const S = g._search || {};
+      const S=g._search||{};
       return (
         norm(S.name).includes(nk) ||
         norm(S.destino).includes(nk) ||
         norm(S.programa).includes(nk) ||
         norm(S.coordNombre).includes(nk) ||
         norm(S.coordEmail).includes(nk) ||
-        norm(S.actividades||'').includes(nk) ||   // ACTIVIDADES/SERVICIOS
-        norm(g.numeroNegocio).includes(nk)
+        norm(S.numeroNegocio||'').includes(nk) ||
+        norm(S.identificador||'').includes(nk) ||
+        norm(g._searchActs||'').includes(nk)
       );
     });
   }
   return clamp;
 }
 
-/* ============== Estadísticas filtradas ============== */
+/* ============== Stats (del filtrado) ============== */
 function renderStatsFiltered(){
-  const base = state.ordenados;
-  const list = applyTextFilter(base);
+  const list = applyTextFilter(state.ordenados);
   const p = ensurePanel('statsPanel');
-
   if (!list.length){
-    p.innerHTML = '<div class="meta">SIN RESULTADOS PARA EL FILTRO ACTUAL.</div>';
-    fillTripsSelect([]);
+    p.innerHTML = '<div class="muted">SIN RESULTADOS PARA EL FILTRO ACTUAL.</div>';
     return;
   }
-
-  const n = list.length;
+  const n=list.length;
   const minIniISO = list.map(g=>g.fechaInicio).filter(Boolean).sort()[0] || '';
   const maxFinISO = list.map(g=>g.fechaFin).filter(Boolean).sort().slice(-1)[0] || '';
-  const totalDias = list.reduce((sum,g)=> sum + daysInclusive(g.fechaInicio,g.fechaFin), 0);
-  const destinos = [...new Set(list.map(g=>(String(g.destino||'').trim())).filter(Boolean))];
+  const totalDias = list.reduce((s,g)=> s + daysInclusive(g.fechaInicio,g.fechaFin), 0);
+  const destinos = [...new Set(list.map(g=> (String(g.destino||'').trim())) )].filter(Boolean);
   const paxTot = list.reduce((s,g)=> s + paxOf(g), 0);
   const paxPorViaje = list.map(g=> `${(g.aliasGrupo||g.nombreGrupo||g.id)} (${paxOf(g)} PAX)`).join(' · ');
-
-  const labelScope = (state.scope==='all') ? 'ÁMBITO: TODOS LOS COORDINADORES' : 'ÁMBITO: COORDINADOR SELECCIONADO';
-  const labelFiltro = state.q ? `FILTRO TEXTO: “${state.q}”` : 'FILTRO TEXTO: (NINGUNO)';
+  const labelCoord = (state.scope==='all') ? 'TODOS LOS COORDINADORES' :
+    (state.coordinadores.find(c=>c.id===state.coordId)?.nombre || 'COORDINADOR SELECCIONADO');
 
   p.innerHTML = `
     <div style="display:grid;gap:.4rem">
-      <div class="meta">${labelScope}</div>
-      <div class="meta">${labelFiltro}</div>
-      <div class="meta"><strong>TOTAL VIAJES: ${n}</strong> · <strong>TOTAL DÍAS: ${totalDias}</strong> · <strong>TOTAL PAX: ${paxTot}</strong></div>
+      <div class="meta">COORDINADOR: <strong>${labelCoord}</strong></div>
+      <div class="meta">TOTAL VIAJES: <strong>${n}</strong> · TOTAL DÍAS: <strong>${totalDias}</strong> · TOTAL PAX: <strong>${paxTot}</strong></div>
       <div class="meta">RANGO GLOBAL: ${minIniISO?dmy(minIniISO):'—'} — ${maxFinISO?dmy(maxFinISO):'—'}</div>
       <div class="meta">DESTINOS: ${destinos.length? destinos.join(' · ') : '—'}</div>
       <div class="meta">PAX POR VIAJE: ${paxPorViaje || '—'}</div>
     </div>
   `;
-
-  fillTripsSelect(list);
 }
 
-/* ============== NavBar ============== */
+/* ============== Barra Navegación (Prev/Sig + Select) ============== */
 function renderNavBar(){
   const p = ensurePanel('navPanel',
     `<div id="navBar">
        <div class="btns">
-         <button id="btnPrev">‹ ANTERIOR</button>
-         <button id="btnNext">SIGUIENTE ›</button>
-         ${state.isStaff ? '<button id="btnPrintAll" class="btn-sec">IMPRIMIR VOUCHERS</button>' : ''}
+         <button id="btnPrev" class="btn sec">‹ ANTERIOR</button>
+         <select id="allTrips"></select>
+         <button id="btnNext" class="btn sec">SIGUIENTE ›</button>
+         ${state.isStaff ? `<button id="btnPrintVch" class="btn sec">IMPRIMIR VOUCHERS…</button>` : ``}
        </div>
-       <input id="searchTrips" type="text" placeholder="BUSCAR: destino, grupo, actividad/servicio, #negocio, coordinador, 29-11-2025 o 15-11-2025..19-12-2025"/>
-       <select id="allTrips"></select>
      </div>`
   );
-
-  const search = p.querySelector('#searchTrips');
-  search.value = state.q || '';
-  let tmr=null;
-  search.oninput = ()=>{
-    clearTimeout(tmr);
-    tmr = setTimeout(()=>{
-      state.q = search.value || '';
-      renderStatsFiltered();
-      const list = applyTextFilter(state.ordenados);
-      if (!list.length) return;
-      const currentId = state.ordenados[state.idx]?.id;
-      const i = list.findIndex(g=>g.id===currentId);
-      state.idx = (i>=0 ? state.ordenados.findIndex(x=>x.id===currentId) : state.ordenados.findIndex(x=>x.id==(list[0]?.id)));
-      renderOneGroup(state.ordenados[state.idx]);
-      const sel = p.querySelector('#allTrips');
-      const j = list.findIndex(g=>g.id===state.ordenados[state.idx]?.id);
-      if (j>=0) sel.value = String(j);
-    }, 180);
-  };
-
-  p.querySelector('#btnPrev').onclick = ()=>{
-    const list = applyTextFilter(state.ordenados); if (!list.length) return;
-    const curId = state.ordenados[state.idx]?.id; const j = list.findIndex(g=>g.id===curId);
-    const j2 = Math.max(0, j-1); const targetId = list[j2].id;
-    state.idx = state.ordenados.findIndex(g=>g.id===targetId);
-    renderOneGroup(state.ordenados[state.idx]); p.querySelector('#allTrips').value = String(j2);
-  };
-  p.querySelector('#btnNext').onclick = ()=>{
-    const list = applyTextFilter(state.ordenados); if (!list.length) return;
-    const curId = state.ordenados[state.idx]?.id; const j = list.findIndex(g=>g.id===curId);
-    const j2 = Math.min(list.length-1, j+1); const targetId = list[j2].id;
-    state.idx = state.ordenados.findIndex(g=>g.id===targetId);
-    renderOneGroup(state.ordenados[state.idx]); p.querySelector('#allTrips').value = String(j2);
-  };
-
-  if (state.isStaff) p.querySelector('#btnPrintAll').onclick = openBulkVoucherModal;
-
   fillTripsSelect(applyTextFilter(state.ordenados));
+
+  // prev/next sobre el filtrado actual
+  const sel = p.querySelector('#allTrips');
+  const prev = p.querySelector('#btnPrev');
+  const next = p.querySelector('#btnNext');
+  prev.onclick = ()=>{
+    const list=applyTextFilter(state.ordenados); if(!list.length) return;
+    const curId = state.ordenados[state.idx]?.id;
+    const j = list.findIndex(g=>g.id===curId);
+    const j2=Math.max(0,j-1); const targetId=list[j2].id;
+    state.idx = state.ordenados.findIndex(g=>g.id===targetId);
+    renderOneGroup(state.ordenados[state.idx]); sel.value=String(j2);
+  };
+  next.onclick = ()=>{
+    const list=applyTextFilter(state.ordenados); if(!list.length) return;
+    const curId = state.ordenados[state.idx]?.id;
+    const j = list.findIndex(g=>g.id===curId);
+    const j2=Math.min(list.length-1,j+1); const targetId=list[j2].id;
+    state.idx = state.ordenados.findIndex(g=>g.id===targetId);
+    renderOneGroup(state.ordenados[state.idx]); sel.value=String(j2);
+  };
+
+  sel.onchange = ()=>{
+    const list=applyTextFilter(state.ordenados);
+    const j=Number(sel.value||0); const targetId=list[j]?.id; if(!targetId) return;
+    state.idx = state.ordenados.findIndex(g=>g.id===targetId);
+    renderOneGroup(state.ordenados[state.idx]);
+  };
+
+  // staff: imprimir vouchers
+  if (state.isStaff){
+    p.querySelector('#btnPrintVch').onclick = openPrintVouchersModal;
+  }
 }
 
+/* ============== Buscador (debajo de nav) ============== */
+function renderSearchBar(){
+  const p = ensurePanel('searchPanel',
+    `<input id="searchTrips" type="text"
+      placeholder="BUSCAR VIAJE: destino, grupo, #negocio, identificador, coordinador, actividad, 29-11-2025 o 15-11-2025..19-12-2025"/>`
+  );
+  const input = p.querySelector('#searchTrips');
+  input.value = state.q || '';
+  let tmr=null;
+  input.oninput = ()=>{
+    clearTimeout(tmr);
+    tmr=setTimeout(()=>{
+      state.q = input.value||'';
+      renderStatsFiltered();
+      fillTripsSelect(applyTextFilter(state.ordenados));
+      // si el actual no está en el filtrado, salta al primero
+      const list = applyTextFilter(state.ordenados);
+      const curId = state.ordenados[state.idx]?.id;
+      const i=list.findIndex(g=>g.id===curId);
+      if (i<0 && list[0]){ state.idx=state.ordenados.findIndex(x=>x.id===list[0].id); renderOneGroup(state.ordenados[state.idx]); }
+    },180);
+  };
+}
+
+/* llena el select de viajes con el listado filtrado */
 function fillTripsSelect(list){
   const sel = document.getElementById('allTrips'); if (!sel) return;
-  sel.textContent = '';
-  if (!list.length){ sel.appendChild(new Option('(SIN RESULTADOS)', '')); return; }
+  sel.textContent='';
+  if (!list.length){ sel.appendChild(new Option('(SIN RESULTADOS)','')); return; }
   list.forEach((g,i)=>{
     const name=(g.nombreGrupo||g.aliasGrupo||g.id);
-    const label = `${name} | IDA: ${dmy(g.fechaInicio||'')} VUELTA: ${dmy(g.fechaFin||'')}`;
-    sel.appendChild(new Option(label, String(i)));
+    const code = (g.numeroNegocio?g.numeroNegocio:'') + (g.identificador?('-'+g.identificador):'');
+    const label = `${name} (${code}) | IDA: ${dmy(g.fechaInicio||'')}  VUELTA: ${dmy(g.fechaFin||'')}`;
+    sel.appendChild(new Option(label,String(i)));
   });
   const curId = state.ordenados[state.idx]?.id;
-  const j = list.findIndex(x=>x.id===curId);
-  sel.value = (j>=0 ? String(j) : '0');
-  sel.onchange = ()=>{ const j2 = Number(sel.value||0); const targetId = list[j2]?.id; if (!targetId) return; state.idx = state.ordenados.findIndex(g=>g.id===targetId); renderOneGroup(state.ordenados[state.idx]); };
+  const j = list.findIndex(x=>x.id===curId); sel.value=(j>=0?String(j):'0');
 }
 
-/* ============== Vista 1 grupo ============== */
+/* ============== Vista 1 viaje ============== */
 function renderOneGroup(g, preferDate){
   const cont=document.getElementById('grupos'); if(!cont) return;
   cont.innerHTML='';
@@ -450,25 +429,33 @@ function renderOneGroup(g, preferDate){
   if(!g){ cont.innerHTML='<p class="muted">NO HAY VIAJES.</p>'; return; }
   localStorage.setItem('rt_last_group', g.id);
 
-  const titulo = (g.nombreGrupo || g.aliasGrupo || g.id);
+  const name=(g.nombreGrupo||g.aliasGrupo||g.id);
+  const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
+  const title = `${name} (${code})`;
   const sub = `${g.destino||''} · ${g.programa||''} · ${(g.cantidadgrupo ?? g.pax ?? 0)} PAX`;
   const rango = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
   const header=document.createElement('div');
   header.className='group-card';
   header.innerHTML = `
-    <h3>${titulo}</h3>
+    <h3>${title}</h3>
     <div class="group-sub">${sub}</div>
-    <div class="muted" style="margin-top:4px">${rango}</div>
+    <div class="grid-mini">
+      <div class="row"><div class="lab">DESTINO</div><div>${g.destino||'—'}</div></div>
+      <div class="row"><div class="lab">GRUPO</div><div>${name}</div></div>
+      <div class="row"><div class="lab">PAX TOTAL</div><div>${(g.cantidadgrupo ?? g.pax ?? 0)}</div></div>
+      <div class="row"><div class="lab">PROGRAMA</div><div>${g.programa||'—'}</div></div>
+      <div class="row"><div class="lab">FECHAS</div><div>${rango}</div></div>
+    </div>
   `;
   cont.appendChild(header);
 
   const tabs=document.createElement('div');
   tabs.innerHTML = `
     <div style="display:flex;gap:.5rem;margin:.6rem 0">
-      <button id="tabResumen" class="btn-sec">RESUMEN</button>
-      <button id="tabItin"    class="btn-sec">ITINERARIO</button>
-      <button id="tabGastos"  class="btn-sec">GASTOS</button>
+      <button id="tabResumen" class="btn sec">RESUMEN</button>
+      <button id="tabItin"    class="btn sec">ITINERARIO</button>
+      <button id="tabGastos"  class="btn sec">GASTOS</button>
     </div>
     <div id="paneResumen"></div>
     <div id="paneItin" style="display:none"></div>
@@ -491,33 +478,33 @@ function renderOneGroup(g, preferDate){
 
 /* ============== Resumen (Hotel + Vuelos + Alertas) ============== */
 async function renderResumen(g, pane){
-  pane.innerHTML='<div class="loader">CARGANDO RESUMEN…</div>';
+  pane.innerHTML='<div class="loader">CARGANDO…</div>';
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem';
   pane.innerHTML='';
 
+  // HOTEL
+  const hotelBox=document.createElement('div'); hotelBox.className='act';
+  hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">BUSCANDO…</div>';
+  wrap.appendChild(hotelBox);
+
+  // VUELOS
+  const vuelosBox=document.createElement('div'); vuelosBox.className='act';
+  vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">BUSCANDO…</div>';
+  wrap.appendChild(vuelosBox);
+
+  // ALERTAS
   const alertBox=document.createElement('div'); alertBox.className='act';
   alertBox.innerHTML='<h4>ALERTAS</h4><div class="muted">CARGANDO…</div>';
   wrap.appendChild(alertBox);
 
-  const hotelBox=document.createElement('div'); hotelBox.className='act';
-  hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">BUSCANDO ASIGNACIÓN…</div>';
-  wrap.appendChild(hotelBox);
-
-  const vuelosBox=document.createElement('div'); vuelosBox.className='act';
-  vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">BUSCANDO VUELOS…</div>';
-  wrap.appendChild(vuelosBox);
-
   pane.appendChild(wrap);
-
-  // ALERTAS
-  loadAndRenderAlerts(g, alertBox);
 
   // HOTEL
   try{
     const h = await loadHotelInfo(g);
-    if (!h){ hotelBox.innerHTML='<h4>HOTEL ASIGNADO</h4><div class="muted">SIN ASIGNACIÓN DE HOTEL.</div>'; }
+    if (!h){ hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>'; }
     else{
-      const nombre = h.hotelNombre || h.hotel?.nombre || 'HOTEL ASIGNADO';
+      const nombre = h.hotelNombre || h.hotel?.nombre || 'HOTEL';
       const fechas = `${dmy(h.checkIn||'')} — ${dmy(h.checkOut||'')}`;
       const dir = h.hotel?.direccion || '';
       const contacto = [h.hotel?.contactoNombre, h.hotel?.contactoTelefono, h.hotel?.contactoCorreo].filter(Boolean).join(' · ');
@@ -528,26 +515,32 @@ async function renderResumen(g, pane){
         ${contacto? `<div class="meta">${contacto}</div>`:''}
       `;
     }
-  }catch(e){ console.error(e); hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">NO FUE POSIBLE CARGAR.</div>'; }
+  }catch(e){ console.error(e); hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>'; }
 
   // VUELOS
   try{
     const vuelos = await loadVuelosInfo(g);
-    if (!vuelos.length){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS REGISTRADOS.</div>'; }
+    if (!vuelos.length){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS.</div>'; }
     else{
-      const list=document.createElement('div');
+      const list=document.createElement('table'); list.className='table';
+      list.innerHTML='<thead><tr><th>#</th><th>PROVEEDOR</th><th>RUTA</th><th>IDA</th><th>VUELTA</th></tr></thead><tbody></tbody>';
+      const tb=list.querySelector('tbody');
       vuelos.forEach(v=>{
-        const titulo = (v.numero ? ('#'+v.numero+' — ') : '') + (v.proveedor || '');
-        const ida = toISO(v.fechaIda), vuelta = toISO(v.fechaVuelta);
-        const linea = `${v.origen||''} — ${v.destino||''} ${ida?(' · '+dmy(ida)) : ''}${vuelta?(' — '+dmy(vuelta)) : ''}`;
-        const tip = v.tipoVuelo ? (' ('+v.tipoVuelo+')') : '';
-        const item=document.createElement('div'); item.className='meta'; item.textContent = `${titulo} · ${linea}${tip}`;
-        list.appendChild(item);
+        const tr=document.createElement('tr');
+        const ida=toISO(v.fechaIda), vuelta=toISO(v.fechaVuelta);
+        tr.innerHTML=`<td>${v.numero||''}</td><td>${v.proveedor||''}</td>
+          <td>${v.origen||''} — ${v.destino||''}</td>
+          <td>${ida?dmy(ida):''}</td><td>${vuelta?dmy(vuelta):''}</td>`;
+        tb.appendChild(tr);
       });
-      vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4>';
-      vuelosBox.appendChild(list);
+      vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4>'; vuelosBox.appendChild(list);
     }
-  }catch(e){ console.error(e); vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">NO FUE POSIBLE CARGAR.</div>'; }
+  }catch(e){ console.error(e); vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">ERROR AL CARGAR.</div>'; }
+
+  // ALERTAS
+  try{
+    await renderAlertas(g, alertBox);
+  }catch(e){ console.error(e); alertBox.innerHTML='<h4>ALERTAS</h4><div class="muted">ERROR AL CARGAR.</div>'; }
 }
 
 async function loadHotelInfo(g){
@@ -565,13 +558,12 @@ async function loadHotelInfo(g){
   const out = { ...elegido, hotel:hotelDoc, hotelNombre: elegido?.nombre || elegido?.hotelNombre || hotelDoc?.nombre || '' };
   state.cache.hotel.set(key, out); return out;
 }
-
 async function loadVuelosInfo(g){
   const key=g.numeroNegocio; if (state.cache.vuelos.has(key)) return state.cache.vuelos.get(key);
   let found=[]; try{
     const qs=await getDocs(query(collection(db,'vuelos'), where('grupoIds','array-contains', String(key))));
     qs.forEach(d=> found.push({ id:d.id, ...d.data() }));
-  }catch(e){}
+  }catch(e){ /* índice faltante */ }
   if (!found.length){
     const ss=await getDocs(collection(db,'vuelos'));
     ss.forEach(d=>{ const v=d.data()||{}; const arr=Array.isArray(v.grupos)?v.grupos:[]; if (arr.some(x=> String(x?.id||'')===String(key))) found.push({ id:d.id, ...v }); });
@@ -580,100 +572,188 @@ async function loadVuelosInfo(g){
 }
 
 /* ============== Alertas ============== */
-async function loadAndRenderAlerts(g, box){
-  try{
-    // alertas por grupo
-    const ag = await getDocs(query(collection(db,'grupos', g.id, 'alertas'), orderBy('createdAt','desc'), limit(50)));
-    const groupAlerts=[]; ag.forEach(d=> groupAlerts.push({id:d.id, scope:'group', ...d.data()}));
+async function renderAlertas(g, box){
+  const coordId = state.coordId || 'self'; // para marcar lectura
+  // Traigo TODAS las alertas que incluyan a este coordinador (o si scope=all y no hay coordId, igual muestro las del usuario si no-staff)
+  const qs = await getDocs(collection(db,'alertas'));
+  const all=[]; qs.forEach(d=>all.push({id:d.id,...d.data()}));
+  const mine = state.isStaff && state.scope==='all'
+    ? all // staff viendo todos: muestro todas
+    : all.filter(a=> Array.isArray(a.forCoordIds) && a.forCoordIds.includes(coordId));
 
-    // alertas globales
-    const gg = await getDocs(query(collection(db,'alertasGlobales'), orderBy('createdAt','desc'), limit(150)));
-    const applicable=[];
-    gg.forEach(d=>{
-      const a=d.data()||{};
-      const okCoord = !a.coordinadorIds?.length || a.coordinadorIds.includes(state.coordId) || a.coordinadorIds.includes(g.coordinadorId);
-      const okDest  = !a.destinoIn?.length || a.destinoIn.includes(String(g.destino||'').trim());
-      const okRange = !(a.rango?.ini && g.fechaFin && g.fechaFin < a.rango.ini) && !(a.rango?.fin && g.fechaInicio && g.fechaInicio > a.rango.fin);
-      if (okCoord && okDest && okRange) applicable.push({id:d.id, scope:'global', ...a});
-    });
+  const unread = mine.filter(a=> !(a.readBy && a.readBy[coordId]));
+  const read   = mine.filter(a=>  (a.readBy && a.readBy[coordId]));
 
-    const all=[...groupAlerts, ...applicable];
-    const isCoord = !state.isStaff;
+  const wrap=document.createElement('div');
 
-    // render
-    const frag=document.createElement('div');
-    if (!all.length) frag.innerHTML = '<div class="meta">SIN ALERTAS.</div>';
+  if (state.isStaff){
+    const btn = document.createElement('button'); btn.className='btn sec'; btn.textContent='CREAR ALERTA…';
+    btn.onclick = openCreateAlertModal;
+    wrap.appendChild(btn);
+    wrap.appendChild(document.createElement('div')).className='meta';
+  }
 
-    for (const a of all){
-      const div=document.createElement('div'); div.className='meta';
-      div.innerHTML = `• ${a.mensaje || '(sin mensaje)'} ${a.scope==='global' ? '· GLOBAL' : ''}`;
-      // checkbox leído para coordinador
-      if (isCoord){
-        const chk=document.createElement('input'); chk.type='checkbox'; chk.style.marginLeft='8px';
-        const ackPath = a.scope==='global' ? ['alertasGlobales',a.id,'acks',auth.currentUser.uid] : ['grupos',g.id,'alertas',a.id,'acks',auth.currentUser.uid];
-        try{
-          // leer ack rápido (sincrónico no posible aquí; lo marcamos solo on change)
-        }catch{}
-        chk.onchange = async ()=>{
-          try{ await setDoc(doc(db,...ackPath), { leido:true, leidoAt: serverTimestamp() }, { merge:true }); }catch(e){ console.error(e); }
+  // Listas
+  const mkList = (arr, titulo)=> {
+    const card=document.createElement('div'); card.style.marginTop='.5rem';
+    card.innerHTML=`<div class="meta" style="margin-bottom:.25rem">${titulo}</div>`;
+    if (!arr.length){ card.innerHTML+=`<div class="muted">SIN MENSAJES.</div>`; return card; }
+    const table=document.createElement('table'); table.className='table';
+    const thead=document.createElement('thead');
+    thead.innerHTML='<tr><th>FECHA</th><th>MENSAJE</th><th>DE</th><th>ACCIONES</th></tr>';
+    table.appendChild(thead);
+    const tb=document.createElement('tbody');
+    arr.forEach(a=>{
+      const fecha = a.createdAt?.seconds ? dmy(toISO(new Date(a.createdAt.seconds*1000))) : '';
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${fecha||''}</td><td>${a.mensaje||''}</td><td>${a.createdBy?.email||''}</td><td></td>`;
+      const td=tr.lastElementChild;
+
+      if (!state.isStaff){ // coordinador: marcar leído
+        const ch=document.createElement('input'); ch.type='checkbox'; ch.checked=!!(a.readBy && a.readBy[state.coordId||'self']); ch.style.transform='scale(1.2)';
+        ch.onchange = async ()=>{
+          const path = doc(db,'alertas',a.id);
+          const payload={}; payload[`readBy.${state.coordId||'self'}`]= ch.checked ? serverTimestamp() : null;
+          await updateDoc(path, payload);
+          renderResumen(g, box.parentElement); // refresca todo el resumen
         };
-        div.appendChild(chk);
+        td.appendChild(ch);
+        td.appendChild(document.createTextNode(' LEÍDO'));
+      } else {
+        td.textContent = '—';
       }
-      frag.appendChild(div);
-    }
 
-    // bloque crear (solo staff)
-    if (state.isStaff){
-      const mk=document.createElement('div'); mk.style.marginTop='.6rem';
-      mk.innerHTML = `
-        <div class="meta">CREAR ALERTA</div>
-        <textarea id="alMsg" placeholder="MENSAJE PARA COORDINADORES / GRUPOS"></textarea>
-        <div class="row">
-          <input id="alDestinos" type="text" placeholder="DESTINOS (coma: BARILOCHE, BRASIL)"/>
-          <input id="alIni" type="date" placeholder="INICIO (opcional)"/>
-          <input id="alFin" type="date" placeholder="FIN (opcional)"/>
-        </div>
-        <div class="row">
-          <select id="alCoordinadores" multiple style="height:120px">
-            ${state.coordinadores.map(c=>`<option value="${c.id}">${c.nombre} — ${c.email}</option>`).join('')}
-          </select>
-          <button id="alCrear" class="btn-sec">AGREGAR MENSAJE</button>
-          <button id="alCrearGrupo" class="btn-sec">AGREGAR AL GRUPO ACTUAL</button>
-        </div>`;
-      frag.appendChild(mk);
+      tb.appendChild(tr);
+    });
+    table.appendChild(tb);
+    card.appendChild(table);
+    return card;
+  };
 
-      mk.querySelector('#alCrear').onclick = async ()=>{
-        const msg=mk.querySelector('#alMsg').value.trim(); if(!msg) return alert('Escribe un mensaje.');
-        const coordIds=[...mk.querySelector('#alCoordinadores').selectedOptions].map(o=>o.value);
-        const destinos=(mk.querySelector('#alDestinos').value||'').split(',').map(s=>s.trim()).filter(Boolean);
-        const ini=mk.querySelector('#alIni').value||''; const fin=mk.querySelector('#alFin').value||'';
-        try{
-          await addDoc(collection(db,'alertasGlobales'), {
-            mensaje: msg, coordinadorIds: coordIds, destinoIn: destinos, rango: (ini||fin)?{ini,fin}:{},
-            createdByUid: auth.currentUser.uid, createdByEmail: (auth.currentUser.email||'').toLowerCase(), createdAt: serverTimestamp()
-          });
-          alert('Alerta creada.');
-          loadAndRenderAlerts(g, box);
-        }catch(e){ console.error(e); alert('No se pudo crear.'); }
-      };
-      mk.querySelector('#alCrearGrupo').onclick = async ()=>{
-        const msg=mk.querySelector('#alMsg').value.trim(); if(!msg) return alert('Escribe un mensaje.');
-        try{
-          await addDoc(collection(db,'grupos', g.id, 'alertas'), {
-            mensaje: msg, createdByUid: auth.currentUser.uid, createdByEmail: (auth.currentUser.email||'').toLowerCase(), createdAt: serverTimestamp()
-          });
-          alert('Alerta enviada al grupo.');
-          loadAndRenderAlerts(g, box);
-        }catch(e){ console.error(e); alert('No se pudo crear.'); }
-      };
-    }
+  wrap.appendChild(mkList(unread,'NO LEÍDAS'));
+  wrap.appendChild(mkList(read,'LEÍDAS'));
 
-    box.innerHTML='<h4>ALERTAS</h4>';
-    box.appendChild(frag);
-  }catch(e){ console.error(e); box.innerHTML='<h4>ALERTAS</h4><div class="meta">NO FUE POSIBLE CARGAR.</div>'; }
+  box.innerHTML='<h4>ALERTAS</h4>';
+  box.appendChild(wrap);
 }
 
-/* ============== Itinerario + asistencia + bitácora + finalizar ============== */
+function openCreateAlertModal(){
+  const back = document.getElementById('modalBack');
+  const body = document.getElementById('modalBody');
+  const title= document.getElementById('modalTitle');
+  title.textContent='CREAR ALERTA (STAFF)';
+
+  const coordOpts = state.coordinadores.map(c=>`<option value="${c.id}">${c.nombre} — ${c.email}</option>`).join('');
+  body.innerHTML = `
+    <div class="rowflex" style="margin-bottom:.5rem">
+      <textarea id="alertMsg" placeholder="MENSAJE"></textarea>
+    </div>
+    <div class="rowflex" style="margin-bottom:.5rem">
+      <label>DESTINATARIOS</label>
+      <select id="alertCoords" multiple size="6" style="width:100%">${coordOpts}</select>
+    </div>
+    <div class="rowflex">
+      <input id="alertGroupId" type="text" placeholder="OPCIONAL: ID DE GRUPO (para ligar la alerta)"/>
+      <button id="alertSave" class="btn ok">AGREGAR</button>
+    </div>
+  `;
+
+  document.getElementById('alertSave').onclick = async ()=>{
+    const msg = (document.getElementById('alertMsg').value||'').trim();
+    const sel = Array.from(document.getElementById('alertCoords').selectedOptions).map(o=>o.value);
+    const gid = (document.getElementById('alertGroupId').value||'').trim();
+    if (!msg || !sel.length){ alert('Escribe un mensaje y elige al menos un coordinador.'); return; }
+    await addDoc(collection(db,'alertas'), {
+      mensaje: msg,
+      forCoordIds: sel,
+      grupoId: gid || null,
+      createdAt: serverTimestamp(),
+      createdBy: { uid: state.user.uid, email:(state.user.email||'').toLowerCase() },
+      readBy: {}
+    });
+    closeModal();
+    renderResumen(state.ordenados[state.idx], document.getElementById('paneResumen'));
+  };
+
+  document.getElementById('modalClose').onclick = closeModal;
+  back.style.display='flex';
+}
+function openPrintVouchersModal(){
+  const back = document.getElementById('modalBack');
+  const body = document.getElementById('modalBody');
+  const title= document.getElementById('modalTitle');
+  title.textContent='IMPRIMIR VOUCHERS (STAFF)';
+
+  const coordOpts = [`<option value="__ALL__">TODOS</option>`]
+    .concat(state.coordinadores.map(c=>`<option value="${c.id}">${c.nombre}</option>`)).join('');
+
+  body.innerHTML = `
+    <div class="rowflex" style="margin-bottom:.5rem">
+      <label>COORDINADOR</label>
+      <select id="pvCoord">${coordOpts}</select>
+    </div>
+    <div class="rowflex" style="margin-bottom:.5rem">
+      <input type="text" id="pvDestino" placeholder="DESTINO (opcional)"/>
+      <input type="text" id="pvRango" placeholder="RANGO FECHAS dd-mm-aaaa..dd-mm-aaaa (opcional)"/>
+    </div>
+    <div class="rowflex">
+      <button id="pvGo" class="btn ok">GENERAR</button>
+    </div>
+  `;
+  document.getElementById('pvGo').onclick = async ()=>{
+    const coordSel = document.getElementById('pvCoord').value;
+    const dest = (document.getElementById('pvDestino').value||'').trim();
+    const rango = (document.getElementById('pvRango').value||'').trim();
+
+    // filtra desde universo
+    let list = state.grupos.slice();
+    if (coordSel!=='__ALL__'){
+      const emailElegido=(state.coordinadores.find(c=>c.id===coordSel)?.email || '').toLowerCase();
+      list=list.filter(g=> emailsOf(g).includes(emailElegido));
+    }
+    if (dest) list=list.filter(g=> norm(g.destino||'').includes(norm(dest)));
+    if (/^\d{2}-\d{2}-\d{4}\.\.\d{2}-\d{2}-\d{4}$/.test(rango)){
+      const [a,b]=rango.split('..'); const A=ymdFromDMY(a), B=ymdFromDMY(b);
+      list=list.filter(g=> !( (g.fechaFin && g.fechaFin < A) || (g.fechaInicio && g.fechaInicio > B) ));
+    }
+
+    // abre ventana imprimible con vouchers físicos/electrónicos (estructura simple)
+    const html = await buildPrintableVouchers(list);
+    const w = window.open('','_blank','width=900,height=700');
+    w.document.write(html); w.document.close(); w.focus(); w.print();
+  };
+
+  document.getElementById('modalClose').onclick = closeModal;
+  back.style.display='flex';
+}
+function closeModal(){ document.getElementById('modalBack').style.display='none'; }
+
+/* genera HTML imprimible de vouchers */
+async function buildPrintableVouchers(list){
+  let rows='';
+  for (const g of list){
+    const fechas=rangoFechas(g.fechaInicio,g.fechaFin);
+    for (const f of fechas){
+      (g.itinerario[f]||[]).forEach(a=>{
+        rows += renderVoucherHTMLSync(g,f,a,true); // true: modo compacto
+      });
+    }
+  }
+  return `
+<!doctype html><html><head><meta charset="utf-8"><title>Vouchers</title>
+<style>
+body{font-family:system-ui,Segoe UI,Roboto,Arial;color:#111;padding:20px}
+.card{border:1px solid #999;border-radius:8px;padding:12px;margin:10px 0}
+h3{margin:.2rem 0 .4rem}
+.meta{color:#333;font-size:14px}
+hr{border:0;border-top:1px dashed #999;margin:.4rem 0}
+</style></head><body>
+<h2>Vouchers</h2>
+${rows || '<div>Sin actividades.</div>'}
+</body></html>`;
+}
+
+/* ============== Itinerario + Asistencia + Vouchers ============== */
 function renderItinerario(g, pane, preferDate){
   pane.innerHTML='';
   const fechas = rangoFechas(g.fechaInicio, g.fechaFin);
@@ -686,7 +766,8 @@ function renderItinerario(g, pane, preferDate){
   let startDate = preferDate || ( (hoy>=fechas[0] && hoy<=fechas.at(-1)) ? hoy : fechas[0] );
 
   fechas.forEach(f=>{
-    const pill=document.createElement('div'); pill.className='pill'+(f===startDate?' active':''); pill.textContent=fmt(f); pill.title=dmy(f); pill.dataset.fecha=f;
+    const pill=document.createElement('div'); pill.className='pill'+(f===startDate?' active':'');
+    pill.textContent=fmt(f); pill.title=dmy(f); pill.dataset.fecha=f;
     pill.onclick=()=>{ pillsWrap.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); pill.classList.add('active'); renderActs(g, f, actsWrap); localStorage.setItem('rt_last_date_'+g.id, f); };
     pillsWrap.appendChild(pill);
   });
@@ -704,24 +785,25 @@ async function renderActs(grupo, fechaISO, cont){
   for (const act of acts){
     const plan = calcPlan(act, grupo);
     const saved = getSavedAsistencia(grupo, fechaISO, act.actividad);
-    const estado = await getActividadEstado(grupo.id, fechaISO, act.actividad);
+    const estado = (grupo.serviciosEstado?.[fechaISO]?.[slug(act.actividad||'')]?.estado)||'';
 
     const horaIni = act.horaInicio || '--:--';
     const horaFin = act.horaFin    || '--:--';
     const paxFinalInit = (saved?.paxFinal ?? '');
+    const notasInit    = '';  // notas al guardar se envían a bitácora (no precargo)
+
     const actName = act.actividad || 'ACTIVIDAD';
     const actKey  = slug(actName);
 
     const div=document.createElement('div'); div.className='act';
     div.innerHTML = `
-      <h4>${actName}</h4>
+      <h4>${actName} ${estado?`· <span class="muted">${estado}</span>`:''}</h4>
       <div class="meta">${horaIni}–${horaFin} · PLAN: <strong>${plan}</strong> PAX</div>
-      <div class="row">
-        <input class="inpPax" type="number" min="0" inputmode="numeric" placeholder="ASISTENTES"/>
-        <textarea class="inpNota" placeholder="NOTAS (SE GUARDA EN BITÁCORA)"></textarea>
-        <button class="btnSave">GUARDAR</button>
-        <button class="btnFinalizar btn-warn">FINALIZAR</button>
-        ${state.isStaff ? '<button class="btnReabrir btn-danger">PONER PENDIENTE</button>' : ''}
+      <div class="rowflex" style="margin-bottom:.4rem">
+        <input type="number" min="0" inputmode="numeric" placeholder="ASISTENTES" value="${paxFinalInit}"/>
+        <textarea placeholder="NOTAS (SE AGREGAN A BITÁCORA)">${notasInit}</textarea>
+        <button class="btn ok btnSave">GUARDAR</button>
+        <button class="btn sec btnVch">FINALIZAR…</button>
       </div>
       <div class="bitacora" style="margin-top:.5rem">
         <div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>
@@ -730,68 +812,44 @@ async function renderActs(grupo, fechaISO, cont){
     `;
     cont.appendChild(div);
 
-    div.querySelector('.inpPax').value = paxFinalInit;
+    // LISTAR BITÁCORA
+    const itemsWrap = div.querySelector('.bitItems');
+    await loadBitacora(grupo.id, fechaISO, actKey, itemsWrap);
 
-    // Estado inicial botones
-    setButtonsByEstado(div, estado?.status || 'pendiente');
-
-    // Guardar asistencia + nota -> bitácora
+    // GUARDAR → asistencia + añadir nota a bitácora (si hay texto)
     div.querySelector('.btnSave').onclick = async ()=>{
       const btn = div.querySelector('.btnSave'); btn.disabled=true;
       try{
-        const pax = Number(div.querySelector('.inpPax').value || 0);
-        const nota = String(div.querySelector('.inpNota').value || '');
+        const pax = Number(div.querySelector('input').value || 0);
+        const nota = String(div.querySelector('textarea').value || '').trim();
+
         const refGrupo = doc(db,'grupos', grupo.id);
-        const keyPath = `asistencias.${fechaISO}.${actKey}`;
-        const data = { paxFinal: pax, notas: nota, byUid: auth.currentUser.uid, byEmail: (auth.currentUser.email||'').toLowerCase(), updatedAt: serverTimestamp() };
-        const payload={}; payload[keyPath]=data;
+        const data = {
+          paxFinal: pax,
+          notas: nota,  // además la guardo aquí por compatibilidad
+          byUid: auth.currentUser.uid,
+          byEmail: String(auth.currentUser.email||'').toLowerCase(),
+          updatedAt: serverTimestamp()
+        };
+        const payload={}; payload[`asistencias.${fechaISO}.${actKey}`]=data;
         await updateDoc(refGrupo, payload);
         setSavedAsistenciaLocal(grupo, fechaISO, actName, { ...data });
 
-        if (nota.trim()){
+        if (nota){
           const coll = collection(db, 'grupos', grupo.id, 'bitacora', `${fechaISO}-${actKey}`, 'items');
-          await addDoc(coll, { texto: nota.trim(), byUid: auth.currentUser.uid, byEmail: (auth.currentUser.email||'').toLowerCase(), ts: serverTimestamp() });
-          div.querySelector('.inpNota').value = '';
-          await loadBitacora(grupo.id, fechaISO, actKey, div.querySelector('.bitItems'));
+          await addDoc(coll, { texto: nota, byUid: auth.currentUser.uid, byEmail: String(auth.currentUser.email||'').toLowerCase(), ts: serverTimestamp() });
+          await loadBitacora(grupo.id, fechaISO, actKey, itemsWrap);
+          div.querySelector('textarea').value='';
         }
         btn.textContent='GUARDADO'; setTimeout(()=>{ btn.textContent='GUARDAR'; btn.disabled=false; }, 900);
       }catch(e){ console.error(e); btn.disabled=false; alert('NO SE PUDO GUARDAR.'); }
     };
 
-    // Bitácora
-    await loadBitacora(grupo.id, fechaISO, actKey, div.querySelector('.bitItems'));
-
-    // Finalizar / Voucher flow
-    div.querySelector('.btnFinalizar').onclick = async ()=> openFinalizarModal(grupo, fechaISO, act, div);
-    if (state.isStaff) div.querySelector('.btnReabrir').onclick = async ()=>{
-      await setActividadEstado(grupo.id, fechaISO, act.actividad, { status:'pendiente' });
-      setButtonsByEstado(div, 'pendiente');
+    // FINALIZAR (voucher)
+    div.querySelector('.btnVch').onclick = async ()=>{
+      await openVoucherModal(grupo, fechaISO, act);
     };
-
-    // Ocultar finalizar si "no aplica"
-    // (lo resolvemos on-demand dentro del modal; aquí queda visible y el modal avisa/no muestra)
   }
-}
-
-function setButtonsByEstado(div, status){
-  const finBtn = div.querySelector('.btnFinalizar');
-  if (status==='finalizada'){ finBtn.textContent='FINALIZADA'; finBtn.disabled=true; }
-  else { finBtn.textContent='FINALIZAR'; finBtn.disabled=false; }
-}
-
-async function getActividadEstado(grupoId, fechaISO, actName){
-  try{
-    const d=await getDoc(doc(db,'grupos',grupoId,'estadoActividades',`${fechaISO}-${slug(actName)}`));
-    if (d.exists()) return d.data();
-  }catch{}
-  return { status:'pendiente' };
-}
-async function setActividadEstado(grupoId, fechaISO, actName, data){
-  try{
-    await setDoc(doc(db,'grupos',grupoId,'estadoActividades',`${fechaISO}-${slug(actName)}`), {
-      ...data, updatedAt: serverTimestamp(), byUid: auth.currentUser.uid, byEmail:(auth.currentUser.email||'').toLowerCase()
-    }, { merge:true });
-  }catch(e){ console.error(e); alert('No se pudo actualizar estado.'); }
 }
 
 async function loadBitacora(grupoId, fechaISO, actKey, wrap){
@@ -805,217 +863,259 @@ async function loadBitacora(grupoId, fechaISO, actKey, wrap){
       const cuando = x.ts?.seconds ? new Date(x.ts.seconds*1000) : null;
       const hora = cuando ? cuando.toLocaleString('es-CL') : '';
       const div=document.createElement('div'); div.className='meta';
-      div.textContent = `• ${x.texto || ''} — ${quien}${hora?(' · '+hora):''}`; frag.appendChild(div);
+      div.textContent = `• ${x.texto||''} — ${quien}${hora?(' · '+hora):''}`; frag.appendChild(div);
     });
     wrap.innerHTML=''; wrap.appendChild(frag);
     if (!qs.size) wrap.innerHTML='<div class="muted">AÚN NO HAY NOTAS.</div>';
   }catch(e){ console.error(e); wrap.innerHTML='<div class="muted">NO SE PUDO CARGAR LA BITÁCORA.</div>'; }
 }
 
-/* ============== Finalizar / Vouchers ============== */
-async function openFinalizarModal(grupo, fechaISO, act, cardDiv){
-  const sid = String(act.servicioId || act.servicioDocId || '').trim();
-  if (!sid){ return openModal('<div class="meta">Esta actividad no tiene servicio asociado.</div>'); }
-  let sdoc=null; try{ const sd=await getDoc(doc(db,'Servicios', sid)); if(sd.exists()) sdoc={id:sd.id, ...sd.data()}; }catch(e){}
-  const tipo = String(sdoc?.voucherTipo||'').toLowerCase();
-  if (!tipo || tipo.includes('no aplica')){ return openModal('<div class="meta">Esta actividad no requiere voucher.</div>'); }
-
-  const paxAsist = Number(cardDiv.querySelector('.inpPax').value || 0);
-  const paxPlan  = calcPlan(act, grupo);
-
-  const baseInfo = `
-    <div id="printArea">
-      <h2>VOUCHER ${tipo.includes('electron') ? 'ELECTRÓNICO' : 'FÍSICO'}</h2>
-      <div class="line"><strong>ACTIVIDAD/SERVICIO:</strong> ${act.actividad || sdoc?.nombre || '(sin nombre)'}</div>
-      <div class="line"><strong>PROVEEDOR:</strong> ${sdoc?.proveedor || sdoc?.contactoNombre || '(s/i)'}</div>
-      <div class="line"><strong>GRUPO:</strong> ${grupo.nombreGrupo || grupo.aliasGrupo || grupo.id}</div>
-      <div class="line"><strong>FECHA:</strong> ${dmy(fechaISO)}</div>
-      <div class="line"><strong>PAX PLAN:</strong> ${paxPlan}</div>
-      <div class="line"><strong>PAX ASISTEN:</strong> ${tipo.includes('electron') ? paxAsist : '_____ (llenado a mano)'}</div>
-      <div class="line"><strong>COORDINADOR:</strong> ${tipo.includes('electron') ? (state.user.email||'') : '________________________'}</div>
-    </div>
-  `;
-
-  if (tipo.includes('electron')){
-    openModal(`
-      ${baseInfo}
-      <div class="row" style="margin-top:.6rem">
-        <input id="pin" type="text" placeholder="CLAVE DEL SERVICIO (PIN)"/>
-        <button id="btnNFC" class="btn-sec">ESCANEAR NFC</button>
-        <button id="btnFirmar" class="btn-warn">FIRMAR</button>
-        <button id="btnPend" class="btn-sec">PENDIENTE</button>
-      </div>
-    `);
-
-    const m=document.getElementById('rtModal');
-    m.querySelector('#btnPend').onclick=async()=>{ await setActividadEstado(grupo.id, fechaISO, act.actividad, { status:'pendiente', tipoVoucher:'electronico' }); setButtonsByEstado(cardDiv,'pendiente'); m.style.display='none'; };
-    m.querySelector('#btnFirmar').onclick=async()=>{
-      const pin=m.querySelector('#pin').value.trim();
-      const pinOk = String(sdoc?.voucherClave||sdoc?.pin||'').trim();
-      if (!pin || pin!==pinOk) return alert('Clave incorrecta.');
-      await setActividadEstado(grupo.id, fechaISO, act.actividad, { status:'finalizada', tipoVoucher:'electronico' });
-      setButtonsByEstado(cardDiv,'finalizada'); m.style.display='none';
-    };
-    m.querySelector('#btnNFC').onclick=async()=>{
-      if (!('NDEFReader' in window)) return alert('NFC no disponible en este dispositivo/navegador.');
-      try{
-        const reader = new NDEFReader(); await reader.scan();
-        reader.onreading = (ev)=>{ const rec = ev.message.records?.[0]; if(!rec) return; const txt = new TextDecoder().decode(rec.data||new Uint8Array()); m.querySelector('#pin').value = (txt||'').trim(); };
-      }catch(e){ alert('No se pudo iniciar NFC.'); }
-    };
-  }else{ // físico
-    openModal(`
-      ${baseInfo}
-      <div class="row" style="margin-top:.6rem">
-        <button id="btnPrint" class="btn-sec">IMPRIMIR</button>
-        <button id="btnFin" class="btn-warn">FINALIZAR</button>
-        <button id="btnPend" class="btn-sec">PENDIENTE</button>
-      </div>
-    `);
-    const m=document.getElementById('rtModal');
-    m.querySelector('#btnPrint').onclick=()=>window.print();
-    m.querySelector('#btnFin').onclick=async()=>{ await setActividadEstado(grupo.id, fechaISO, act.actividad, { status:'finalizada', tipoVoucher:'fisico' }); setButtonsByEstado(cardDiv,'finalizada'); m.style.display='none'; };
-    m.querySelector('#btnPend').onclick=async()=>{ await setActividadEstado(grupo.id, fechaISO, act.actividad, { status:'pendiente', tipoVoucher:'fisico' }); setButtonsByEstado(cardDiv,'pendiente'); m.style.display='none'; };
+/* ====== Servicios / Vouchers ====== */
+// busca un servicio por nombre dentro de Servicios/{destino}/Listado o {destino}/Listado (tolerante)
+async function findServicio(destino, nombre){
+  if (!destino || !nombre) return null;
+  const candidates = [
+    ['Servicios', destino, 'Listado'],
+    [destino, 'Listado']
+  ];
+  const want = norm(nombre);
+  for (const path of candidates){
+    try{
+      const [c1,c2,c3]=path;
+      const col = collection(db, c1, c2, c3);
+      const snap = await getDocs(col);
+      let best=null;
+      snap.forEach(d=>{
+        const x=d.data()||{};
+        const serv = String(x.servicio || x.nombre || d.id || '').trim();
+        if (norm(serv)===want) best={id:d.id,...x};
+      });
+      if (best) return best;
+    }catch(_){}
   }
+  return null;
+}
+function renderVoucherHTMLSync(g, fechaISO, act, compact=false){
+  const paxPlan = calcPlan(act,g);
+  const asistencia = getSavedAsistencia(g, fechaISO, act.actividad);
+  const paxAsist = asistencia?.paxFinal ?? '';
+  const proveedor = act.proveedor || '';
+  const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
+  const html = `
+    <div class="card">
+      <h3>${act.actividad||'SERVICIO'}</h3>
+      <div class="meta">PROVEEDOR: ${proveedor}</div>
+      <div class="meta">GRUPO: ${g.nombreGrupo||g.aliasGrupo||g.id} (${code})</div>
+      <div class="meta">FECHA: ${dmy(fechaISO)}</div>
+      <div class="meta">PAX PLAN: ${paxPlan} · PAX ASISTENTES: ${paxAsist}</div>
+      ${compact?'':'<hr><div class="meta">FIRMA COORDINADOR: ________________________________</div>'}
+    </div>`;
+  return html;
+}
+async function openVoucherModal(g, fechaISO, act){
+  const servicio = await findServicio(g.destino, act.actividad);
+  const tipoRaw = (servicio?.voucher || 'No Aplica').toString();
+  const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
+  if (tipo==='NOAPLICA'){ alert('Este servicio no requiere voucher.'); return; }
+
+  const back = document.getElementById('modalBack');
+  const body = document.getElementById('modalBody');
+  const title= document.getElementById('modalTitle');
+  title.textContent=`VOUCHER — ${act.actividad||''} — ${dmy(fechaISO)}`;
+
+  const voucherHTML = renderVoucherHTMLSync(g, fechaISO, act, false);
+
+  if (tipo==='FISICO'){
+    body.innerHTML = `${voucherHTML}
+      <div class="rowflex" style="margin-top:.6rem">
+        <button id="vchPrint" class="btn sec">IMPRIMIR</button>
+        <button id="vchOk" class="btn ok">FINALIZAR</button>
+        <button id="vchPend" class="btn warn">PENDIENTE</button>
+        ${state.isStaff?'<button id="vchForcePend" class="btn sec">FORZAR PENDIENTE (STAFF)</button>':''}
+      </div>`;
+    document.getElementById('vchPrint').onclick = ()=>{ const w=window.open('','_blank'); w.document.write(`<!doctype html><html><body>${voucherHTML}</body></html>`); w.document.close(); w.print(); };
+    document.getElementById('vchOk').onclick    = ()=> setEstadoServicio(g,fechaISO,act,'FINALIZADA');
+    document.getElementById('vchPend').onclick  = ()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE');
+    if (state.isStaff) document.getElementById('vchForcePend').onclick = ()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE');
+
+  } else if (tipo==='ELECTRONICO'){
+    const clave = (servicio?.clave||'').toString();
+    body.innerHTML = `${voucherHTML}
+      <div class="rowflex" style="margin-top:.6rem">
+        <input id="vchClave" type="text" placeholder="CLAVE (o acerque tarjeta NFC)"/>
+        <button id="vchFirmar" class="btn ok">FIRMAR</button>
+        <button id="vchPend" class="btn warn">PENDIENTE</button>
+        ${state.isStaff?'<button id="vchForcePend" class="btn sec">FORZAR PENDIENTE (STAFF)</button>':''}
+      </div>
+      <div class="meta">TIP: Si tu móvil soporta NFC, puedes acercar la tarjeta para leer la clave automáticamente.</div>
+    `;
+    document.getElementById('vchFirmar').onclick = async ()=>{
+      const val = (document.getElementById('vchClave').value||'').trim();
+      if (!val){ alert('Ingresa la clave.'); return; }
+      if (norm(val)!==norm(clave||'')){ alert('Clave incorrecta.'); return; }
+      await setEstadoServicio(g,fechaISO,act,'FINALIZADA');
+    };
+    document.getElementById('vchPend').onclick  = ()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE');
+    if (state.isStaff) document.getElementById('vchForcePend').onclick = ()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE');
+
+    // NFC opcional
+    if ('NDEFReader' in window){
+      try{
+        const reader = new window.NDEFReader();
+        await reader.scan();
+        reader.onreading = (event)=>{
+          const rec = event.message.records[0];
+          let text=''; try{ text=(new TextDecoder().decode(rec.data)||'').trim(); }catch(_){}
+          if (text){ const inp=document.getElementById('vchClave'); inp.value=text; }
+        };
+      }catch(_){ /* ignore */ }
+    }
+  }
+
+  document.getElementById('modalClose').onclick = closeModal;
+  back.style.display='flex';
+}
+async function setEstadoServicio(g, fechaISO, act, estado){
+  try{
+    const key=slug(act.actividad||'');
+    const path=doc(db,'grupos',g.id);
+    const payload={}; payload[`serviciosEstado.${fechaISO}.${key}`]={ estado, updatedAt: serverTimestamp(), by:(state.user.email||'').toLowerCase() };
+    await updateDoc(path, payload);
+    closeModal();
+    // refrescar solo itinerario
+    renderItinerario(g, document.getElementById('paneItin'), fechaISO);
+  }catch(e){ console.error(e); alert('No fue posible actualizar el estado.'); }
 }
 
-/* ===== modal simple ===== */
-function openModal(html){
-  const m=document.getElementById('rtModal'); const box=document.getElementById('rtBox');
-  box.innerHTML=html; m.style.display='flex'; m.onclick=(e)=>{ if(e.target===m) m.style.display='none'; };
-}
-
-/* ============== Gastos (Storage + TC) ============== */
+/* ============== GASTOS (tab) ============== */
 async function renderGastos(g, pane){
-  pane.innerHTML='<div class="loader">CARGANDO…</div>';
-  const tipos=await getTiposCambio();
-
+  pane.innerHTML='';
+  // form
   const form=document.createElement('div'); form.className='act';
-  form.innerHTML=`
+  form.innerHTML = `
     <h4>REGISTRAR GASTO</h4>
-    <div class="row">
-      <input id="gsAsunto" type="text" placeholder="ASUNTO"/>
-      <select id="gsMoneda">
+    <div class="rowflex" style="margin:.4rem 0">
+      <input id="spAsunto" type="text" placeholder="ASUNTO"/>
+    </div>
+    <div class="rowflex" style="margin:.4rem 0">
+      <select id="spMoneda">
         <option value="CLP">CLP (PRED)</option>
         <option value="USD">USD</option>
         <option value="BRL">BRL</option>
         <option value="ARS">ARS</option>
       </select>
-      <input id="gsValor" type="number" step="0.01" min="0" placeholder="VALOR"/>
-      <input id="gsImg" type="file" accept="image/*" capture="environment"/>
-      <button id="gsSave">GUARDAR GASTO</button>
+      <input id="spValor" type="number" min="0" inputmode="numeric" placeholder="VALOR"/>
+      <input id="spImg" type="file" accept="image/*" capture="environment"/>
+      <button id="spSave" class="btn ok">GUARDAR GASTO</button>
     </div>
   `;
+  pane.appendChild(form);
 
-  const lista=document.createElement('div'); lista.className='act';
-  lista.innerHTML='<h4>GASTOS DEL GRUPO</h4><div id="gsList" class="gastos-grid"></div><div class="totales" id="gsTotals"></div>';
+  // lista
+  const listBox=document.createElement('div'); listBox.className='act';
+  listBox.innerHTML='<h4>GASTOS DEL GRUPO</h4><div class="muted">CARGANDO…</div>';
+  pane.appendChild(listBox);
 
-  pane.innerHTML=''; pane.appendChild(form); pane.appendChild(lista);
-
-  async function refreshList(){
-    const qs = await getDocs(query(collection(db,'grupos',g.id,'gastos'), orderBy('ts','desc'), limit(200)));
-    const grid=lista.querySelector('#gsList'); grid.innerHTML='';
-    const totals = { CLP:0, USD:0, BRL:0, ARS:0, CLPTotal:0 };
-    qs.forEach(d=>{
-      const x=d.data()||{};
-      const row=document.createElement('div'); row.className='gasto-item';
-      row.innerHTML=`
-        <div>${x.asunto||'(sin asunto)'} <span class="muted">· ${x.byEmail||''}</span></div>
-        <div>${x.moneda||''}</div>
-        <div>${Number(x.valor||0).toLocaleString('es-CL')}</div>
-        <div>${x.imgUrl?`<a href="${x.imgUrl}" target="_blank" rel="noopener">VER COMPROBANTE</a>`:''}</div>
-      `;
-      grid.appendChild(row);
-      totals[x.moneda||'CLP'] += Number(x.valor||0);
-      totals.CLPTotal += Number(x.valorCLP || 0);
-    });
-    lista.querySelector('#gsTotals').innerHTML = `
-      <div class="meta">TOTAL CLP: ${Math.round(totals.CLPTotal).toLocaleString('es-CL')}</div>
-      <div class="meta">DESGLOSE · CLP: ${totals.CLP.toLocaleString('es-CL')} · USD: ${totals.USD.toLocaleString('es-CL')} · BRL: ${totals.BRL.toLocaleString('es-CL')} · ARS: ${totals.ARS.toLocaleString('es-CL')}</div>
-      <div class="muted">TC USADOS: USD ${tipos.USD||1} · BRL ${tipos.BRL||1} · ARS ${tipos.ARS||1}</div>
-    `;
-  }
-  await refreshList();
-
-  form.querySelector('#gsSave').onclick = async ()=>{
-    const asunto=form.querySelector('#gsAsunto').value.trim();
-    const moneda=form.querySelector('#gsMoneda').value||'CLP';
-    const valor=Number(form.querySelector('#gsValor').value||0);
-    const file=form.querySelector('#gsImg').files[0]||null;
-    if (!asunto || !valor) return alert('Completa asunto y valor.');
-
-    let url=''; let gastoId='';
+  // guardar gasto
+  form.querySelector('#spSave').onclick = async ()=>{
     try{
-      const tc = await getTiposCambio(); const fx = Number(tc[moneda]||1);
-      const data = {
-        asunto, moneda, valor, fxRateUsed: fx, valorCLP: Math.round(valor*fx),
-        byUid: auth.currentUser.uid, byEmail: (auth.currentUser.email||'').toLowerCase(), ts: serverTimestamp()
-      };
-      const ref = await addDoc(collection(db,'grupos',g.id,'gastos'), data); gastoId=ref.id;
+      const asunto = (form.querySelector('#spAsunto').value||'').trim();
+      const moneda = form.querySelector('#spMoneda').value;
+      const valor  = Number(form.querySelector('#spValor').value||0);
+      const file   = form.querySelector('#spImg').files[0] || null;
+      if (!asunto || !valor){ alert('Asunto y valor son obligatorios.'); return; }
+
+      // Storage (opcional)
+      let imgUrl=null, imgPath=null;
       if (file){
-        const path=`groups/${g.id}/gastos/${gastoId}/${Date.now()}_${file.name}`;
-        const sref=storageRef(storage, path);
-        await uploadBytes(sref, file);
-        url = await getDownloadURL(sref);
-        await updateDoc(ref, { imgUrl:url, imgPath:path });
+        const path = `gastos/${state.user.uid}/${Date.now()}_${file.name.replace(/[^a-z0-9.\-_]/gi,'_')}`;
+        const r = sRef(storage, path);
+        await uploadBytes(r, file);
+        imgUrl = await getDownloadURL(r);
+        imgPath = path;
       }
-      form.querySelector('#gsAsunto').value=''; form.querySelector('#gsValor').value=''; form.querySelector('#gsImg').value='';
-      await refreshList();
-      alert('Gasto registrado.');
-    }catch(e){ console.error(e); alert('No se pudo guardar el gasto.'); }
+
+      // doc en coordinadores/{coordId}/gastos
+      const coordId = state.coordId || 'self';
+      await addDoc(collection(db,'coordinadores',coordId,'gastos'), {
+        asunto, moneda, valor,
+        imgUrl, imgPath,
+        grupoId: g.id,
+        numeroNegocio: g.numeroNegocio,
+        identificador: g.identificador||null,
+        grupoNombre: g.nombreGrupo||g.aliasGrupo||g.id,
+        destino: g.destino||null,
+        programa: g.programa||null,
+        fechaInicio: g.fechaInicio||null,
+        fechaFin: g.fechaFin||null,
+        byUid: state.user.uid,
+        byEmail: (state.user.email||'').toLowerCase(),
+        createdAt: serverTimestamp()
+      });
+
+      form.querySelector('#spAsunto').value='';
+      form.querySelector('#spValor').value='';
+      form.querySelector('#spImg').value='';
+      await loadGastosList(g, listBox);
+    }catch(e){ console.error(e); alert('No fue posible guardar el gasto.'); }
   };
+
+  await loadGastosList(g, listBox);
+}
+async function getTasas(){
+  if (state.cache.tasas) return state.cache.tasas;
+  try{
+    const d=await getDoc(doc(db,'config','tasas'));
+    if (d.exists()){ state.cache.tasas = d.data()||{}; return state.cache.tasas; }
+  }catch(_){}
+  state.cache.tasas = { USD: 950, BRL: 170, ARS: 1.2 }; // valores por defecto
+  return state.cache.tasas;
+}
+async function loadGastosList(g, box){
+  // traigo gastos del coordinador dueño actual (o del que seleccionó staff)
+  const coordId = state.coordId || 'self';
+  const qs = await getDocs(query(collection(db,'coordinadores',coordId,'gastos'), orderBy('createdAt','desc')));
+  const list=[]; qs.forEach(d=>{ const x=d.data()||{}; if (x.grupoId===g.id) list.push({id:d.id,...x}); });
+
+  const tasas = await getTasas();
+  const tot = { CLP:0, USD:0, BRL:0, ARS:0, CLPconv:0 };
+
+  const table=document.createElement('table'); table.className='table';
+  table.innerHTML='<thead><tr><th>ASUNTO</th><th>AUTOR</th><th>MONEDA</th><th>VALOR</th><th>COMPROBANTE</th></tr></thead><tbody></tbody>';
+  const tb=table.querySelector('tbody');
+
+  list.forEach(x=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${x.asunto||''}</td><td>${x.byEmail||''}</td><td>${x.moneda||''}</td><td>${Number(x.valor||0).toLocaleString('es-CL')}</td><td>${x.imgUrl?`<a href="${x.imgUrl}" target="_blank">VER</a>`:'—'}</td>`;
+    tb.appendChild(tr);
+    if (x.moneda==='CLP') tot.CLP += Number(x.valor||0);
+    if (x.moneda==='USD') tot.USD += Number(x.valor||0);
+    if (x.moneda==='BRL') tot.BRL += Number(x.valor||0);
+    if (x.moneda==='ARS') tot.ARS += Number(x.valor||0);
+  });
+  tot.CLPconv = tot.CLP + (tot.USD*(tasas.USD||0)) + (tot.BRL*(tasas.BRL||0)) + (tot.ARS*(tasas.ARS||0));
+
+  box.innerHTML='<h4>GASTOS DEL GRUPO</h4>';
+  box.appendChild(table);
+  const totDiv=document.createElement('div'); totDiv.className='totline';
+  totDiv.textContent = `TOTAL CLP: ${tot.CLP.toLocaleString('es-CL')} · USD: ${tot.USD.toLocaleString('es-CL')} · BRL: ${tot.BRL.toLocaleString('es-CL')} · ARS: ${tot.ARS.toLocaleString('es-CL')} · EQUIV. CLP: ${Math.round(tot.CLPconv).toLocaleString('es-CL')}`;
+  box.appendChild(totDiv);
 }
 
-/* ============== Impresión masiva (staff) ============== */
-function openBulkVoucherModal(){
-  const coords = state.coordinadores;
-  openModal(`
-    <h3>IMPRIMIR VOUCHERS</h3>
-    <div class="row">
-      <select id="pvCoord">
-        <option value="ALL">TODOS LOS COORDINADORES</option>
-        ${coords.map(c=>`<option value="${c.id}">${c.nombre} — ${c.email}</option>`).join('')}
-      </select>
-      <input id="pvDestino" type="text" placeholder="DESTINO (opcional)"/>
-      <input id="pvIni" type="date" placeholder="INI"/>
-      <input id="pvFin" type="date" placeholder="FIN"/>
-      <button id="pvGo" class="btn-sec">GENERAR</button>
-    </div>
-    <div id="pvOut" style="margin-top:.6rem"></div>
-  `);
-  const m=document.getElementById('rtModal');
-  m.querySelector('#pvGo').onclick = ()=>{
-    const coordId=m.querySelector('#pvCoord').value;
-    const dst=(m.querySelector('#pvDestino').value||'').trim();
-    const ini=m.querySelector('#pvIni').value||''; const fin=m.querySelector('#pvFin').value||'';
-    const list = applyTextFilter(state.ordenados).filter(g=>{
-      const okCoord = (coordId==='ALL') || (g.coordinadorId===coordId || g.coordinador?.id===coordId);
-      const okDest  = !dst || String(g.destino||'').trim().toLowerCase()===dst.toLowerCase();
-      const okRange = !(ini && g.fechaFin < ini) && !(fin && g.fechaInicio > fin);
-      return okCoord && okDest && okRange;
-    });
-    const out=m.querySelector('#pvOut'); out.innerHTML='';
-    const printArea=document.createElement('div'); printArea.id='printArea';
-
-    for(const g of list){
-      const fechas=rangoFechas(g.fechaInicio,g.fechaFin);
-      for(const f of fechas){
-        const acts=(g.itinerario?.[f]||[]);
-        for(const a of acts){
-          const sid=String(a.servicioId||a.servicioDocId||'').trim(); if(!sid) continue;
-          // no buscamos el doc aquí por performance; imprimimos “voucher de actividad” genérico
-          const block=document.createElement('div');
-          block.style.cssText='page-break-inside:avoid;border:1px solid #000;padding:10px;margin:8px 0';
-          block.innerHTML=`
-            <h3>${g.nombreGrupo||g.aliasGrupo||g.id}</h3>
-            <div><strong>ACTIVIDAD:</strong> ${a.actividad||'(sin nombre)'} — <strong>FECHA:</strong> ${dmy(f)}</div>
-            <div><strong>DESTINO:</strong> ${g.destino||''} · <strong>PAX PLAN:</strong> ${calcPlan(a,g)}</div>
-          `;
-          printArea.appendChild(block);
-        }
-      }
-    }
-    out.appendChild(printArea);
-    window.print();
-  };
+/* ====== Asistencia helpers ====== */
+function getSavedAsistencia(grupo, fechaISO, actividad){
+  const byDate = grupo?.asistencias?.[fechaISO]; if(!byDate) return null;
+  const key = slug(actividad||'actividad');
+  if (Object.prototype.hasOwnProperty.call(byDate,key)) return byDate[key];
+  for (const k of Object.keys(byDate)) if (slug(k)===key) return byDate[k];
+  return null;
+}
+function setSavedAsistenciaLocal(grupo, fechaISO, actividad, data){
+  const key=slug(actividad||'actividad'); (grupo.asistencias ||= {}); (grupo.asistencias[fechaISO] ||= {}); grupo.asistencias[fechaISO][key]=data;
+}
+function calcPlan(actividad, grupo){
+  const a=actividad||{}; const ad=Number(a.adultos||0), es=Number(a.estudiantes||0); const suma=ad+es;
+  if (suma>0) return suma;
+  const base=(grupo && (grupo.cantidadgrupo!=null?grupo.cantidadgrupo:grupo.pax));
+  return Number(base||0);
 }
