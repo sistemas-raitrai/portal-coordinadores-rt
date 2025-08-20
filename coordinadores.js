@@ -132,6 +132,37 @@ function findCoordinadorForUser(coordinadores, user){
   return { id:'self', nombre: user.displayName || email, email, uid };
 }
 
+// === Selector para STAFF (falta en tu build) ===
+async function showStaffSelector(coordinadores){
+  const bar = ensurePanel(
+    'staffBar',
+    '<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>' +
+    '<select id="coordSelect"></select>'
+  );
+
+  const sel = bar.querySelector('#coordSelect');
+  sel.innerHTML =
+    '<option value="">— SELECCIONA COORDINADOR —</option>' +
+    coordinadores
+      .map(c => `<option value="${c.id}">${c.nombre || ''} — ${c.email || 'SIN CORREO'}</option>`)
+      .join('');
+
+  sel.onchange = async () => {
+    const id = sel.value;
+    const elegido = coordinadores.find(c => c.id === id) || null;
+    localStorage.setItem('rt_staff_coord', id || '');
+    await loadGruposForCoordinador(elegido, state.user);
+  };
+
+  // Restaurar última selección si existe
+  const last = localStorage.getItem('rt_staff_coord');
+  if (last && coordinadores.find(c => c.id === last)) {
+    sel.value = last;
+    const elegido = coordinadores.find(c => c.id === last);
+    await loadGruposForCoordinador(elegido, state.user);
+  }
+}
+
 async function loadGruposForCoordinador(coord, user){
   const cont=document.getElementById('grupos'); if (cont) cont.textContent='CARGANDO GRUPOS…';
 
