@@ -3,6 +3,8 @@
    - Botones prev/next/print/new antes de #allTrips
    - #searchTrips ahora está dentro del grupo (búsqueda interna)
    - Se elimina .group-sub (era redundante)
+   - Selector STAFF con escritura + “TODOS LOS COORDINADORES”
+   - Resaltado de matches y contadores por pestaña
 */
 
 import { app, db, auth, storage } from './firebase-init-portal.js';
@@ -42,6 +44,43 @@ const rangoFechas=(ini,fin)=>{ const out=[]; const A=toISO(ini), B=toISO(fin); i
   for(let d=new Date(A+'T00:00:00'); d<=new Date(B+'T00:00:00'); d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10)); return out; };
 const parseQS=()=>{ const p=new URLSearchParams(location.search); return { g:p.get('g')||'', f:p.get('f')||'' }; };
 
+/* ===== Highlight + helpers ===== */
+function htmlEsc(s){ return String(s??'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function _indexForHighlight(str){
+  let normed='', map=[];
+  for (let i=0;i<str.length;i++){
+    const n = str[i].normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    normed += n; for (let j=0;j<n.length;j++) map.push(i);
+  }
+  return { normed, map };
+}
+function highlight(s, q){
+  const text = String(s??''); const qn = norm(q||''); if(!qn) return htmlEsc(text);
+  const {normed,map} = _indexForHighlight(text); let i=0, ranges=[];
+  while (true){
+    const pos = normed.indexOf(qn, i);
+    if (pos === -1) break;
+    const a = map[pos], b = map[Math.min(pos+qn.length-1, map.length-1)] + 1;
+    if (ranges.length && a <= ranges[ranges.length-1][1]) ranges[ranges.length-1][1] = Math.max(b, ranges[ranges.length-1][1]);
+    else ranges.push([a,b]);
+    i = pos + Math.max(qn.length,1);
+  }
+  if (!ranges.length) return htmlEsc(text);
+  let out='', last=0;
+  for (const [a,b] of ranges){
+    out += htmlEsc(text.slice(last,a)) + '<span class="hl">' + htmlEsc(text.slice(a,b)) + '</span>';
+    last=b;
+  }
+  return out + htmlEsc(text.slice(last));
+}
+function setTabCount(which, n){
+  const el = document.querySelector({resumen:'#tabResumen', itin:'#tabItin', gastos:'#tabGastos'}[which]);
+  if(!el) return;
+  const base = {resumen:'RESUMEN', itin:'ITINERARIO', gastos:'GASTOS'}[which];
+  const q = (state.groupQ||'').trim();
+  el.textContent = q ? `${base} (${Number(n)||0})` : base;
+}
+
 /* Itinerario tolerante */
 function normalizeItinerario(raw){
   if (!raw) return {};
@@ -71,11 +110,12 @@ const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
 const state = {
   user:null,
   isStaff:false,
+  coordId:null,                 // selección staff actual; null = todos
   coordinadores:[],
   grupos:[],
   ordenados:[],
   idx:0,
-  filter:{ type:'all', value:null }, // 'all' | 'dest'
+  filter:{ type:'all', value:null }, // solo 'all' ahora
   groupQ:'',                        // búsqueda interna del grupo
   cache:{ hotel:new Map(), vuelos:new Map(), tasas:null }
 };
@@ -111,8 +151,10 @@ onAuthStateChanged(auth, async (user) => {
   }
 
   // mostrar u ocultar botones staff
-  document.getElementById('btnPrintVch').style.display = state.isStaff ? '' : 'none';
-  document.getElementById('btnNewAlert').style.display = state.isStaff ? '' : 'none';
+  const pv = document.getElementById('btnPrintVch');
+  const na = document.getElementById('btnNewAlert');
+  if(pv) pv.style.display = state.isStaff ? '' : 'none';
+  if(na) na.style.display = state.isStaff ? '' : 'none';
 });
 
 /* ============== Firestore loads ============== */
@@ -133,34 +175,42 @@ function findCoordinadorForUser(coordinadores, user){
   return { id:'self', nombre: user.displayName || email, email, uid };
 }
 
-/* ============== Selector Staff ============== */
+/* ============== Selector Staff con escritura + TODOS ============== */
 async function showStaffSelector(coordinadores){
   const bar = ensurePanel(
     'staffBar',
     '<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>' +
-    '<select id="coordSelect"></select>'
+    '<input id="coordInput" list="coordList" placeholder="ESCRIBE UN COORDINADOR" style="width:100%"/>' +
+    '<datalist id="coordList"></datalist>'
   );
 
-  const sel = bar.querySelector('#coordSelect');
-  sel.innerHTML =
-    '<option value="">— SELECCIONA COORDINADOR —</option>' +
-    coordinadores
-      .map(c => `<option value="${c.id}">${c.nombre || ''} — ${c.email || 'SIN CORREO'}</option>`)
-      .join('');
+  const input = bar.querySelector('#coordInput');
+  const list  = bar.querySelector('#coordList');
 
-  sel.onchange = async () => {
-    const id = sel.value;
-    const elegido = coordinadores.find(c => c.id === id) || null;
+  list.innerHTML =
+    `<option value="TODOS LOS COORDINADORES" data-id="__ALL__"></option>` +
+    coordinadores.map(c => `<option data-id="${c.id}" value="${(c.nombre||'')} — ${(c.email||'SIN CORREO')}"></option>`).join('');
+
+  function chooseById(id){
+    state.coordId = id && id !== '__ALL__' ? id : null;
+    const elegido = id==='__ALL__' ? { id:'__ALL__' } : coordinadores.find(c => c.id===id) || null;
     localStorage.setItem('rt_staff_coord', id || '');
-    await loadGruposForCoordinador(elegido, state.user);
-  };
-
-  const last = localStorage.getItem('rt_staff_coord');
-  if (last && coordinadores.find(c => c.id === last)) {
-    sel.value = last;
-    const elegido = coordinadores.find(c => c.id === last);
-    await loadGruposForCoordinador(elegido, state.user);
+    loadGruposForCoordinador(elegido, state.user);
   }
+  function tryPickFromInput(){
+    const val = (input.value||'').trim();
+    const opt = Array.from(list.options).find(o => o.value.toLowerCase() === val.toLowerCase());
+    if (opt){ chooseById(opt.dataset.id); return true; }
+    return false;
+  }
+
+  input.addEventListener('change', tryPickFromInput);
+  input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); tryPickFromInput(); } });
+
+  const last = localStorage.getItem('rt_staff_coord') || '__ALL__';
+  const optLast = Array.from(list.options).find(o=>o.dataset.id===last);
+  input.value = optLast ? optLast.value : 'TODOS LOS COORDINADORES';
+  chooseById(last);
 }
 
 /* ============== Cargar grupos ============== */
@@ -174,6 +224,7 @@ async function loadGruposForCoordinador(coord, user){
   const docIdElegido=(coord?.id||'').toString();
   const nombreElegido=norm(coord?.nombre||'');
   const isSelf = !coord || coord.id==='self' || emailElegido===(user.email||'').toLowerCase();
+  const isAll  = coord && coord.id==='__ALL__';
 
   allSnap.forEach(d=>{
     const raw={id:d.id, ...d.data()};
@@ -187,6 +238,7 @@ async function loadGruposForCoordinador(coord, user){
       numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || d.id),
       identificador: String(raw.identificador || raw.codigo || '')
     };
+    if (isAll){ wanted.push(g); return; }
     const gEmails=emailsOf(raw), gUids=uidsOf(raw), gDocIds=coordDocIdsOf(raw), gNames=nombresOf(raw);
     const match=(emailElegido && gEmails.includes(emailElegido)) || (uidElegido && gUids.includes(uidElegido)) ||
                 (docIdElegido && gDocIds.includes(docIdElegido)) || (nombreElegido && gNames.includes(nombreElegido)) ||
@@ -221,11 +273,7 @@ async function loadGruposForCoordinador(coord, user){
 }
 
 /* ============== Stats ============== */
-function getFilteredList(){
-  const base=state.ordenados.slice();
-  const dest = (state.filter.type==='dest' && state.filter.value) ? state.filter.value : null;
-  return dest ? base.filter(g=> String(g.destino||'')===dest) : base;
-}
+function getFilteredList(){ return state.ordenados.slice(); }
 function renderStatsFiltered(){ renderStats(getFilteredList()); }
 function renderStats(list){
   const p=ensurePanel('statsPanel');
@@ -248,19 +296,15 @@ function renderStats(list){
 /* ============== Nav (botones antes del select) ============== */
 function renderNavBar(){
   const p=ensurePanel('navPanel'); // el HTML ya está en index
-  const sel=p.querySelector('#allTrips'); sel.textContent='';
+  const sel=p.querySelector('#allTrips');
+  if(!sel) return;
+  sel.textContent='';
 
-  // Filtro: TODOS
+  // FILTRO: TODOS
   const ogFiltro=document.createElement('optgroup'); ogFiltro.label='FILTRO';
   ogFiltro.appendChild(new Option('TODOS','all')); sel.appendChild(ogFiltro);
 
-  // DESTINOS
-  const destinos=[...new Set(state.ordenados.map(g=>String(g.destino||'')).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
-  if(destinos.length){ const ogDest=document.createElement('optgroup'); ogDest.label='DESTINOS';
-    destinos.forEach(d=> ogDest.appendChild(new Option(d || '(sin destino)','dest:'+d))); sel.appendChild(ogDest);
-  }
-
-  // VIAJES
+  // VIAJES (sin sección de destinos)
   const ogTrips=document.createElement('optgroup'); ogTrips.label='VIAJES';
   state.ordenados.forEach((g,i)=>{
     const name=(g.nombreGrupo||g.aliasGrupo||g.id);
@@ -277,25 +321,24 @@ function renderNavBar(){
   const btnPrint= p.querySelector('#btnPrintVch');
   const btnAlert= p.querySelector('#btnNewAlert');
 
-  btnPrev.onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
+  if(btnPrev) btnPrev.onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
     const cur=state.ordenados[state.idx]?.id; const j=list.findIndex(g=>g.id===cur);
     const j2=Math.max(0,j-1), targetId=list[j2].id;
     state.idx=state.ordenados.findIndex(g=>g.id===targetId); renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`;
   };
-  btnNext.onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
+  if(btnNext) btnNext.onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
     const cur=state.ordenados[state.idx]?.id; const j=list.findIndex(g=>g.id===cur);
     const j2=Math.min(list.length-1,j+1), targetId=list[j2].id;
     state.idx=state.ordenados.findIndex(g=>g.id===targetId); renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`;
   };
   sel.onchange=()=>{ const v=sel.value||'';
-    if(v==='all'){ state.filter={type:'all',value:null}; renderStatsFiltered(); sel.value=`trip:${state.idx}`; }
-    else if(v.startsWith('dest:')){ state.filter={type:'dest', value:v.slice(5)}; renderStatsFiltered(); sel.value=`trip:${state.idx}`; }
+    if(v==='all'){ sel.value=`trip:${state.idx}`; } // solo resetea
     else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; renderOneGroup(state.ordenados[state.idx]); }
   };
 
   if(state.isStaff){
-    btnPrint.onclick = openPrintVouchersModal;
-    btnAlert.onclick = openCreateAlertModal;
+    if(btnPrint) btnPrint.onclick = openPrintVouchersModal;
+    if(btnAlert) btnAlert.onclick = openCreateAlertModal;
   }
 }
 
@@ -310,16 +353,16 @@ function renderOneGroup(g, preferDate){
   const rango = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
   const header=document.createElement('div'); header.className='group-card';
-  header.innerHTML=`<h3>${name} (${code})</h3>
+  header.innerHTML=`<h3>${htmlEsc(name)} (${htmlEsc(code)})</h3>
     <div class="grid-mini">
-      <div class="lab">DESTINO</div><div>${g.destino||'—'}</div>
-      <div class="lab">GRUPO</div><div>${name}</div>
+      <div class="lab">DESTINO</div><div>${htmlEsc(g.destino||'—')}</div>
+      <div class="lab">GRUPO</div><div>${htmlEsc(name)}</div>
       <div class="lab">PAX TOTAL</div><div>${(g.cantidadgrupo ?? g.pax ?? 0)}</div>
-      <div class="lab">PROGRAMA</div><div>${g.programa||'—'}</div>
-      <div class="lab">FECHAS</div><div>${rango}</div>
+      <div class="lab">PROGRAMA</div><div>${htmlEsc(g.programa||'—')}</div>
+      <div class="lab">FECHAS</div><div>${htmlEsc(rango)}</div>
     </div>
     <div class="rowflex" style="margin-top:.6rem">
-      <input id="searchTrips" type="text" placeholder="BUSCAR EN ESTE GRUPO (fechas, actividades, gastos, alertas…)"/>
+      <input id="searchTrips" type="text" placeholder="BUSCAR EN ESTE GRUPO (FECHAS, ACTIVIDADES, GASTOS, ALERTAS…)"/>
     </div>`;
   cont.appendChild(header);
 
@@ -362,7 +405,6 @@ function renderOneGroup(g, preferDate){
   input.oninput=()=>{ clearTimeout(tmr); tmr=setTimeout(()=>{
     state.groupQ = input.value || '';
     const active = paneItin.style.display!== 'none' ? 'itin' : (paneGastos.style.display!=='none' ? 'gastos' : 'resumen');
-    // re-render panes con el filtro interno
     renderResumen(g, paneResumen);
     const last = localStorage.getItem('rt_last_date_'+g.id);
     renderItinerario(g, paneItin, last || preferDate);
@@ -375,7 +417,7 @@ function renderOneGroup(g, preferDate){
 async function renderResumen(g, pane){
   pane.innerHTML='<div class="loader">CARGANDO…</div>';
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML='';
-  const q = norm(state.groupQ||'');
+  const q = norm(state.groupQ||''); let resumenCountBase = 0;
 
   // HOTEL
   const hotelBox=document.createElement('div'); hotelBox.className='act';
@@ -386,10 +428,8 @@ async function renderResumen(g, pane){
   // ALERTAS
   const alertBox=document.createElement('div'); alertBox.className='act';
   alertBox.innerHTML='<h4>ALERTAS</h4><div class="muted">CARGANDO…</div>'; wrap.appendChild(alertBox);
-
   pane.appendChild(wrap);
 
-  // HOTEL
   try{
     const h=await loadHotelInfo(g);
     if(!h){ hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>'; }
@@ -398,21 +438,27 @@ async function renderResumen(g, pane){
       const fechas=`${dmy(h.checkIn||'')} — ${dmy(h.checkOut||'')}`;
       const dir=h.hotel?.direccion||'';
       const contacto=[h.hotel?.contactoNombre,h.hotel?.contactoTelefono,h.hotel?.contactoCorreo].filter(Boolean).join(' · ');
-      const block = `
-        <h4>${nombre}</h4>${dir?`<div class="prov">${dir}</div>`:''}
-        <div class="meta">CHECK-IN/OUT: ${fechas}</div>${contacto?`<div class="meta">${contacto}</div>`:''}`;
-      const textMatch = norm([nombre,dir,contacto,fechas].join(' '));
-      hotelBox.innerHTML = (!q || textMatch.includes(q)) ? block : '<h4>HOTEL</h4><div class="muted">Sin coincidencias con la búsqueda.</div>';
+      const txtJoin = [nombre,dir,contacto,fechas].join(' ');
+      const hit = !q || norm(txtJoin).includes(q);
+      if (hit) resumenCountBase += 1;
+      hotelBox.innerHTML = `
+        <h4>${highlight(nombre, state.groupQ)}</h4>
+        ${dir?`<div class="prov">${highlight(dir, state.groupQ)}</div>`:''}
+        <div class="meta">CHECK-IN/OUT: ${highlight(fechas, state.groupQ)}</div>
+        ${contacto?`<div class="meta">${highlight(contacto, state.groupQ)}</div>`:''}`;
+      if (!hit && q) hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN COINCIDENCIAS CON LA BÚSQUEDA.</div>';
     }
   }catch(e){ console.error(e); hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>'; }
 
   // VUELOS
+  let vuelosCount=0;
   try{
     const vuelos = await loadVuelosInfo(g);
     const flt = (!q)?vuelos : vuelos.filter(v=>{
       const s=[v.numero,v.proveedor,v.origen,v.destino,toISO(v.fechaIda),toISO(v.fechaVuelta)].join(' ');
       return norm(s).includes(q);
     });
+    vuelosCount = flt.length;
     if(!flt.length){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS.</div>'; }
     else{
       const table=document.createElement('table'); table.className='table';
@@ -420,17 +466,24 @@ async function renderResumen(g, pane){
       const tb=table.querySelector('tbody');
       flt.forEach(v=>{
         const tr=document.createElement('tr');
-        tr.innerHTML=`<td>${v.numero||''}</td><td>${v.proveedor||''}</td>
-          <td>${v.origen||''} — ${v.destino||''}</td>
-          <td>${dmy(toISO(v.fechaIda))||''}</td><td>${dmy(toISO(v.fechaVuelta))||''}</td>`;
+        tr.innerHTML=`<td>${highlight(v.numero||'', state.groupQ)}</td>
+          <td>${highlight(v.proveedor||'', state.groupQ)}</td>
+          <td>${highlight(`${v.origen||''} — ${v.destino||''}`, state.groupQ)}</td>
+          <td>${highlight(dmy(toISO(v.fechaIda))||'', state.groupQ)}</td>
+          <td>${highlight(dmy(toISO(v.fechaVuelta))||'', state.groupQ)}</td>`;
         tb.appendChild(tr);
       });
       vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4>'; vuelosBox.appendChild(table);
     }
   }catch(e){ console.error(e); vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">ERROR AL CARGAR.</div>'; }
 
-  // ALERTAS
-  try{ await renderAlertas(g, alertBox, q); }catch(e){ console.error(e); alertBox.innerHTML='<h4>ALERTAS</h4><div class="muted">ERROR AL CARGAR.</div>'; }
+  // ALERTAS (reporta cuenta al tab)
+  try{
+    await renderAlertas(g, alertBox, q, (alertsCount)=> setTabCount('resumen', resumenCountBase + vuelosCount + alertsCount));
+  }catch(e){
+    console.error(e); alertBox.innerHTML='<h4>ALERTAS</h4><div class="muted">ERROR AL CARGAR.</div>';
+    setTabCount('resumen', resumenCountBase + vuelosCount);
+  }
 }
 
 async function loadHotelInfo(g){
@@ -484,11 +537,24 @@ function calcPlan(actividad, grupo){
   if(s>0) return s; const base=(grupo && (grupo.cantidadgrupo!=null?grupo.cantidadgrupo:grupo.pax)); return Number(base||0);
 }
 
+function countItinMatches(g, q){
+  if(!q) return 0; const qn=norm(q); let n=0;
+  const fechas=rangoFechas(g.fechaInicio,g.fechaFin);
+  for (const f of fechas){
+    const arr=(g.itinerario && g.itinerario[f])||[];
+    for (const a of arr){
+      const s=[a.actividad,a.proveedor,a.horaInicio,a.horaFin,dmy(f)].join(' ');
+      if (norm(s).includes(qn)) n++;
+    }
+  }
+  return n;
+}
+
 function renderItinerario(g, pane, preferDate){
   pane.innerHTML='';
   const q = norm(state.groupQ||'');
   const fechas=rangoFechas(g.fechaInicio,g.fechaFin);
-  if(!fechas.length){ pane.innerHTML='<div class="muted">FECHAS NO DEFINIDAS.</div>'; return; }
+  if(!fechas.length){ pane.innerHTML='<div class="muted">FECHAS NO DEFINIDAS.</div>'; setTabCount('itin', 0); return; }
 
   const pillsWrap=document.createElement('div'); pillsWrap.className='date-pills'; pane.appendChild(pillsWrap);
   const actsWrap=document.createElement('div'); actsWrap.className='acts'; pane.appendChild(actsWrap);
@@ -496,21 +562,25 @@ function renderItinerario(g, pane, preferDate){
   const hoy=toISO(new Date());
   let startDate=preferDate || ((hoy>=fechas[0] && hoy<=fechas.at(-1))?hoy:fechas[0]);
 
-  // Si hay búsqueda interna, solo mostramos las fechas que tengan match en alguna actividad
   const fechasMostrar = (!q) ? fechas : fechas.filter(f=>{
     const arr=(g.itinerario && g.itinerario[f])? g.itinerario[f] : [];
-    return arr.some(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(q));
+    const hitAct = arr.some(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(q));
+    const hitFecha = norm(dmy(f)).includes(q);
+    return hitAct || hitFecha;
   });
-  if(!fechasMostrar.length){ actsWrap.innerHTML='<div class="muted">SIN COINCIDENCIAS PARA EL ITINERARIO.</div>'; return; }
+  if(!fechasMostrar.length){ actsWrap.innerHTML='<div class="muted">SIN COINCIDENCIAS PARA EL ITINERARIO.</div>'; setTabCount('itin', 0); return; }
 
   if(!fechasMostrar.includes(startDate)) startDate=fechasMostrar[0];
 
   fechasMostrar.forEach(f=>{
-    const pill=document.createElement('div'); pill.className='pill'+(f===startDate?' active':''); pill.textContent=dmy(f); pill.title=f; pill.dataset.fecha=f;
+    const pill=document.createElement('div'); pill.className='pill'+(f===startDate?' active':'');
+    pill.innerHTML = highlight(dmy(f), state.groupQ);
+    pill.title=f; pill.dataset.fecha=f;
     pill.onclick=()=>{ pillsWrap.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); pill.classList.add('active'); renderActs(g,f,actsWrap); localStorage.setItem('rt_last_date_'+g.id,f); };
     pillsWrap.appendChild(pill);
   });
 
+  setTabCount('itin', countItinMatches(g, state.groupQ));
   const last=localStorage.getItem('rt_last_date_'+g.id); if(last && fechasMostrar.includes(last)) startDate=last;
   renderActs(g,startDate,actsWrap);
 }
@@ -531,18 +601,17 @@ async function renderActs(grupo, fechaISO, cont){
     const actName=act.actividad||'ACTIVIDAD';
     const actKey=slug(actName);
 
-    // determina si requiere voucher
     const servicio = await findServicio(grupo.destino, actName);
     const tipoRaw = (servicio?.voucher || 'No Aplica').toString();
     const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
 
     const div=document.createElement('div'); div.className='act';
     div.innerHTML=`
-      <h4>${actName} ${estado?`· <span class="muted">${estado}</span>`:''}</h4>
-      <div class="meta">${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')} · PLAN: <strong>${plan}</strong> PAX</div>
+      <h4>${highlight(actName, state.groupQ)} ${estado?`· <span class="muted">${htmlEsc(estado)}</span>`:''}</h4>
+      <div class="meta">${highlight((act.horaInicio||'--:--')+'–'+(act.horaFin||'--:--'), state.groupQ)} · PLAN: <strong>${plan}</strong> PAX</div>
       <div class="rowflex" style="margin:.35rem 0">
         <input type="number" min="0" inputmode="numeric" placeholder="ASISTENTES" value="${paxFinalInit}"/>
-        <textarea placeholder="NOTA (se guarda en bitácora al GUARDAR)"></textarea>
+        <textarea placeholder="NOTA (SE GUARDA EN BITÁCORA AL GUARDAR)"></textarea>
         <button class="btn ok btnSave">GUARDAR</button>
         ${tipo!=='NOAPLICA'?`<button class="btn sec btnVch">FINALIZAR…</button>`:''}
       </div>
@@ -593,7 +662,7 @@ async function loadBitacora(grupoId, fechaISO, actKey, wrap){
     qs.forEach(d=>{ const x=d.data()||{}; const quien=String(x.byEmail||x.byUid||'USUARIO');
       const cuando=x.ts?.seconds?new Date(x.ts.seconds*1000):null;
       const hora=cuando?cuando.toLocaleString('es-CL'):''; const div=document.createElement('div'); div.className='meta';
-      div.textContent=`• ${x.texto||''} — ${quien}${hora?(' · '+hora):''}`; frag.appendChild(div);
+      div.innerHTML=`• ${highlight(x.texto||'', state.groupQ)} — ${htmlEsc(quien)}${hora?(' · '+htmlEsc(hora)):''}`; frag.appendChild(div);
     });
     wrap.innerHTML=''; wrap.appendChild(frag); if(!qs.size) wrap.innerHTML='<div class="muted">AÚN NO HAY NOTAS.</div>';
   }catch(e){ console.error(e); wrap.innerHTML='<div class="muted">NO SE PUDO CARGAR LA BITÁCORA.</div>'; }
@@ -622,10 +691,10 @@ function renderVoucherHTMLSync(g, fechaISO, act, proveedorDoc=null, compact=fals
     : (act.proveedor||'');
   return `
     <div class="card">
-      <h3>${act.actividad||'SERVICIO'}</h3>
-      <div class="meta">PROVEEDOR: ${provTexto||'—'}</div>
-      <div class="meta">GRUPO: ${g.nombreGrupo||g.aliasGrupo||g.id} (${code})</div>
-      <div class="meta">FECHA: ${dmy(fechaISO)}</div>
+      <h3>${htmlEsc(act.actividad||'SERVICIO')}</h3>
+      <div class="meta">PROVEEDOR: ${htmlEsc(provTexto||'—')}</div>
+      <div class="meta">GRUPO: ${htmlEsc(g.nombreGrupo||g.aliasGrupo||g.id)} (${htmlEsc(code)})</div>
+      <div class="meta">FECHA: ${htmlEsc(dmy(fechaISO))}</div>
       <div class="meta">PAX PLAN: ${paxPlan} · PAX ASISTENTES: ${paxAsist}</div>
       ${compact?'':'<hr><div class="meta">FIRMA COORDINADOR: ________________________________</div>'}
     </div>`;
@@ -660,24 +729,31 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   } else { // ELECTRONICO
     const clave=(servicio?.clave||'').toString();
     body.innerHTML= `${voucherHTML}
-      <div class="rowflex" style="margin-top:.6rem">
-        <input id="vchClave" type="text" placeholder="CLAVE (o acerque tarjeta NFC)"/>
+      <div class="rowflex" style="margin-top:.6rem;gap:.4rem">
+        <input id="vchClave" type="password" placeholder="CLAVE (O ACERQUE TARJETA NFC)"/>
+        <button id="vchToggle" class="btn sec" title="MOSTRAR/OCULTAR">👁</button>
         <button id="vchFirmar" class="btn ok">FIRMAR</button>
         <button id="vchPend" class="btn warn">PENDIENTE</button>
       </div>
-      <div class="meta">TIP: Si tu móvil soporta NFC, puedes acercar la tarjeta para leer la clave automáticamente.</div>`;
+      <div class="meta">TIP: SI TU MÓVIL SOPORTA NFC, PUEDES ACERCAR LA TARJETA PARA LEER LA CLAVE AUTOMÁTICAMENTE.</div>`;
+
+    const inp = document.getElementById('vchClave');
+    const eye = document.getElementById('vchToggle');
+    eye.onclick = ()=>{ inp.type = (inp.type==='password'?'text':'password'); eye.textContent = inp.type==='password' ? '👁' : '🙈'; };
+
     document.getElementById('vchFirmar').onclick=async ()=>{
-      const val=(document.getElementById('vchClave').value||'').trim();
+      const val=(inp.value||'').trim();
       if(!val){ alert('Ingresa la clave.'); return; }
       if(norm(val)!==norm(clave||'')){ alert('Clave incorrecta.'); return; }
       await setEstadoServicio(g,fechaISO,act,'FINALIZADA', true);
     };
     document.getElementById('vchPend').onclick =()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE',  true);
 
+    // NFC opcional
     if('NDEFReader' in window){
       try{ const reader=new window.NDEFReader(); await reader.scan();
         reader.onreading=(ev)=>{ const rec=ev.message.records[0]; let text=''; try{ text=(new TextDecoder().decode(rec.data)||'').trim(); }catch(_){}
-          if(text){ const inp=document.getElementById('vchClave'); inp.value=text; }
+          if(text){ inp.value=text; }
         };
       }catch(_){}
     }
@@ -705,7 +781,7 @@ async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
 }
 
 /* ============== ALERTAS ============== */
-async function renderAlertas(g, box, qNorm=''){
+async function renderAlertas(g, box, qNorm='', afterCount=(n)=>{}){
   const coordIdGuess = state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self';
   const qs=await getDocs(collection(db,'alertas'));
   const all=[]; qs.forEach(d=>all.push({id:d.id,...d.data()}));
@@ -715,6 +791,8 @@ async function renderAlertas(g, box, qNorm=''){
 
   const unread = filtered.filter(a=> !(a.readBy && a.readBy[coordIdGuess]));
   const read   = filtered.filter(a=>  (a.readBy && a.readBy[coordIdGuess]));
+  const totalCount = unread.length + read.length;
+  afterCount(totalCount);
 
   const wrap=document.createElement('div');
   if(state.isStaff){
@@ -724,14 +802,18 @@ async function renderAlertas(g, box, qNorm=''){
   }
 
   const mk=(arr,tit)=>{
-    const card=document.createElement('div'); card.style.marginTop='.5rem'; card.innerHTML=`<div class="meta" style="margin-bottom:.25rem">${tit}</div>`;
+    const card=document.createElement('div'); card.style.marginTop='.5rem'; card.innerHTML=`<div class="meta" style="margin-bottom:.25rem">${htmlEsc(tit)}</div>`;
     if(!arr.length){ card.innerHTML+=`<div class="muted">SIN MENSAJES.</div>`; return card; }
     const table=document.createElement('table'); table.className='table';
     table.innerHTML='<thead><tr><th>FECHA</th><th>MENSAJE</th><th>DE</th><th>ACCIONES</th></tr></thead><tbody></tbody>';
     const tb=table.querySelector('tbody');
     arr.forEach(a=>{
       const fecha=a.createdAt?.seconds? new Date(a.createdAt.seconds*1000).toLocaleDateString('es-CL') : '';
-      const tr=document.createElement('tr'); tr.innerHTML=`<td>${fecha}</td><td>${a.mensaje||''}</td><td>${a.createdBy?.email||''}</td><td></td>`;
+      const tr=document.createElement('tr'); tr.innerHTML=
+        `<td>${highlight(fecha, state.groupQ)}</td>
+         <td>${highlight(a.mensaje||'', state.groupQ)}</td>
+         <td>${highlight(a.createdBy?.email||'', state.groupQ)}</td>
+         <td></td>`;
       const td=tr.lastElementChild;
       if(!state.isStaff){
         const ch=document.createElement('input'); ch.type='checkbox'; ch.checked=!!(a.readBy && a.readBy[coordIdGuess]);
@@ -750,7 +832,7 @@ async function renderAlertas(g, box, qNorm=''){
 function openCreateAlertModal(){
   const back=document.getElementById('modalBack'); const body=document.getElementById('modalBody'); const title=document.getElementById('modalTitle');
   title.textContent='CREAR ALERTA (STAFF)';
-  const coordOpts=state.coordinadores.map(c=>`<option value="${c.id}">${c.nombre} — ${c.email}</option>`).join('');
+  const coordOpts=state.coordinadores.map(c=>`<option value="${c.id}">${htmlEsc(c.nombre)} — ${htmlEsc(c.email)}</option>`).join('');
   body.innerHTML=`
     <div class="rowflex"><textarea id="alertMsg" placeholder="MENSAJE" style="width:100%"></textarea></div>
     <div class="rowflex">
@@ -781,10 +863,10 @@ function openCreateAlertModal(){
 function openPrintVouchersModal(){
   const back=document.getElementById('modalBack'); const body=document.getElementById('modalBody'); const title=document.getElementById('modalTitle');
   title.textContent='IMPRIMIR VOUCHERS (STAFF)';
-  const coordOpts=[`<option value="__ALL__">TODOS</option>`].concat(state.coordinadores.map(c=>`<option value="${c.id}">${c.nombre}</option>`)).join('');
+  const coordOpts=[`<option value="__ALL__">TODOS</option>`].concat(state.coordinadores.map(c=>`<option value="${c.id}">${htmlEsc(c.nombre)}</option>`)).join('');
   body.innerHTML=`
     <div class="rowflex"><label>COORDINADOR</label><select id="pvCoord">${coordOpts}</select></div>
-    <div class="rowflex"><input type="text" id="pvDestino" placeholder="DESTINO (opcional)"/><input type="text" id="pvRango" placeholder="RANGO dd-mm-aaaa..dd-mm-aaaa (opcional)"/></div>
+    <div class="rowflex"><input type="text" id="pvDestino" placeholder="DESTINO (OPCIONAL)"/><input type="text" id="pvRango" placeholder="RANGO dd-mm-aaaa..dd-mm-aaaa (OPCIONAL)"/></div>
     <div class="rowflex"><button id="pvGo" class="btn ok">GENERAR</button></div>`;
   document.getElementById('pvGo').onclick=async ()=>{
     const coordSel=document.getElementById('pvCoord').value;
@@ -822,8 +904,8 @@ async function buildPrintableVouchers(list){
   return `<!doctype html><html><head><meta charset="utf-8"><title>Vouchers</title>
 <style>body{font-family:system-ui,Segoe UI,Roboto,Arial;color:#111;padding:20px}
 .card{border:1px solid #999;border-radius:8px;padding:12px;margin:10px 0}
-h3{margin:.2rem 0 .4rem}.meta{color:#333;font-size:14px}hr{border:0;border-top:1px dashed #999;margin:.4rem 0}</style>
-</head><body><h2>Vouchers</h2>${rows || '<div>Sin actividades.</div>'}</body></html>`;
+h3{margin:.2rem 0 .4rem}.meta{color:#333;font-size:14px}hr{border:0;border-top:1px dashed #999;margin:.4rem 0}
+</style></head><body><h2>Vouchers</h2>${rows || '<div>Sin actividades.</div>'}</body></html>`;
 }
 
 /* ============== Gastos (tab) ============== */
@@ -915,6 +997,8 @@ async function loadGastosList(g, box){
     list = list.filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(q));
   }
 
+  setTabCount('gastos', list.length);
+
   const tasas=await getTasas();
   const tot={ CLP:0, USD:0, BRL:0, ARS:0, CLPconv:0 };
 
@@ -923,7 +1007,11 @@ async function loadGastosList(g, box){
   const tb=table.querySelector('tbody');
   list.forEach(x=>{
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${x.asunto||''}</td><td>${x.byEmail||''}</td><td>${x.moneda||''}</td><td>${Number(x.valor||0).toLocaleString('es-CL')}</td><td>${x.imgUrl?`<a href="${x.imgUrl}" target="_blank">VER</a>`:'—'}</td>`;
+    tr.innerHTML=`<td>${highlight(x.asunto||'', state.groupQ)}</td>
+      <td>${highlight(x.byEmail||'', state.groupQ)}</td>
+      <td>${highlight(x.moneda||'', state.groupQ)}</td>
+      <td>${highlight(Number(x.valor||0).toLocaleString('es-CL'), state.groupQ)}</td>
+      <td>${x.imgUrl?`<a href="${x.imgUrl}" target="_blank">VER</a>`:'—'}</td>`;
     tb.appendChild(tr);
     if(x.moneda==='CLP') tot.CLP+=Number(x.valor||0);
     if(x.moneda==='USD') tot.USD+=Number(x.valor||0);
