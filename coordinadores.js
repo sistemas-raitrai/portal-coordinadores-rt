@@ -15,11 +15,8 @@ import {
 import {
   ref as sRef, uploadBytes, getDownloadURL
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
-import { auth, storage } from './firebase-init-portal.js';
 
 /* ============== Auth ============== */
-const auth = getAuth(app);
-const storage = getStorage(app);
 const logoutBtn = document.getElementById('logout');
 if (logoutBtn) logoutBtn.onclick = () => signOut(auth).then(() => (location = 'index.html'));
 
