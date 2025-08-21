@@ -4,44 +4,87 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Portal Coordinadores RT</title>
-  <style>
-    :root{--bg:#0b1329;--panel:#0e1834;--line:#334155;--text:#e5e7eb;--muted:#94a3b8}
-    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,Segoe UI,Roboto,Arial}
-    .wrap{max-width:1100px;margin:18px auto;padding:0 14px;display:grid;gap:12px}
-    .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
-    .muted{color:var(--muted)}
-    .btn{cursor:pointer;border-radius:10px;border:1px solid var(--line);padding:.45rem .8rem;background:var(--bg);color:var(--text)}
-    .btn.sec{background:#0f1a38}
-    .btn.ok{background:#155e75;border-color:#0e7490}
-    .btn.warn{background:#7c2d12;border-color:#9a3412}
-    #navBar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
-    #navBar .btns{display:flex;gap:.4rem;align-items:center}
-    select,input,textarea{background:#0b1329;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:.45rem .6rem}
-    select{height:34px}
-    .meta{color:#cbd5e1;font-size:12.5px}
-    .group-card{background:#0f1a38;border:1px solid var(--line);border-radius:10px;padding:10px}
-    .group-card h3{margin:.2rem 0 .4rem}
-    .grid-mini{display:grid;grid-template-columns:120px 1fr;gap:.35rem .8rem;margin-top:.4rem}
-    .lab{color:#cbd5e1;font-size:12px;opacity:.9}
-    .rowflex{display:flex;gap:.5rem;align-items:center}
-    .date-pills{display:flex;gap:.35rem;flex-wrap:wrap;margin:.35rem 0}
-    .pill{border:1px solid var(--line);border-radius:999px;padding:.25rem .6rem;cursor:pointer}
-    .pill.active{background:#1e293b}
-    .acts{display:grid;gap:.8rem}
-    .act{border:1px dashed var(--line);border-radius:8px;padding:.6rem}
-    table.table{width:100%;border-collapse:collapse}
-    table.table th,table.table td{border-top:1px solid var(--line);padding:.45rem .35rem;text-align:left}
-    .totline{margin-top:.5rem;font-weight:600}
-    .hl{ background:#fde047; color:#0b1329; border-radius:3px; padding:0 .12em }
-    .pill .hl{ border-radius:999px }
+<style>
+  :root{--bg:#0b1329;--panel:#0e1834;--line:#334155;--text:#e5e7eb;--muted:#94a3b8}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.5 system-ui,Segoe UI,Roboto,Arial;
+    -webkit-font-smoothing:antialiased;
+    text-transform:uppercase;
+  }
 
-    /* Modal */
-    #modalBack{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:14px;z-index:999}
-    #modalDialog{max-width:720px;width:100%;background:#0f1a38;border:1px solid var(--line);border-radius:12px}
-    #modalHead{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:10px 12px}
-    #modalBody{padding:12px}
-    #modalTitle{font-weight:700}
-  </style>
+  /* LAYOUT */
+  .wrap{display:grid;gap:10px;padding:10px;max-width:100%}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .muted{color:var(--muted)}
+
+  /* NAV STICKY Y SCROLLABLE */
+  #navPanel{position:sticky;top:env(safe-area-inset-top,0px);z-index:50}
+  #navBar{display:flex;gap:.5rem;align-items:center;flex-wrap:nowrap;overflow:auto hidden;-webkit-overflow-scrolling:touch}
+  #navBar::-webkit-scrollbar,.date-pills::-webkit-scrollbar,.btns::-webkit-scrollbar{display:none}
+  #navBar .btns{display:flex;gap:.35rem;align-items:center;flex:0 0 auto;overflow:auto hidden}
+  #allTrips{flex:1 0 260px;min-width:220px;height:42px}
+
+  /* CONTROLES */
+  .btn{
+    cursor:pointer;border-radius:10px;border:1px solid var(--line);
+    padding:.6rem .9rem;background:#0f1a38;color:var(--text);
+    min-height:44px;touch-action:manipulation
+  }
+  .btn.sec{background:#0f1a38}
+  .btn.ok{background:#155e75;border-color:#0e7490}
+  .btn.warn{background:#7c2d12;border-color:#9a3412}
+  select,input,textarea{
+    background:#0b1329;color:var(--text);border:1px solid var(--line);
+    border-radius:10px;padding:.6rem .7rem;font-size:16px;width:100%
+  }
+  .meta{color:#cbd5e1;font-size:12.5px}
+
+  /* CABECERA DE GRUPO */
+  .group-card{background:#0f1a38;border:1px solid var(--line);border-radius:10px;padding:12px}
+  .group-card h3{margin:.2rem 0 .5rem;font-size:1.05rem}
+  .grid-mini{display:grid;grid-template-columns:1fr;gap:.25rem .5rem;margin-top:.4rem}
+  .lab{color:#cbd5e1;font-size:12px;opacity:.9}
+  .rowflex{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+
+  /* PÍLDORAS DE FECHA (SCROLL HORIZONTAL) */
+  .date-pills{display:flex;gap:.35rem;flex-wrap:nowrap;margin:.35rem 0;overflow:auto hidden;padding-bottom:2px;-webkit-overflow-scrolling:touch}
+  .pill{border:1px solid var(--line);border-radius:999px;padding:.35rem .7rem;cursor:pointer;flex:0 0 auto;min-height:36px}
+  .pill.active{background:#1e293b}
+
+  /* ACTIVIDADES */
+  .acts{display:grid;gap:.8rem}
+  .act{border:1px dashed var(--line);border-radius:8px;padding:.7rem}
+
+  /* TABLAS SCROLLABLES EN MÓVIL */
+  table.table{width:100%;border-collapse:collapse;display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table.table thead,table.table tbody,table.table tr{display:table;width:100%;table-layout:fixed}
+  table.table th,table.table td{border-top:1px solid var(--line);padding:.55rem .4rem;text-align:left;vertical-align:top}
+  .totline{margin-top:.6rem;font-weight:700}
+
+  /* RESALTADO DE BÚSQUEDA */
+  .hl{background:#fde047;color:#0b1329;border-radius:3px;padding:0 .12em}
+  .pill .hl{border-radius:999px}
+
+  /* MODAL */
+  #modalBack{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:14px;z-index:999}
+  #modalDialog{max-width:720px;width:100%;background:#0f1a38;border:1px solid var(--line);border-radius:12px}
+  #modalHead{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:10px 12px}
+  #modalBody{padding:12px}
+  #modalTitle{font-weight:700}
+
+  /* DESKTOP TWEAKS */
+  @media (min-width:820px){
+    .wrap{max-width:1100px;margin:18px auto;padding:0 14px}
+    #navBar{flex-wrap:wrap;overflow:visible}
+    #allTrips{flex:0 0 auto;min-width:340px}
+    .grid-mini{grid-template-columns:140px 1fr}
+    select,input,textarea{width:auto}
+  }
+</style>
+
 </head>
 <body>
   <div class="wrap">
