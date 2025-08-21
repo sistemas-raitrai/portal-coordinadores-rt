@@ -2,132 +2,116 @@
 <html lang="es">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Portal Coordinadores RT</title>
-<style>
-  :root{
-    --bg:#0b1329;--panel:#0e1834;--line:#334155;--text:#e5e7eb;--muted:#94a3b8;
-    --fs-base: clamp(15px, 3.8vw, 17px);
-    --fs-sm:   clamp(13px, 3.2vw, 15px);
-    --fs-meta: clamp(12px, 2.9vw, 14px);
-    --fs-h3:   clamp(18px, 5.4vw, 24px);
-    --fs-h4:   clamp(15px, 4.5vw, 19px);
-  }
 
-  *{box-sizing:border-box}
-  html,body{height:100%}
-  body{
-    margin:0;background:var(--bg);color:var(--text);
-    font: var(--fs-base)/1.42 system-ui,Segoe UI,Roboto,Arial;
-    -webkit-font-smoothing:antialiased;
-    -webkit-text-size-adjust:100%;
-  }
-  .wrap{width:100%;max-width:100%;margin:10px auto;padding:0 10px;display:grid;gap:10px}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
-  .muted{color:var(--muted)}
-  .meta{color:#cbd5e1;font-size:var(--fs-meta)}
+  <!-- CSS mobile-first -->
+  <style>
+    :root{
+      --bg:#0b1329;--panel:#0e1834;--line:#334155;--text:#e5e7eb;--muted:#94a3b8;
+      --fs-base: clamp(15px, 3.8vw, 17px);
+      --fs-sm:   clamp(13px, 3.2vw, 15px);
+      --fs-meta: clamp(12px, 2.9vw, 14px);
+      --fs-h3:   clamp(18px, 5.4vw, 24px);
+      --fs-h4:   clamp(15px, 4.5vw, 19px);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;background:var(--bg);color:var(--text);
+      font: var(--fs-base)/1.42 system-ui,Segoe UI,Roboto,Arial;
+      -webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;
+    }
+    .wrap{width:100%;max-width:100%;margin:10px auto;padding:0 10px;display:grid;gap:10px}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+    .muted{color:var(--muted)}
+    .meta{color:#cbd5e1;font-size:var(--fs-meta)}
+    .btn{cursor:pointer;border-radius:12px;border:1px solid var(--line);padding:.7rem 1rem;min-height:44px;background:#0f1a38;color:var(--text);font-weight:600}
+    .btn.ok{background:#155e75;border-color:#0e7490}
+    .btn.warn{background:#7c2d12;border-color:#9a3412}
 
-  .btn{
-    cursor:pointer;border-radius:12px;border:1px solid var(--line);
-    padding:.7rem 1rem;min-height:44px;background:#0f1a38;color:var(--text);font-weight:600
-  }
-  .btn.ok{background:#155e75;border-color:#0e7490}
-  .btn.warn{background:#7c2d12;border-color:#9a3412}
+    select,input,textarea{
+      background:#0b1329;color:var(--text);border:1px solid var(--line);border-radius:12px;
+      padding:.6rem .8rem;font-size:inherit;min-height:44px;width:100%
+    }
+    select{appearance:none}
 
-  select,input,textarea{
-    background:#0b1329;color:var(--text);border:1px solid var(--line);
-    border-radius:12px;padding:.6rem .8rem;font-size:inherit;min-height:44px;width:100%
-  }
-  select{appearance:none}
+    /* NAV */
+    #navBar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+    #navBar .btns{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;width:100%}
+    #navBar .btns .btn{flex:1 1 48%}
+    #btnPrintVch,#btnNewAlert{flex:1 1 48%}
+    #allTrips{flex:1 1 100%}
+    @media (min-width:720px){
+      .wrap{max-width:1100px;padding:0 14px;gap:12px}
+      #navBar .btns{width:auto}
+      #navBar .btns .btn{flex:0 0 auto}
+      #btnPrintVch,#btnNewAlert{flex:0 0 auto}
+      #allTrips{flex:1 1 420px;max-width:620px}
+    }
 
-  /* NAV */
-  #navBar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
-  #navBar .btns{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;width:100%}
-  #navBar .btns .btn{flex:1 1 48%}
-  #btnPrintVch,#btnNewAlert{flex:1 1 48%}
-  #allTrips{flex:1 1 100%}
+    /* Grupo */
+    .group-card{background:#0f1a38;border:1px solid var(--line);border-radius:12px;padding:12px}
+    .group-card h3{margin:.15rem 0 .5rem;font-size:var(--fs-h3);font-weight:800}
+    .grid-mini{display:grid;grid-template-columns:96px 1fr;gap:.45rem .8rem;margin-top:.4rem}
+    @media (min-width:720px){ .grid-mini{grid-template-columns:120px 1fr} }
+    .lab{color:#cbd5e1;font-size:var(--fs-sm);opacity:.9;letter-spacing:.02em}
+    .rowflex{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
 
-  @media (min-width:720px){
-    .wrap{max-width:1100px;padding:0 14px;gap:12px}
-    #navBar .btns{width:auto}
-    #navBar .btns .btn{flex:0 0 auto}
-    #btnPrintVch,#btnNewAlert{flex:0 0 auto}
-    #allTrips{flex:1 1 420px;max-width:620px}
-  }
+    /* Itinerario */
+    .date-pills{display:flex;gap:.35rem;flex-wrap:wrap;margin:.45rem 0}
+    .pill{border:1px solid var(--line);border-radius:999px;padding:.35rem .9rem;cursor:pointer;white-space:nowrap}
+    .pill.active{background:#1e293b}
+    .acts{display:grid;gap:.9rem}
+    .act{border:1px dashed var(--line);border-radius:10px;padding:.7rem}
+    h4{font-size:var(--fs-h4);margin:.1rem 0 .5rem}
 
-  /* Cabecera de grupo */
-  .group-card{background:#0f1a38;border:1px solid var(--line);border-radius:12px;padding:12px}
-  .group-card h3{margin:.15rem 0 .5rem;font-size:var(--fs-h3);font-weight:800}
-  .grid-mini{display:grid;grid-template-columns:96px 1fr;gap:.45rem .8rem;margin-top:.4rem}
-  @media (min-width:720px){ .grid-mini{grid-template-columns:120px 1fr} }
-  .lab{color:#cbd5e1;font-size:var(--fs-sm);opacity:.9;letter-spacing:.02em}
+    /* Tablas con scroll */
+    table.table{width:100%;border-collapse:collapse;display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+    table.table thead,table.table tbody{display:table;width:100%;table-layout:fixed}
+    table.table th,table.table td{border-top:1px solid var(--line);padding:.55rem .4rem;text-align:left;white-space:nowrap;font-size:var(--fs-sm)}
+    .totline{margin-top:.6rem;font-weight:700}
 
-  .rowflex{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+    /* Modal */
+    #modalBack{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:14px;z-index:999}
+    #modalDialog{max-width:720px;width:100%;background:#0f1a38;border:1px solid var(--line);border-radius:12px}
+    #modalHead{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:10px 12px}
+    #modalBody{padding:12px}
+    #modalTitle{font-weight:800;font-size:var(--fs-h4)}
 
-  /* Pestañas / Itinerario */
-  .date-pills{display:flex;gap:.35rem;flex-wrap:wrap;margin:.45rem 0}
-  .pill{border:1px solid var(--line);border-radius:999px;padding:.35rem .9rem;cursor:pointer;white-space:nowrap}
-  .pill.active{background:#1e293b}
+    /* Stats más grandes en desktop */
+    #statsPanel .meta{font-size:clamp(13px,3.4vw,15px)}
+    @media (min-width:900px){ #statsPanel{max-width:820px;margin-inline:auto} }
 
-  .acts{display:grid;gap:.9rem}
-  .act{border:1px dashed var(--line);border-radius:10px;padding:.7rem}
-  h4{font-size:var(--fs-h4);margin:.1rem 0 .5rem}
-
-  /* Tablas con scroll */
-  table.table{width:100%;border-collapse:collapse;display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
-  table.table thead,table.table tbody{display:table;width:100%;table-layout:fixed}
-  table.table th,table.table td{border-top:1px solid var(--line);padding:.55rem .4rem;text-align:left;white-space:nowrap;font-size:var(--fs-sm)}
-  .totline{margin-top:.6rem;font-weight:700}
-
-  .hl{background:#fde047;color:#0b1329;border-radius:3px;padding:0 .12em}
-  .pill .hl{border-radius:999px}
-
-  /* Modal */
-  #modalBack{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:14px;z-index:999}
-  #modalDialog{max-width:720px;width:100%;background:#0f1a38;border:1px solid var(--line);border-radius:12px}
-  #modalHead{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:10px 12px}
-  #modalBody{padding:12px}
-  #modalTitle{font-weight:800;font-size:var(--fs-h4)}
-
-  /* Estadísticas algo más grandes y centrables en desktop */
-  #statsPanel .meta{font-size:clamp(13px,3.4vw,15px)}
-  @media (min-width:900px){ #statsPanel{max-width:820px;margin-inline:auto} }
-
-  /* ——— Extras para tu sección de Alertas (mantiene compatibilidad) ——— */
-  .alert-card{border:1px solid var(--line);border-radius:12px;padding:10px;background:#0f1a38}
-  .alert-head{display:flex;justify-content:space-between;gap:.6rem;font-size:var(--fs-sm);margin-bottom:.35rem}
-  .tabs{display:flex;gap:.35rem;flex-wrap:wrap;margin:.35rem 0}
-  .tabs .tab{border:1px solid var(--line);padding:.35rem .7rem;border-radius:999px;cursor:pointer}
-  .tabs .tab.active{background:#1e293b}
-  .subsection{margin-top:.6rem}
-</style>
-
+    /* Alertas panel */
+    .tabs{display:flex;gap:.4rem;flex-wrap:wrap}
+    .tab{border:1px solid var(--line);padding:.4rem .8rem;border-radius:999px;cursor:pointer}
+    .tab.active{background:#1e293b}
+    .alert-card{border:1px solid var(--line);border-radius:12px;padding:10px;background:#0f1a38}
+    .alert-title{font-weight:700;margin:.2rem 0 .35rem}
+  </style>
 </head>
 <body>
   <div class="wrap">
-    <!-- STAFF: selector de coordinador -->
     <div id="staffBar" class="panel"></div>
 
-    <!-- ALERTAS globales -->
+    <!-- NUEVO: panel de alertas globales -->
     <div id="alertsPanel" class="panel"></div>
 
-    <!-- NAV -->
     <div id="navPanel" class="panel">
       <div id="navBar">
         <div class="btns">
-          <button id="btnPrev" class="btn">‹ ANTERIOR</button>
-          <button id="btnNext" class="btn">SIGUIENTE ›</button>
-          <button id="btnPrintVch" class="btn" style="display:none">IMPRIMIR VOUCHERS…</button>
-          <button id="btnNewAlert" class="btn" style="display:none">CREAR ALERTA…</button>
+          <button id="btnPrev" class="btn sec">‹ ANTERIOR</button>
+          <button id="btnNext" class="btn sec">SIGUIENTE ›</button>
+          <button id="btnPrintVch" class="btn sec" style="display:none">IMPRIMIR VOUCHERS…</button>
+          <button id="btnNewAlert" class="btn sec" style="display:none">CREAR ALERTA…</button>
         </div>
         <select id="allTrips"></select>
       </div>
     </div>
 
-    <!-- STATS -->
     <div id="statsPanel" class="panel"></div>
 
-    <!-- GRUPO -->
     <div id="gruposPanel" class="panel">
       <div id="grupos"></div>
     </div>
@@ -137,14 +121,13 @@
   <div id="modalBack">
     <div id="modalDialog">
       <div id="modalHead">
-        <div id="modalTitle" class="caps">TÍTULO</div>
-        <button id="modalClose" class="btn">✕</button>
+        <div id="modalTitle">TÍTULO</div>
+        <button id="modalClose" class="btn sec">✕</button>
       </div>
       <div id="modalBody"></div>
     </div>
   </div>
 
-  <!-- Tu bundle con Firebase ya inicializado -->
   <script type="module" src="./coordinadores.js"></script>
 </body>
 </html>
