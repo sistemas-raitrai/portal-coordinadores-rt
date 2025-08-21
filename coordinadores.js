@@ -15,6 +15,7 @@ import {
 import {
   getStorage, ref as sRef, uploadBytes, getDownloadURL
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
+import { auth, storage } from './firebase-init-portal.js';
 
 /* ============== Auth ============== */
 const auth = getAuth(app);
@@ -830,7 +831,7 @@ async function renderGastos(g, pane){
     </div>
     <div class="rowflex" style="margin:.4rem 0">
       <select id="spMoneda">
-        <option value="CLP">CLP (PRED)</option><option value="USD">USD</option><option value="BRL">BRL</option><option value="ARS">ARS</option>
+        <option value="CLP">CLP</option><option value="USD">USD</option><option value="BRL">BRL</option><option value="ARS">ARS</option>
       </select>
       <input id="spValor" type="number" min="0" inputmode="numeric" placeholder="VALOR"/>
       <input id="spImg" type="file" accept="image/*" capture="environment"/>
@@ -841,28 +842,55 @@ async function renderGastos(g, pane){
   const listBox=document.createElement('div'); listBox.className='act';
   listBox.innerHTML='<h4>GASTOS DEL GRUPO</h4><div class="muted">CARGANDO…</div>'; pane.appendChild(listBox);
 
-  form.querySelector('#spSave').onclick=async ()=>{
+    form.querySelector('#spSave').onclick=async ()=>{
+    const btn=form.querySelector('#spSave');
     try{
       const asunto=(form.querySelector('#spAsunto').value||'').trim();
       const moneda=form.querySelector('#spMoneda').value;
-      const valor=Number(form.querySelector('#spValor').value||0);
-      const file=form.querySelector('#spImg').files[0]||null;
+      const valor =Number(form.querySelector('#spValor').value||0);
+      const file  =form.querySelector('#spImg').files[0]||null;
       if(!asunto || !valor){ alert('Asunto y valor obligatorios.'); return; }
+
+      btn.disabled=true;
+
       let imgUrl=null, imgPath=null;
       if(file){
-        const path=`gastos/${state.user.uid}/${Date.now()}_${file.name.replace(/[^a-z0-9.\-_]/gi,'_')}`;
-        const r=sRef(storage,path); await uploadBytes(r,file); imgUrl=await getDownloadURL(r); imgPath=path;
+        if (file.size > 10*1024*1024){ alert('La imagen supera 10MB.'); btn.disabled=false; return; }
+        const safe = file.name.replace(/[^a-z0-9.\-_]/gi,'_');
+        const uid  = (auth.currentUser && auth.currentUser.uid) || state.user.uid;
+        const path = `gastos/${uid}/${Date.now()}_${safe}`;   // ← coincide con reglas
+        const r    = sRef(storage, path);
+
+        // 👇 METADATA para pasar la regla contentType y evitar CORS 403
+        await uploadBytes(r, file, { contentType: file.type || 'image/jpeg' });
+        imgUrl  = await getDownloadURL(r);
+        imgPath = path;
       }
-      const coordId = state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self';
+
+      // ID del coordinador dueño (si eres staff y estás en otro coord, usa ese id)
+      const coordId = state.coordId || (
+        state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self'
+      );
+
       await addDoc(collection(db,'coordinadores',coordId,'gastos'),{
-        asunto, moneda, valor, imgUrl, imgPath, grupoId:g.id, numeroNegocio:g.numeroNegocio,
-        identificador:g.identificador||null, grupoNombre:g.nombreGrupo||g.aliasGrupo||g.id,
-        destino:g.destino||null, programa:g.programa||null, fechaInicio:g.fechaInicio||null, fechaFin:g.fechaFin||null,
-        byUid:state.user.uid, byEmail:(state.user.email||'').toLowerCase(), createdAt:serverTimestamp()
+        asunto, moneda, valor, imgUrl, imgPath,
+        grupoId:g.id, numeroNegocio:g.numeroNegocio, identificador:g.identificador||null,
+        grupoNombre:g.nombreGrupo||g.aliasGrupo||g.id, destino:g.destino||null, programa:g.programa||null,
+        fechaInicio:g.fechaInicio||null, fechaFin:g.fechaFin||null,
+        byUid: state.user.uid, byEmail:(state.user.email||'').toLowerCase(),
+        createdAt: serverTimestamp()
       });
-      form.querySelector('#spAsunto').value=''; form.querySelector('#spValor').value=''; form.querySelector('#spImg').value='';
+
+      form.querySelector('#spAsunto').value='';
+      form.querySelector('#spValor').value='';
+      form.querySelector('#spImg').value='';
       await loadGastosList(g,listBox);
-    }catch(e){ console.error(e); alert('No fue posible guardar el gasto.'); }
+    }catch(e){
+      console.error(e);
+      alert('No fue posible guardar el gasto.');
+    }finally{
+      btn.disabled=false;
+    }
   };
 
   await loadGastosList(g,listBox);
