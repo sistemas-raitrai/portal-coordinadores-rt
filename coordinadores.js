@@ -5,15 +5,15 @@
    - “Total viajes · Total días · Total pax” en misma línea
 */
 
-import { app, db } from './firebase-init-portal.js';
-import { getAuth, onAuthStateChanged, signOut }
+import { app, db, auth, storage } from './firebase-init-portal.js';
+import { onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
   collection, collectionGroup, getDocs, getDoc, doc, updateDoc, addDoc,
   serverTimestamp, query, where, orderBy, limit
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 import {
-  getStorage, ref as sRef, uploadBytes, getDownloadURL
+  ref as sRef, uploadBytes, getDownloadURL
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 import { auth, storage } from './firebase-init-portal.js';
 
