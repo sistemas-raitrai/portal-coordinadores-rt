@@ -1,115 +1,79 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>COORDINADORES | RT</title>
-  <link rel="icon" href="RaitraiLogo.png?v=2"/>
-
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Portal Coordinadores RT</title>
   <style>
-    :root{
-      --bg1:#0b1020; --bg2:#111827; --panel:#0f1530; --b:#223053;
-      --ink:#e5e7eb; --muted:#9aa3b2; --acc:#3b82f6;
-      --ok:#16a34a; --warn:#f59e0b;
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:var(--ink)}
-    header{display:flex;gap:.75rem;align-items:center;padding:.8rem 1rem;border-bottom:1px solid #1f2937;background:rgba(0,0,0,.25);backdrop-filter:blur(6px);position:sticky;top:0;z-index:10;text-transform:uppercase}
-    header img{height:28px}
-    header .cta{margin-left:auto}
-    header button{background:#fff;color:#111827;border:0;border-radius:999px;padding:.45rem .95rem;font-weight:700;cursor:pointer}
-
-    .wrap{padding:14px;max-width:980px;margin:0 auto}
-
-    .panel{background:var(--panel);border:1px solid var(--b);border-radius:14px;padding:10px 12px;margin:12px 0}
-    .panel, .panel *{text-transform:uppercase}
-    .panel select, .panel input[type="text"]{
-      width:100%;padding:.6rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:var(--ink)
-    }
-
-    /* Nav */
-    #navBar{display:grid;gap:.6rem}
-    #navBar .btns{display:flex;gap:.5rem;flex-wrap:wrap}
-    .btn{border:0;border-radius:10px;padding:.6rem .9rem;font-weight:700;cursor:pointer}
-    .btn.ok{background:var(--ok);color:#fff}
-    .btn.sec{background:#1f2937;color:#e5e7eb;border:1px solid #334155}
-    .btn.warn{background:var(--warn);color:#111}
-
-    /* Trip card */
-    .group-card{background:linear-gradient(180deg,#121734,#0f1530);border:1px solid #1f2a44;border-radius:16px;padding:12px;margin:12px 0}
-    .group-card h3{margin:0 0 .2rem;font-size:1.05rem}
-    .group-sub{color:var(--muted);font-size:.9rem}
-
-    /* Mini grid info */
-    .grid-mini{display:grid;grid-template-columns:120px 1fr;gap:.3rem .8rem;margin-top:.6rem}
-    .grid-mini .lab{color:var(--muted)}
-
-    /* Pills/acts */
-    .date-pills{display:flex;gap:.5rem;overflow:auto;padding:.5rem 0;margin-top:.5rem}
-    .pill{white-space:nowrap;border:1px solid #27324f;border-radius:999px;padding:.4rem .7rem;font-size:.9rem;cursor:pointer}
-    .pill.active{background:var(--acc);border-color:var(--acc);color:#fff}
-    .acts{margin-top:.8rem;display:grid;gap:.6rem}
-    .act{background:#0f1530;border:1px solid var(--b);border-radius:14px;padding:.8rem}
-    .act h4{margin:.05rem 0 .35rem;font-size:1rem;text-align:left}
-    .meta{color:var(--muted);font-size:.88rem;margin:.25rem 0;text-align:left}
-    .prov{margin-top:.45rem;color:#cbd5e1;font-size:.86rem}
-
-    .row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
-    .rowflex{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
-    .row input[type="number"], .rowflex input[type="number"]{width:120px;padding:.6rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:var(--ink)}
-    .row textarea, .rowflex textarea{flex:1;min-width:220px;min-height:42px;padding:.6rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:var(--ink);text-transform:none}
-    .row input[type="text"], .rowflex input[type="text"]{flex:1;min-width:220px;padding:.6rem;border-radius:10px;border:1px solid #334155;background:#0b1329;color:var(--ink);text-transform:none}
-
-    .table{width:100%;border-collapse:collapse;margin-top:.4rem}
-    .table th,.table td{border-bottom:1px solid #2a385a;padding:.45rem;text-align:left;font-size:.9rem}
-    .totline{margin-top:.5rem;font-weight:700;text-align:left}
-
-    .loader{padding:1.25rem;text-align:center;color:var(--muted)}
+    :root{--bg:#0b1329;--panel:#0e1834;--line:#334155;--text:#e5e7eb;--muted:#94a3b8}
+    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,Segoe UI,Roboto,Arial}
+    .wrap{max-width:1100px;margin:18px auto;padding:0 14px;display:grid;gap:12px}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
     .muted{color:var(--muted)}
-
+    .btn{cursor:pointer;border-radius:10px;border:1px solid var(--line);padding:.45rem .8rem;background:var(--bg);color:var(--text)}
+    .btn.sec{background:#0f1a38}
+    .btn.ok{background:#155e75;border-color:#0e7490}
+    .btn.warn{background:#7c2d12;border-color:#9a3412}
+    #navBar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+    #navBar .btns{display:flex;gap:.4rem;align-items:center}
+    select,input,textarea{background:#0b1329;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:.45rem .6rem}
+    select{height:34px}
+    .meta{color:#cbd5e1;font-size:12.5px}
+    .group-card{background:#0f1a38;border:1px solid var(--line);border-radius:10px;padding:10px}
+    .group-card h3{margin:.2rem 0 .4rem}
+    .grid-mini{display:grid;grid-template-columns:120px 1fr;gap:.35rem .8rem;margin-top:.4rem}
+    .lab{color:#cbd5e1;font-size:12px;opacity:.9}
+    .rowflex{display:flex;gap:.5rem;align-items:center}
+    .date-pills{display:flex;gap:.35rem;flex-wrap:wrap;margin:.35rem 0}
+    .pill{border:1px solid var(--line);border-radius:999px;padding:.25rem .6rem;cursor:pointer}
+    .pill.active{background:#1e293b}
+    .acts{display:grid;gap:.8rem}
+    .act{border:1px dashed var(--line);border-radius:8px;padding:.6rem}
+    table.table{width:100%;border-collapse:collapse}
+    table.table th,table.table td{border-top:1px solid var(--line);padding:.45rem .35rem;text-align:left}
+    .totline{margin-top:.5rem;font-weight:600}
     /* Modal */
-    #modalBack{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:50;padding:12px}
-    #modalCard{background:#0f1530;border:1px solid var(--b);border-radius:14px;max-width:720px;width:100%;padding:12px}
-    #modalHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem}
-    #modalTitle{font-weight:800}
-    #modalBody{display:grid;gap:.6rem}
-
-    /* Mobile tweaks */
-    @media (max-width:640px){
-      .grid-mini{grid-template-columns:1fr;gap:.35rem}
-      header strong{font-size:.9rem}
-      .panel,.group-card{margin:10px 0}
-      #navBar .btns{gap:.4rem}
-    }
+    #modalBack{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:14px;z-index:999}
+    #modalDialog{max-width:720px;width:100%;background:#0f1a38;border:1px solid var(--line);border-radius:12px}
+    #modalHead{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:10px 12px}
+    #modalBody{padding:12px}
+    #modalTitle{font-weight:700}
   </style>
 </head>
 <body>
-  <header>
-    <img src="RaitraiLogo.png?v=2" alt="RAI TRAI"/>
-    <strong>COORDINADORES</strong>
-    <div class="cta"><button id="logout">SALIR</button></div>
-  </header>
-
   <div class="wrap">
-    <!-- los paneles se inyectan y reordenan por JS:
-         1) #staffBar   2) #navPanel   3) #statsPanel   4) #gruposPanel -->
+    <div id="staffBar" class="panel"></div>
+
+    <div id="navPanel" class="panel">
+      <div id="navBar">
+        <div class="btns">
+          <button id="btnPrev" class="btn sec">‹ ANTERIOR</button>
+          <button id="btnNext" class="btn sec">SIGUIENTE ›</button>
+          <button id="btnPrintVch" class="btn sec" style="display:none">IMPRIMIR VOUCHERS…</button>
+          <button id="btnNewAlert" class="btn sec" style="display:none">CREAR ALERTA…</button>
+        </div>
+        <select id="allTrips"></select>
+      </div>
+    </div>
+
+    <div id="statsPanel" class="panel"></div>
+
     <div id="gruposPanel" class="panel">
-      <div id="grupos" class="loader">Cargando tus grupos…</div>
+      <div id="grupos"></div>
     </div>
   </div>
 
-  <!-- Modal genérico -->
+  <!-- Modal global -->
   <div id="modalBack">
-    <div id="modalCard">
+    <div id="modalDialog">
       <div id="modalHead">
-        <div id="modalTitle">Modal</div>
-        <button id="modalClose" class="btn sec">Cerrar</button>
+        <div id="modalTitle">Título</div>
+        <button id="modalClose" class="btn sec">✕</button>
       </div>
       <div id="modalBody"></div>
     </div>
   </div>
 
-  <script type="module" src="./coordinadores.js?v=5"></script>
+  <script type="module" src="./coordinadores.js"></script>
 </body>
 </html>
