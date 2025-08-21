@@ -1,8 +1,8 @@
-/* coordinadores.js — Portal Coordinadores RT (v3+)
-   - Orden de paneles: staffBar → navPanel → statsPanel → gruposPanel
-   - Buscador dentro del nav (destino, grupo, #negocio, identificador, coordinador, actividad)
-   - Tab GASTOS (Storage + link a img), ALERTAS, VOUCHERS (Físico/Electrónico + NFC)
-   - “Total viajes · Total días · Total pax” en misma línea
+/* coordinadores.js — Portal Coordinadores RT (v3+ UI)
+   - staffBar → navPanel → statsPanel → gruposPanel
+   - Botones prev/next/print/new antes de #allTrips
+   - #searchTrips ahora está dentro del grupo (búsqueda interna)
+   - Se elimina .group-sub (era redundante)
 */
 
 import { app, db, auth, storage } from './firebase-init-portal.js';
@@ -16,7 +16,7 @@ import {
   ref as sRef, uploadBytes, getDownloadURL
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
-/* ============== Auth ============== */
+/* ============== Logout ============== */
 const logoutBtn = document.getElementById('logout');
 if (logoutBtn) logoutBtn.onclick = () => signOut(auth).then(() => (location = 'index.html'));
 
@@ -26,10 +26,9 @@ const STAFF_EMAILS = new Set(
   .map(e=>e.toLowerCase())
 );
 
-/* ============== Utils texto/fechas ============== */
+/* ============== Utils ============== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
-
 const toISO=(x)=>{ if(!x) return '';
   if (typeof x==='string'){ if(/^\d{4}-\d{2}-\d{2}$/.test(x)) return x; const d=new Date(x); return isNaN(d)?'':d.toISOString().slice(0,10); }
   if (x && typeof x==='object' && 'seconds' in x) return new Date(x.seconds*1000).toISOString().slice(0,10);
@@ -76,8 +75,8 @@ const state = {
   grupos:[],
   ordenados:[],
   idx:0,
-  filter:{ type:'all', value:null },   // 'all' | 'dest'
-  q:'',                                // texto buscador
+  filter:{ type:'all', value:null }, // 'all' | 'dest'
+  groupQ:'',                        // búsqueda interna del grupo
   cache:{ hotel:new Map(), vuelos:new Map(), tasas:null }
 };
 
@@ -101,7 +100,7 @@ onAuthStateChanged(auth, async (user) => {
   if (!user) { location.href='index.html'; return; }
   state.user = user; state.isStaff = STAFF_EMAILS.has((user.email||'').toLowerCase());
 
-  ensurePanel('gruposPanel'); // para ancho/margen homogéneo
+  ensurePanel('gruposPanel');
 
   const coordinadores = await loadCoordinadores(); state.coordinadores = coordinadores;
 
@@ -110,6 +109,10 @@ onAuthStateChanged(auth, async (user) => {
     const mine = findCoordinadorForUser(coordinadores, user);
     await loadGruposForCoordinador(mine, user);
   }
+
+  // mostrar u ocultar botones staff
+  document.getElementById('btnPrintVch').style.display = state.isStaff ? '' : 'none';
+  document.getElementById('btnNewAlert').style.display = state.isStaff ? '' : 'none';
 });
 
 /* ============== Firestore loads ============== */
@@ -130,7 +133,7 @@ function findCoordinadorForUser(coordinadores, user){
   return { id:'self', nombre: user.displayName || email, email, uid };
 }
 
-// === Selector para STAFF (falta en tu build) ===
+/* ============== Selector Staff ============== */
 async function showStaffSelector(coordinadores){
   const bar = ensurePanel(
     'staffBar',
@@ -152,7 +155,6 @@ async function showStaffSelector(coordinadores){
     await loadGruposForCoordinador(elegido, state.user);
   };
 
-  // Restaurar última selección si existe
   const last = localStorage.getItem('rt_staff_coord');
   if (last && coordinadores.find(c => c.id === last)) {
     sel.value = last;
@@ -161,6 +163,7 @@ async function showStaffSelector(coordinadores){
   }
 }
 
+/* ============== Cargar grupos ============== */
 async function loadGruposForCoordinador(coord, user){
   const cont=document.getElementById('grupos'); if (cont) cont.textContent='CARGANDO GRUPOS…';
 
@@ -197,9 +200,10 @@ async function loadGruposForCoordinador(coord, user){
   const pasados=wanted.filter(g=>(g.fechaInicio||'')<hoy).sort((a,b)=>(a.fechaInicio||'').localeCompare(b.fechaInicio||''));
   state.grupos=wanted; state.ordenados=[...futuros,...pasados];
 
-  state.filter={type:'all',value:null}; state.q='';
+  state.filter={type:'all',value:null};
+  state.groupQ='';
 
-  renderNavBar();       // nav + buscador
+  renderNavBar();       // nav (sin buscador)
   renderStatsFiltered();
 
   const { g:qsG, f:qsF } = parseQS();
@@ -216,43 +220,11 @@ async function loadGruposForCoordinador(coord, user){
   renderOneGroup(state.ordenados[state.idx], qsF);
 }
 
-/* ============== Filtro texto (buscador) ============== */
-function applyTextFilter(list){
-  const q=(state.q||'').trim(); if(!q) return list.slice();
-  const tokens=q.split(/\s+/).map(t=>t.trim()).filter(Boolean);
-  let clamp=list.slice();
-  for(const tk of tokens){
-    // rango dd-mm-aaaa..dd-mm-aaaa
-    if(/^\d{2}-\d{2}-\d{4}\.\.\d{2}-\d{2}-\d{4}$/.test(tk)){
-      const [a,b]=tk.split('..'); const A=ymdFromDMY(a), B=ymdFromDMY(b);
-      clamp=clamp.filter(g=> !( (g.fechaFin && g.fechaFin < A) || (g.fechaInicio && g.fechaInicio > B) )); continue;
-    }
-    // fecha simple
-    if(/^\d{2}-\d{2}-\d{4}$/.test(tk)){
-      const F=ymdFromDMY(tk);
-      clamp=clamp.filter(g=> (g.fechaInicio && g.fechaFin && (g.fechaInicio<=F && F<=g.fechaFin))); continue;
-    }
-    const nk=norm(tk);
-    clamp=clamp.filter(g=>{
-      const base = [
-        g.nombreGrupo||g.aliasGrupo||g.id, g.destino||'', g.programa||'',
-        g.numeroNegocio||'', g.identificador||'',
-        g.coordinadorNombre||g.coordinador?.nombre||'', g.coordinadorEmail||g.coordinador?.email||''
-      ].join(' ');
-      // actividades (nombres)
-      const acts=[]; Object.values(g.itinerario||{}).forEach(arr=>arr.forEach(a=>acts.push(a?.actividad||'')));
-      return norm(base).includes(nk) || norm(acts.join(' ')).includes(nk);
-    });
-  }
-  return clamp;
-}
-
 /* ============== Stats ============== */
-function getFilteredList(){ const base=state.ordenados.slice();
-  // aplica filtro de destino y luego texto
+function getFilteredList(){
+  const base=state.ordenados.slice();
   const dest = (state.filter.type==='dest' && state.filter.value) ? state.filter.value : null;
-  const A = dest ? base.filter(g=> String(g.destino||'')===dest) : base;
-  return applyTextFilter(A);
+  return dest ? base.filter(g=> String(g.destino||'')===dest) : base;
 }
 function renderStatsFiltered(){ renderStats(getFilteredList()); }
 function renderStats(list){
@@ -273,29 +245,22 @@ function renderStats(list){
     </div>`;
 }
 
-/* ============== Nav (prev/sig + select + buscador + acciones staff) ============== */
+/* ============== Nav (botones antes del select) ============== */
 function renderNavBar(){
-  const p=ensurePanel('navPanel',
-    `<div id="navBar">
-       <div class="btns">
-         <button id="btnPrev" class="btn sec">‹ ANTERIOR</button>
-         <select id="allTrips"></select>
-         <button id="btnNext" class="btn sec">SIGUIENTE ›</button>
-         ${state.isStaff?`<button id="btnPrintVch" class="btn sec">IMPRIMIR VOUCHERS…</button>`:''}
-         ${state.isStaff?`<button id="btnNewAlert" class="btn sec">CREAR ALERTA…</button>`:''}
-       </div>
-       <input id="searchTrips" type="text" placeholder="BUSCAR: destino, grupo, #negocio, identificador, coordinador, actividad, 29-11-2025 o 15-11-2025..19-12-2025"/>
-     </div>`
-  );
-
-  // select
+  const p=ensurePanel('navPanel'); // el HTML ya está en index
   const sel=p.querySelector('#allTrips'); sel.textContent='';
+
+  // Filtro: TODOS
   const ogFiltro=document.createElement('optgroup'); ogFiltro.label='FILTRO';
   ogFiltro.appendChild(new Option('TODOS','all')); sel.appendChild(ogFiltro);
+
+  // DESTINOS
   const destinos=[...new Set(state.ordenados.map(g=>String(g.destino||'')).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
   if(destinos.length){ const ogDest=document.createElement('optgroup'); ogDest.label='DESTINOS';
     destinos.forEach(d=> ogDest.appendChild(new Option(d || '(sin destino)','dest:'+d))); sel.appendChild(ogDest);
   }
+
+  // VIAJES
   const ogTrips=document.createElement('optgroup'); ogTrips.label='VIAJES';
   state.ordenados.forEach((g,i)=>{
     const name=(g.nombreGrupo||g.aliasGrupo||g.id);
@@ -306,13 +271,18 @@ function renderNavBar(){
   sel.appendChild(ogTrips);
   sel.value=`trip:${state.idx}`;
 
-  // handlers select
-  p.querySelector('#btnPrev').onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
+  // handlers
+  const btnPrev = p.querySelector('#btnPrev');
+  const btnNext = p.querySelector('#btnNext');
+  const btnPrint= p.querySelector('#btnPrintVch');
+  const btnAlert= p.querySelector('#btnNewAlert');
+
+  btnPrev.onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
     const cur=state.ordenados[state.idx]?.id; const j=list.findIndex(g=>g.id===cur);
     const j2=Math.max(0,j-1), targetId=list[j2].id;
     state.idx=state.ordenados.findIndex(g=>g.id===targetId); renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`;
   };
-  p.querySelector('#btnNext').onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
+  btnNext.onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
     const cur=state.ordenados[state.idx]?.id; const j=list.findIndex(g=>g.id===cur);
     const j2=Math.min(list.length-1,j+1), targetId=list[j2].id;
     state.idx=state.ordenados.findIndex(g=>g.id===targetId); renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`;
@@ -323,18 +293,13 @@ function renderNavBar(){
     else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; renderOneGroup(state.ordenados[state.idx]); }
   };
 
-  // buscador
-  const input=p.querySelector('#searchTrips'); input.value=state.q||''; let tmr=null;
-  input.oninput=()=>{ clearTimeout(tmr); tmr=setTimeout(()=>{ state.q=input.value||''; renderStatsFiltered(); },180); };
-
-  // staff actions
   if(state.isStaff){
-    p.querySelector('#btnPrintVch').onclick = openPrintVouchersModal;
-    p.querySelector('#btnNewAlert').onclick = openCreateAlertModal;
+    btnPrint.onclick = openPrintVouchersModal;
+    btnAlert.onclick = openCreateAlertModal;
   }
 }
 
-/* ============== Vista 1 viaje ============== */
+/* ============== Vista 1 viaje (con buscador interno) ============== */
 function renderOneGroup(g, preferDate){
   const cont=document.getElementById('grupos'); if(!cont) return; cont.innerHTML='';
   if(!g){ cont.innerHTML='<p class="muted">NO HAY VIAJES.</p>'; return; }
@@ -342,17 +307,19 @@ function renderOneGroup(g, preferDate){
 
   const name=(g.nombreGrupo||g.aliasGrupo||g.id);
   const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
-  const sub = `${g.destino||''} · ${g.programa||''} · ${(g.cantidadgrupo ?? g.pax ?? 0)} PAX`;
   const rango = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
   const header=document.createElement('div'); header.className='group-card';
-  header.innerHTML=`<h3>${name} (${code})</h3><div class="group-sub">${sub}</div>
+  header.innerHTML=`<h3>${name} (${code})</h3>
     <div class="grid-mini">
       <div class="lab">DESTINO</div><div>${g.destino||'—'}</div>
       <div class="lab">GRUPO</div><div>${name}</div>
       <div class="lab">PAX TOTAL</div><div>${(g.cantidadgrupo ?? g.pax ?? 0)}</div>
       <div class="lab">PROGRAMA</div><div>${g.programa||'—'}</div>
       <div class="lab">FECHAS</div><div>${rango}</div>
+    </div>
+    <div class="rowflex" style="margin-top:.6rem">
+      <input id="searchTrips" type="text" placeholder="BUSCAR EN ESTE GRUPO (fechas, actividades, gastos, alertas…)"/>
     </div>`;
   cont.appendChild(header);
 
@@ -372,19 +339,44 @@ function renderOneGroup(g, preferDate){
   const paneItin=tabs.querySelector('#paneItin');
   const paneGastos=tabs.querySelector('#paneGastos');
 
-  tabs.querySelector('#tabResumen').onclick=()=>{ paneResumen.style.display=''; paneItin.style.display='none'; paneGastos.style.display='none'; };
-  tabs.querySelector('#tabItin').onclick   =()=>{ paneResumen.style.display='none'; paneItin.style.display=''; paneGastos.style.display='none'; };
-  tabs.querySelector('#tabGastos').onclick =()=>{ paneResumen.style.display='none'; paneItin.style.display='none'; paneGastos.style.display=''; };
+  const show = (which)=> {
+    paneResumen.style.display = which==='resumen'?'':'none';
+    paneItin.style.display    = which==='itin'   ?'':'none';
+    paneGastos.style.display  = which==='gastos' ?'':'none';
+  };
 
+  tabs.querySelector('#tabResumen').onclick=()=> show('resumen');
+  tabs.querySelector('#tabItin').onclick   =()=> show('itin');
+  tabs.querySelector('#tabGastos').onclick =()=> show('gastos');
+
+  // primeros renders
   renderResumen(g, paneResumen);
   renderItinerario(g, paneItin, preferDate);
   renderGastos(g, paneGastos);
+  show('resumen');
+
+  // búsqueda interna
+  const input=header.querySelector('#searchTrips');
+  input.value = state.groupQ || '';
+  let tmr=null;
+  input.oninput=()=>{ clearTimeout(tmr); tmr=setTimeout(()=>{
+    state.groupQ = input.value || '';
+    const active = paneItin.style.display!== 'none' ? 'itin' : (paneGastos.style.display!=='none' ? 'gastos' : 'resumen');
+    // re-render panes con el filtro interno
+    renderResumen(g, paneResumen);
+    const last = localStorage.getItem('rt_last_date_'+g.id);
+    renderItinerario(g, paneItin, last || preferDate);
+    renderGastos(g, paneGastos);
+    show(active);
+  },180); };
 }
 
 /* ============== Resumen (Hotel + Vuelos + Alertas) ============== */
 async function renderResumen(g, pane){
   pane.innerHTML='<div class="loader">CARGANDO…</div>';
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML='';
+  const q = norm(state.groupQ||'');
+
   // HOTEL
   const hotelBox=document.createElement('div'); hotelBox.className='act';
   hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">BUSCANDO…</div>'; wrap.appendChild(hotelBox);
@@ -394,6 +386,7 @@ async function renderResumen(g, pane){
   // ALERTAS
   const alertBox=document.createElement('div'); alertBox.className='act';
   alertBox.innerHTML='<h4>ALERTAS</h4><div class="muted">CARGANDO…</div>'; wrap.appendChild(alertBox);
+
   pane.appendChild(wrap);
 
   // HOTEL
@@ -405,20 +398,27 @@ async function renderResumen(g, pane){
       const fechas=`${dmy(h.checkIn||'')} — ${dmy(h.checkOut||'')}`;
       const dir=h.hotel?.direccion||'';
       const contacto=[h.hotel?.contactoNombre,h.hotel?.contactoTelefono,h.hotel?.contactoCorreo].filter(Boolean).join(' · ');
-      hotelBox.innerHTML=`<h4>${nombre}</h4>${dir?`<div class="prov">${dir}</div>`:''}
+      const block = `
+        <h4>${nombre}</h4>${dir?`<div class="prov">${dir}</div>`:''}
         <div class="meta">CHECK-IN/OUT: ${fechas}</div>${contacto?`<div class="meta">${contacto}</div>`:''}`;
+      const textMatch = norm([nombre,dir,contacto,fechas].join(' '));
+      hotelBox.innerHTML = (!q || textMatch.includes(q)) ? block : '<h4>HOTEL</h4><div class="muted">Sin coincidencias con la búsqueda.</div>';
     }
   }catch(e){ console.error(e); hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>'; }
 
   // VUELOS
   try{
     const vuelos = await loadVuelosInfo(g);
-    if(!vuelos.length){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS.</div>'; }
+    const flt = (!q)?vuelos : vuelos.filter(v=>{
+      const s=[v.numero,v.proveedor,v.origen,v.destino,toISO(v.fechaIda),toISO(v.fechaVuelta)].join(' ');
+      return norm(s).includes(q);
+    });
+    if(!flt.length){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS.</div>'; }
     else{
       const table=document.createElement('table'); table.className='table';
       table.innerHTML='<thead><tr><th>#</th><th>PROVEEDOR</th><th>RUTA</th><th>IDA</th><th>VUELTA</th></tr></thead><tbody></tbody>';
       const tb=table.querySelector('tbody');
-      vuelos.forEach(v=>{
+      flt.forEach(v=>{
         const tr=document.createElement('tr');
         tr.innerHTML=`<td>${v.numero||''}</td><td>${v.proveedor||''}</td>
           <td>${v.origen||''} — ${v.destino||''}</td>
@@ -430,19 +430,17 @@ async function renderResumen(g, pane){
   }catch(e){ console.error(e); vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">ERROR AL CARGAR.</div>'; }
 
   // ALERTAS
-  try{ await renderAlertas(g, alertBox); }catch(e){ console.error(e); alertBox.innerHTML='<h4>ALERTAS</h4><div class="muted">ERROR AL CARGAR.</div>'; }
+  try{ await renderAlertas(g, alertBox, q); }catch(e){ console.error(e); alertBox.innerHTML='<h4>ALERTAS</h4><div class="muted">ERROR AL CARGAR.</div>'; }
 }
 
 async function loadHotelInfo(g){
   const key=g.numeroNegocio;
   if(state.cache.hotel.has(key)) return state.cache.hotel.get(key);
   let cand=[];
-  // por grupoId (numeroNegocio)
   try{
     const qs=await getDocs(query(collection(db,'hotelAssignments'), where('grupoId','==',String(key))));
     qs.forEach(d=>cand.push({id:d.id,...(d.data()||{})}));
   }catch(_){}
-  // fallback por grupoDocId
   try{
     const qs2=await getDocs(query(collection(db,'hotelAssignments'), where('grupoDocId','==',String(g.id))));
     qs2.forEach(d=>cand.push({id:d.id,...(d.data()||{})}));
@@ -470,7 +468,7 @@ async function loadVuelosInfo(g){
   found.sort((a,b)=> (toISO(a.fechaIda)||'').localeCompare(toISO(b.fechaIda)||'')); state.cache.vuelos.set(key,found); return found;
 }
 
-/* ============== Itinerario + Asistencia + Bitácora + Voucher ============== */
+/* ============== Itinerario + asistencia + vouchers ============== */
 function getSavedAsistencia(grupo, fechaISO, actividad){
   const byDate=grupo?.asistencias?.[fechaISO]; if(!byDate) return null;
   const key=slug(actividad||'actividad');
@@ -488,6 +486,7 @@ function calcPlan(actividad, grupo){
 
 function renderItinerario(g, pane, preferDate){
   pane.innerHTML='';
+  const q = norm(state.groupQ||'');
   const fechas=rangoFechas(g.fechaInicio,g.fechaFin);
   if(!fechas.length){ pane.innerHTML='<div class="muted">FECHAS NO DEFINIDAS.</div>'; return; }
 
@@ -497,20 +496,31 @@ function renderItinerario(g, pane, preferDate){
   const hoy=toISO(new Date());
   let startDate=preferDate || ((hoy>=fechas[0] && hoy<=fechas.at(-1))?hoy:fechas[0]);
 
-  fechas.forEach(f=>{
+  // Si hay búsqueda interna, solo mostramos las fechas que tengan match en alguna actividad
+  const fechasMostrar = (!q) ? fechas : fechas.filter(f=>{
+    const arr=(g.itinerario && g.itinerario[f])? g.itinerario[f] : [];
+    return arr.some(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(q));
+  });
+  if(!fechasMostrar.length){ actsWrap.innerHTML='<div class="muted">SIN COINCIDENCIAS PARA EL ITINERARIO.</div>'; return; }
+
+  if(!fechasMostrar.includes(startDate)) startDate=fechasMostrar[0];
+
+  fechasMostrar.forEach(f=>{
     const pill=document.createElement('div'); pill.className='pill'+(f===startDate?' active':''); pill.textContent=dmy(f); pill.title=f; pill.dataset.fecha=f;
     pill.onclick=()=>{ pillsWrap.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); pill.classList.add('active'); renderActs(g,f,actsWrap); localStorage.setItem('rt_last_date_'+g.id,f); };
     pillsWrap.appendChild(pill);
   });
 
-  const last=localStorage.getItem('rt_last_date_'+g.id); if(last && fechas.includes(last)) startDate=last;
+  const last=localStorage.getItem('rt_last_date_'+g.id); if(last && fechasMostrar.includes(last)) startDate=last;
   renderActs(g,startDate,actsWrap);
 }
 
 async function renderActs(grupo, fechaISO, cont){
   cont.innerHTML='';
-  const acts=(grupo.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
-  if(!acts.length){ cont.innerHTML='<div class="muted">SIN ACTIVIDADES PARA ESTE DÍA.</div>'; return; }
+  const q = norm(state.groupQ||'');
+  let acts=(grupo.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
+  if(q) acts = acts.filter(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(q));
+  if (!acts.length){ cont.innerHTML='<div class="muted">SIN ACTIVIDADES PARA ESTE DÍA.</div>'; return; }
 
   for(const act of acts){
     const plan=calcPlan(act,grupo);
@@ -521,7 +531,7 @@ async function renderActs(grupo, fechaISO, cont){
     const actName=act.actividad||'ACTIVIDAD';
     const actKey=slug(actName);
 
-    // determina si requiere voucher (para mostrar botón)
+    // determina si requiere voucher
     const servicio = await findServicio(grupo.destino, actName);
     const tipoRaw = (servicio?.voucher || 'No Aplica').toString();
     const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
@@ -627,7 +637,6 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   const body=document.getElementById('modalBody');
   title.textContent=`VOUCHER — ${act.actividad||''} — ${dmy(fechaISO)}`;
 
-  // proveedor (si existe coleccion Proveedores con campo proveedor)
   let proveedorDoc=null;
   try{
     if(servicio?.proveedor){
@@ -665,7 +674,6 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
     };
     document.getElementById('vchPend').onclick =()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE',  true);
 
-    // NFC opcional
     if('NDEFReader' in window){
       try{ const reader=new window.NDEFReader(); await reader.scan();
         reader.onreading=(ev)=>{ const rec=ev.message.records[0]; let text=''; try{ text=(new TextDecoder().decode(rec.data)||'').trim(); }catch(_){}
@@ -685,7 +693,6 @@ async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
     const payload={}; payload[`serviciosEstado.${fechaISO}.${key}`]={ estado, updatedAt: serverTimestamp(), by:(state.user.email||'').toLowerCase() };
     await updateDoc(path,payload);
 
-    // actualiza en memoria y UI
     (g.serviciosEstado ||= {}); (g.serviciosEstado[fechaISO] ||= {}); g.serviciosEstado[fechaISO][key]={estado};
     document.getElementById('modalBack').style.display='none';
     renderItinerario(g, document.getElementById('paneItin'), fechaISO);
@@ -698,14 +705,16 @@ async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
 }
 
 /* ============== ALERTAS ============== */
-async function renderAlertas(g, box){
+async function renderAlertas(g, box, qNorm=''){
   const coordIdGuess = state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self';
-  const qs=await getDocs(collection(db,'alertas')); // mantenemos tu colección en español
+  const qs=await getDocs(collection(db,'alertas'));
   const all=[]; qs.forEach(d=>all.push({id:d.id,...d.data()}));
 
   const mine = state.isStaff ? all : all.filter(a=> Array.isArray(a.forCoordIds) && a.forCoordIds.includes(coordIdGuess));
-  const unread = mine.filter(a=> !(a.readBy && a.readBy[coordIdGuess]));
-  const read   = mine.filter(a=>  (a.readBy && a.readBy[coordIdGuess]));
+  const filtered = (!qNorm) ? mine : mine.filter(a=> norm([a.mensaje,a.createdBy?.email].join(' ')).includes(qNorm));
+
+  const unread = filtered.filter(a=> !(a.readBy && a.readBy[coordIdGuess]));
+  const read   = filtered.filter(a=>  (a.readBy && a.readBy[coordIdGuess]));
 
   const wrap=document.createElement('div');
   if(state.isStaff){
@@ -743,7 +752,7 @@ function openCreateAlertModal(){
   title.textContent='CREAR ALERTA (STAFF)';
   const coordOpts=state.coordinadores.map(c=>`<option value="${c.id}">${c.nombre} — ${c.email}</option>`).join('');
   body.innerHTML=`
-    <div class="rowflex"><textarea id="alertMsg" placeholder="MENSAJE"></textarea></div>
+    <div class="rowflex"><textarea id="alertMsg" placeholder="MENSAJE" style="width:100%"></textarea></div>
     <div class="rowflex">
       <label>DESTINATARIOS</label>
       <select id="alertCoords" multiple size="8" style="width:100%">${coordOpts}</select>
@@ -805,7 +814,7 @@ async function buildPrintableVouchers(list){
         const servicio=await findServicio(g.destino, a.actividad);
         const tRaw=(servicio?.voucher||'No Aplica').toString();
         const t = /electron/i.test(tRaw)?'ELECTRONICO':(/fisic/i.test(tRaw)?'FISICO':'NOAPLICA');
-        if(t==='NOAPLICA') continue; // imprime solo los que aplican
+        if(t==='NOAPLICA') continue;
         rows += renderVoucherHTMLSync(g,f,a,null,true);
       }
     }
@@ -839,7 +848,7 @@ async function renderGastos(g, pane){
   const listBox=document.createElement('div'); listBox.className='act';
   listBox.innerHTML='<h4>GASTOS DEL GRUPO</h4><div class="muted">CARGANDO…</div>'; pane.appendChild(listBox);
 
-    form.querySelector('#spSave').onclick=async ()=>{
+  form.querySelector('#spSave').onclick=async ()=>{
     const btn=form.querySelector('#spSave');
     try{
       const asunto=(form.querySelector('#spAsunto').value||'').trim();
@@ -855,16 +864,13 @@ async function renderGastos(g, pane){
         if (file.size > 10*1024*1024){ alert('La imagen supera 10MB.'); btn.disabled=false; return; }
         const safe = file.name.replace(/[^a-z0-9.\-_]/gi,'_');
         const uid  = (auth.currentUser && auth.currentUser.uid) || state.user.uid;
-        const path = `gastos/${uid}/${Date.now()}_${safe}`;   // ← coincide con reglas
+        const path = `gastos/${uid}/${Date.now()}_${safe}`;
         const r    = sRef(storage, path);
-
-        // 👇 METADATA para pasar la regla contentType y evitar CORS 403
         await uploadBytes(r, file, { contentType: file.type || 'image/jpeg' });
         imgUrl  = await getDownloadURL(r);
         imgPath = path;
       }
 
-      // ID del coordinador dueño (si eres staff y estás en otro coord, usa ese id)
       const coordId = state.coordId || (
         state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self'
       );
@@ -896,13 +902,19 @@ async function renderGastos(g, pane){
 async function getTasas(){
   if(state.cache.tasas) return state.cache.tasas;
   try{ const d=await getDoc(doc(db,'config','tasas')); if(d.exists()){ state.cache.tasas=d.data()||{}; return state.cache.tasas; } }catch(_){}
-  state.cache.tasas={ USD:950, BRL:170, ARS:1.2 }; return state.cache.tasas; // predeterminadas, editables luego
+  state.cache.tasas={ USD:950, BRL:170, ARS:1.2 }; return state.cache.tasas;
 }
 
 async function loadGastosList(g, box){
   const coordId = state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self';
   const qs=await getDocs(query(collection(db,'coordinadores',coordId,'gastos'), orderBy('createdAt','desc')));
-  const list=[]; qs.forEach(d=>{ const x=d.data()||{}; if(x.grupoId===g.id) list.push({id:d.id,...x}); });
+  let list=[]; qs.forEach(d=>{ const x=d.data()||{}; if(x.grupoId===g.id) list.push({id:d.id,...x}); });
+
+  const q = norm(state.groupQ||'');
+  if(q){
+    list = list.filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(q));
+  }
+
   const tasas=await getTasas();
   const tot={ CLP:0, USD:0, BRL:0, ARS:0, CLPconv:0 };
 
