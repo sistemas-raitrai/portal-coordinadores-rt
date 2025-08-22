@@ -401,7 +401,7 @@ async function renderResumen(g, pane){
           ].filter(Boolean).join(' · ')}`
         : '';
 
-      const contactoLine = [cNombre, cTelefono].filter(Boolean).join(' · ') + (cCorreo?` · ${cCorreo}`:'');
+      const contactoLine = [cTelefono].filter(Boolean).join(' · ');
 
       // texto para filtro local
       const txtMatch = norm([
@@ -419,7 +419,7 @@ async function renderResumen(g, pane){
           <h4>HOTEL</h4>
           ${nombre    ? `<div class="meta"><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
           ${direccion ? `<div class="meta"><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
-          ${contactoLine ? `<div class="meta"><strong>CONTACTO:</strong> ${contactoLine}</div>` : ''}
+          ${contactoLine ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoLine}</div>` : ''}
           ${status ? `<div class="meta">ESTADO: <strong>${status}</strong></div>` : ''}
           <div class="meta">CHECK-IN/OUT: ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?` · NOCHES: ${noches}`:'')}</div>
           <div class="meta">ESTUDIANTES: F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · ADULTOS: F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
