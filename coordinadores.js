@@ -342,74 +342,86 @@ async function renderResumen(g, pane){
 
   pane.appendChild(wrap);
 
-     // HOTEL
-  try{
-    const h = await loadHotelInfo(g);
-    if(!h){
-      hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>';
-    }else{
-      // datos combinados: asignación + doc de "hoteles"
-      const H   = h.hotel || {};
-      const nombre      = String(h.hotelNombre || H.nombre || '').toUpperCase();
-      const direccion   = H.direccion || h.direccion || '';
-      const cNombre     = H.contactoNombre || '';
-      const cTelefono   = H.contactoTelefono || '';
-      const cCorreo     = H.contactoCorreo || '';
-      const status      = (h.status || '').toString().toUpperCase();
-      const ciISO       = toISO(h.checkIn);
-      const coISO       = toISO(h.checkOut);
-      const noches      = (h.noches != null) ? Number(h.noches) :
-                          (ciISO && coISO ? Math.max(0, daysInclusive(ciISO,coISO)-1) : '');
-
-      // distribuciones
-      const est = h.estudiantes || {F:0,M:0,O:0};
-      const estTot = Number(h.estudiantesTotal ?? (est.F+est.M+est.O));
-      const adu = h.adultos     || {F:0,M:0,O:0};
-      const aduTot = Number(h.adultosTotal ?? (adu.F+adu.M+adu.O));
-
-      // habitaciones (si existen)
-      const hab = h.habitaciones || {};
-      const habLine = (hab.singles!=null || hab.dobles!=null || hab.triples!=null || hab.cuadruples!=null)
-        ? `HABITACIONES: ${[
-            (hab.singles!=null?`Singles: ${hab.singles}`:''),
-            (hab.dobles!=null?`Dobles: ${hab.dobles}`:''),
-            (hab.triples!=null?`Triples: ${hab.triples}`:''),
-            (hab.cuadruples!=null?`Cuádruples: ${hab.cuadruples}`:'')
-          ].filter(Boolean).join(' · ')}`
-        : '';
-
-      const contactoLine = [cNombre, cTelefono].filter(Boolean).join(' · ') + (cCorreo?` · ${cCorreo}`:'');
-
-      // texto para filtro local
-      const txtMatch = norm([
-        nombre, direccion, contactoLine,
-        status, dmy(ciISO), dmy(coISO),
-        `estudiantes f ${est.F} m ${est.M} o ${est.O} total ${estTot}`,
-        `adultos f ${adu.F} m ${adu.M} o ${adu.O} total ${aduTot}`,
-        habLine
-      ].join(' '));
-
-      if ( (state.groupQ||'').trim() && !txtMatch.includes( norm(state.groupQ) ) ){
-        hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN COINCIDENCIAS.</div>';
-      } else {
-        hotelBox.innerHTML = `
-          <h4>HOTEL</h4>
-          ${nombre ? `<div><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
-          ${direccion ? `<div><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
-          ${contactoLine ? `<div><strong>CONTACTO:</strong> ${contactoLine}</div>` : ''}
-          ${status ? `<div class="meta">ESTADO: <strong>${status}</strong></div>` : ''}
-          <div class="meta">CHECK-IN/OUT: ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?` · NOCHES: ${noches}`:'')}</div>
-          <div class="meta">ESTUDIANTES: F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · ADULTOS: F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
-          ${habLine ? `<div class="meta">${habLine}</div>` : ''}
-          ${h.coordinadores!=null ? `<div class="meta">COORDINADORES: ${h.coordinadores}</div>` : ''}
-          ${h.conductores!=null ? `<div class="meta">CONDUCTORES: ${h.conductores}</div>` : ''}
-        `;
-      }
-    }
-  }catch(e){
-    console.error(e);
-    hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>';
-  }
+  // HOTEL
+   try{
+     const h = await loadHotelInfo(g);
+     if(!h){
+       hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>';
+     }else{
+       // asignación + (ojalá) doc de "hoteles"
+       let H = h.hotel || {};
+   
+       // Fallback: si no llegó el doc, intenta leerlo directo por ID
+       if ((!H || !H.nombre) && h.hotelId){
+         try{
+           const hd = await getDoc(doc(db,'hoteles', String(h.hotelId)));
+           if(hd.exists()) H = { id: hd.id, ...(hd.data()||{}) };
+         }catch(_){}
+       }
+   
+       // datos combinados
+       let nombre    = String(h.hotelNombre || H.nombre || '').toUpperCase();
+       let direccion = H.direccion || h.direccion || '';
+       let cNombre   = H.contactoNombre || '';
+       let cTelefono = H.contactoTelefono || '';
+       let cCorreo   = H.contactoCorreo || '';
+       const status  = (h.status || '').toString().toUpperCase();
+   
+       const ciISO = toISO(h.checkIn);
+       const coISO = toISO(h.checkOut);
+       const noches = (h.noches != null)
+         ? Number(h.noches)
+         : (ciISO && coISO ? Math.max(0, daysInclusive(ciISO,coISO)-1) : '');
+   
+       // distribuciones
+       const est = h.estudiantes || {F:0,M:0,O:0};
+       const estTot = Number(h.estudiantesTotal ?? (est.F+est.M+est.O));
+       const adu = h.adultos || {F:0,M:0,O:0};
+       const aduTot = Number(h.adultosTotal ?? (adu.F+adu.M+adu.O));
+   
+       // habitaciones (si existen)
+       const hab = h.habitaciones || {};
+       const habLine = (hab.singles!=null || hab.dobles!=null || hab.triples!=null || hab.cuadruples!=null)
+         ? `HABITACIONES: ${[
+             (hab.singles!=null?`Singles: ${hab.singles}`:''),
+             (hab.dobles!=null?`Dobles: ${hab.dobles}`:''),
+             (hab.triples!=null?`Triples: ${hab.triples}`:''),
+             (hab.cuadruples!=null?`Cuádruples: ${hab.cuadruples}`:'')
+           ].filter(Boolean).join(' · ')}`
+         : '';
+   
+       const contactoLine = [cNombre, cTelefono].filter(Boolean).join(' · ') + (cCorreo?` · ${cCorreo}`:'');
+   
+       // texto para filtro local
+       const txtMatch = norm([
+         nombre, direccion, contactoLine, status,
+         dmy(ciISO), dmy(coISO),
+         `estudiantes f ${est.F} m ${est.M} o ${est.O} total ${estTot}`,
+         `adultos f ${adu.F} m ${adu.M} o ${adu.O} total ${aduTot}`,
+         habLine
+       ].join(' '));
+   
+       if ( (state.groupQ||'').trim() && !txtMatch.includes( norm(state.groupQ) ) ){
+         hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN COINCIDENCIAS.</div>';
+       } else {
+         hotelBox.innerHTML = `
+           <h4>HOTEL</h4>
+           ${nombre    ? `<div class="meta"><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
+           ${direccion ? `<div class="meta"><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
+           ${contactoLine ? `<div class="meta"><strong>CONTACTO:</strong> ${contactoLine}</div>` : ''}
+           ${status ? `<div class="meta">ESTADO: <strong>${status}</strong></div>` : ''}
+           <div class="meta">CHECK-IN/OUT: ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?` · NOCHES: ${noches}`:'')}</div>
+           <div class="meta">ESTUDIANTES: F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · ADULTOS: F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
+           ${habLine ? `<div class="meta">${habLine}</div>` : ''}
+           ${h.coordinadores!=null ? `<div class="meta">COORDINADORES: ${h.coordinadores}</div>` : ''}
+           ${h.conductores!=null ? `<div class="meta">CONDUCTORES: ${h.conductores}</div>` : ''}
+         `;
+       }
+     }
+   }catch(e){
+     console.error(e);
+     hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>';
+   }
 
   // VUELOS
   try{
