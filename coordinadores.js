@@ -420,12 +420,12 @@ async function renderResumen(g, pane){
           ${nombre    ? `<div class="meta"><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
           ${direccion ? `<div class="meta"><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
           ${contactoLine ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoLine}</div>` : ''}
-          ${status ? `<div class="meta"><strong>ESTADO:</strong>${status}</div>` : ''}
-          <div class="meta"><strong>CHECK-IN/OUT:</strong>${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?` · NOCHES: ${noches}`:'')}</div>
-          <div class="meta"><strong>ESTUDIANTES:</strong>F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · ADULTOS: F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
+          ${status ? `<div class="meta"><strong>ESTADO:</strong> ${status}</div>` : ''}
+          <div class="meta"><strong>CHECK-IN/OUT:</strong> ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?` · NOCHES: ${noches}`:'')}</div>
+          <div class="meta"><strong>ESTUDIANTES:</strong> F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · ADULTOS: F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
           ${habLine ? `<div class="meta">${habLine}</div>` : ''}
-          ${h.coordinadores!=null ? `<div class="meta">COORDINADORES: ${h.coordinadores}</div>` : ''}
-          ${h.conductores!=null ? `<div class="meta">CONDUCTORES: ${h.conductores}</div>` : ''}
+          ${h.coordinadores!=null ? `<div class="meta"><strong>COORDINADORES:</strong> ${h.coordinadores}</div>` : ''}
+          ${h.conductores!=null ? `<div class="meta"><strong>CONDUCTORES:</strong> ${h.conductores}</div>` : ''}
         `;
       }
     }
