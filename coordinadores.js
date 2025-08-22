@@ -1,10 +1,20 @@
-/* coordinadores.js — Portal Coordinadores RT (ALERTAS mejoradas + mobile)
-   - Orden de paneles: staffBar → alertsPanel → navPanel → statsPanel → gruposPanel
-   - Alertas: envío a coordinadores seleccionados, por DESTINO y/o por RANGO de fechas (resuelve destinatarios).
-   - Vista "PARA MÍ" (coord / staff viendo a un coord) y "OPERACIONES" (solo staff).
-   - Bitácora genera alerta para staff automáticamente.
-   - Buscador interno del grupo (#searchTrips).
-   - Vouchers: clave con ojo (password toggle).
+/* COORDINADORES.JS — PORTAL COORDINADORES RT
+   — VERSIÓN: ALERTAS MEJORADAS + MOBILE + TODO EN MAYÚSCULAS EN LA UI
+
+   FUNCIONALIDADES CLAVE
+   - ORDEN DE PANELES: STAFFBAR → ALERTSPANEL → NAVPANEL → STATSPANEL → GRUPOSPANEL
+   - STAFF: SELECTOR CON OPCIÓN "TODOS" PARA VER TODOS LOS GRUPOS/ESTADÍSTICAS
+   - ALERTAS:
+       · ENVÍO A COORDINADORES SELECCIONADOS (MULTISELECT)
+       · EXPANSIÓN POR DESTINO Y/O POR FECHA O RANGO (SE RESUELVEN DESTINATARIOS)
+       · EN BITÁCORA, AL GUARDAR NOTA SE GENERA ALERTA PARA "OPERACIONES"
+       · TARJETAS: MUESTRAN QUIÉN Y CUÁNDO CONFIRMÓ LECTURA
+       · TIPO (PARA COORD.): "PERSONAL" O "GLOBAL" SEGÚN Nº DE DESTINATARIOS
+       · CONTADOR AL LADO DEL TÍTULO "ALERTAS" Y EN PESTAÑAS (AUTO-REFRESCO 60S)
+   - VISTA "PARA MÍ" (COORD O STAFF VIENDO A UN COORD) Y "OPERACIONES" (SOLO STAFF)
+   - BUSCADOR INTERNO DE GRUPO (#SEARCHTRIPS)
+   - VOUCHERS: CLAVE CON OJO (TOGGLE), ESTADOS Y VERSIÓN IMPRIMIBLE
+   - TODO TEXTO MOSTRADO EN LA UI → MAYÚSCULAS (SIN ALTERAR DATOS EN BD)
 */
 
 import { app, db, auth, storage } from './firebase-init-portal.js';
@@ -17,7 +27,7 @@ import {
 import { ref as sRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
-/* ====== Utils texto/fechas ====== */
+/* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
 const toISO=(x)=>{ if(!x) return ''; if (typeof x==='string'){ if(/^\d{4}-\d{2}-\d{2}$/.test(x)) return x; const d=new Date(x); return isNaN(d)?'':d.toISOString().slice(0,10); }
@@ -33,7 +43,7 @@ const parseQS=()=>{ const p=new URLSearchParams(location.search); return { g:p.g
 const DEBUG_HOTEL = true;
 const D_HOTEL = (...args)=> { if (DEBUG_HOTEL) console.log('%c[HOTEL]', 'color:#0ff', ...args); };
 
-/* ====== extracción tolerante desde grupos ====== */
+/* ====== EXTRACCIÓN TOLERANTE DESDE GRUPOS ====== */
 const arrify=v=>Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):(v?[v]:[]));
 function emailsOf(g){ const out=new Set(), push=e=>{if(e) out.add(String(e).toLowerCase());};
   push(g?.coordinadorEmail); push(g?.coordinador?.email); arrify(g?.coordinadoresEmails).forEach(push);
@@ -43,32 +53,32 @@ function emailsOf(g){ const out=new Set(), push=e=>{if(e) out.add(String(e).toLo
 }
 function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); };
   push(g?.coordinadorId); arrify(g?.coordinadoresIds).forEach(push);
-  // fallback via email → id conocido
   const mapEmailToId = new Map(state.coordinadores.map(c => [String(c.email || '').toLowerCase(), c.id]));
   emailsOf(g).forEach(e=>{ if(mapEmailToId.has(e)) out.add(mapEmailToId.get(e)); });
   return [...out];
 }
 const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
 
-/* ====== Estado app ====== */
+/* ====== ESTADO APP ====== */
 const STAFF_EMAILS = new Set(['aleoperaciones@raitrai.cl','operaciones@raitrai.cl','anamaria@raitrai.cl','tomas@raitrai.cl','sistemas@raitrai.cl'].map(x=>x.toLowerCase()));
 const state = {
   user:null,
   isStaff:false,
   coordinadores:[],
-  viewingCoordId:null,              // staff: el coord seleccionado; coord: su propio id
+  viewingCoordId:null,              // STAFF: ID SELECCIONADO · COORD: SU PROPIO ID
   grupos:[], ordenados:[], idx:0,
   filter:{ type:'all', value:null },
   groupQ:'',
+  alertsTimer:null,                 // AUTO-REFRESCO DE ALERTAS (60S)
   cache:{
     hotel:new Map(),
     vuelos:new Map(),
     tasas:null,
-    hoteles:{ loaded:false, byId:new Map(), bySlug:new Map() } // ⬅️ NUEVO
+    hoteles:{ loaded:false, byId:new Map(), bySlug:new Map(), all:[] }
   }
 };
 
-/* ====== Helpers UI ====== */
+/* ====== HELPERS UI ====== */
 function ensurePanel(id, html=''){
   let p=document.getElementById(id);
   if(!p){ p=document.createElement('div'); p.id=id; p.className='panel'; document.querySelector('.wrap').prepend(p); }
@@ -82,14 +92,14 @@ function enforceOrder(){
   });
 }
 
-/* ====== Arranque ====== */
+/* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
   if (!user){ location.href='index.html'; return; }
   state.user=user; state.isStaff=STAFF_EMAILS.has((user.email||'').toLowerCase());
 
   const coords = await loadCoordinadores(); state.coordinadores = coords;
 
-  // Staff selector
+  // STAFF: SELECTOR CON "TODOS"
   if (state.isStaff){ await showStaffSelector(coords); }
   else {
     const mine = findCoordinadorForUser(coords, user);
@@ -97,15 +107,20 @@ onAuthStateChanged(auth, async (user) => {
     await loadGruposForCoordinador(mine, user);
   }
 
-  // Botones staff visibles
+  // BOTONES SOLO PARA STAFF
   document.getElementById('btnPrintVch').style.display = state.isStaff ? '' : 'none';
   document.getElementById('btnNewAlert').style.display = state.isStaff ? '' : 'none';
 
-  // Panel alertas globales
+  // PANEL ALERTAS
   await renderGlobalAlerts();
+
+  // AUTO-REFRESCO CADA 60S (EVITAR MULTIPLES INTERVALOS)
+  if (!state.alertsTimer){
+    state.alertsTimer = setInterval(renderGlobalAlerts, 60000);
+  }
 });
 
-/* ====== Cargas Firestore ====== */
+/* ====== CARGAS FIRESTORE ====== */
 async function loadCoordinadores(){
   const snap = await getDocs(collection(db,'coordinadores'));
   const list=[]; snap.forEach(d=>{ const x=d.data()||{}; list.push({
@@ -123,7 +138,7 @@ function findCoordinadorForUser(coordinadores, user){
   return { id:'self', nombre: user.displayName || email, email, uid };
 }
 
-/* ====== Selector Staff ====== */
+/* ====== SELECTOR STAFF (CON "TODOS") ====== */
 async function showStaffSelector(coordinadores){
   const bar=ensurePanel('staffBar',
     '<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>'+
@@ -131,29 +146,32 @@ async function showStaffSelector(coordinadores){
   );
   const sel=bar.querySelector('#coordSelect');
   sel.innerHTML =
-    '<option value="">— SELECCIONA COORDINADOR —</option>' +
-    coordinadores.map(c => `<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${c.email||''}</option>`).join('');
+    '<option value="__ALL__">TODOS</option>' +                     // ⬅️ NUEVO
+    coordinadores.map(c => `<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${(c.email||'').toUpperCase()}</option>`).join('');
   sel.onchange = async ()=> {
     const id = sel.value || '';
-    const elegido = coordinadores.find(c=>c.id===id) || null;
+    const elegido = (id==='__ALL__') ? { id:'__ALL__' } : (coordinadores.find(c=>c.id===id) || null);
     state.viewingCoordId = id || null;
     localStorage.setItem('rt_staff_coord', id);
     await loadGruposForCoordinador(elegido, state.user);
     await renderGlobalAlerts();
   };
   const last=localStorage.getItem('rt_staff_coord');
-  if (last && coordinadores.find(c=>c.id===last)){
-    sel.value=last; state.viewingCoordId=last;
-    await loadGruposForCoordinador(coordinadores.find(c=>c.id===last), state.user);
+  if (last){
+    sel.value=last;
+    const elegido = (last==='__ALL__') ? { id:'__ALL__' } : (coordinadores.find(c=>c.id===last) || null);
+    state.viewingCoordId=last;
+    await loadGruposForCoordinador(elegido, state.user);
   }
 }
 
-/* ====== Grupos para el coordinador en contexto ====== */
+/* ====== GRUPOS PARA EL COORDINADOR EN CONTEXTO (O "TODOS") ====== */
 async function loadGruposForCoordinador(coord, user){
   const cont=document.getElementById('grupos'); if (cont) cont.textContent='CARGANDO GRUPOS…';
 
   const allSnap=await getDocs(collection(db,'grupos'));
   const wanted=[];
+  const isAll = coord && coord.id==='__ALL__';
 
   const emailElegido=(coord?.email||'').toLowerCase();
   const docIdElegido=(coord?.id||'').toString();
@@ -171,6 +189,7 @@ async function loadGruposForCoordinador(coord, user){
       numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || d.id),
       identificador: String(raw.identificador || raw.codigo || '')
     };
+    if (isAll){ wanted.push(g); return; } // ⬅️ NUEVO: STAFF → TODOS
     const gEmails=emailsOf(raw), gDocIds=coordDocIdsOf(raw);
     const match=(emailElegido && gEmails.includes(emailElegido)) ||
                 (docIdElegido && gDocIds.includes(docIdElegido)) ||
@@ -178,7 +197,7 @@ async function loadGruposForCoordinador(coord, user){
     if (match) wanted.push(g);
   });
 
-  // ordenar (futuros primero)
+  // ORDENAR (FUTUROS → PASADOS)
   const hoy=toISO(new Date());
   const futuros=wanted.filter(g=>(g.fechaInicio||'')>=hoy).sort((a,b)=>(a.fechaInicio||'').localeCompare(b.fechaInicio||''));
   const pasados=wanted.filter(g=>(g.fechaInicio||'')<hoy).sort((a,b)=>(a.fechaInicio||'').localeCompare(b.fechaInicio||''));
@@ -204,14 +223,14 @@ async function loadGruposForCoordinador(coord, user){
   renderOneGroup(state.ordenados[state.idx], qsF);
 }
 
-/* ====== Normalizador de itinerario ====== */
+/* ====== NORMALIZADOR DE ITINERARIO ====== */
 function normalizeItinerario(raw){
   if (!raw) return {};
   if (Array.isArray(raw)){ const map={}; for(const item of raw){ const f=toISO(item && item.fecha); if(!f) continue; (map[f] ||= []).push({...item}); } return map; }
   return raw;
 }
 
-/* ====== Stats ====== */
+/* ====== STATS ====== */
 function getFilteredList(){ const base=state.ordenados.slice();
   const dest = (state.filter.type==='dest' && state.filter.value) ? state.filter.value : null;
   return dest ? base.filter(g=> String(g.destino||'')===dest) : base;
@@ -225,7 +244,7 @@ function renderStats(list){
   const maxFinISO=list.map(g=>g.fechaFin).filter(Boolean).sort().slice(-1)[0]||'';
   const totalDias=list.reduce((s,g)=> s+daysInclusive(g.fechaInicio,g.fechaFin),0);
   const paxTot=list.reduce((s,g)=> s+paxOf(g),0);
-  const destinos=[...new Set(list.map(g=>String(g.destino||'')).filter(Boolean))];
+  const destinos=[...new Set(list.map(g=>String(g.destino||'')).filter(Boolean).map(x=>x.toUpperCase()))];
 
   p.innerHTML = `
     <div style="display:grid;gap:.4rem">
@@ -235,12 +254,12 @@ function renderStats(list){
     </div>`;
 }
 
-/* ====== Nav ====== */
+/* ====== NAV ====== */
 function renderNavBar(){
   const p=document.getElementById('navPanel');
   const sel=p.querySelector('#allTrips'); sel.textContent='';
 
-  // Filtro TODOS
+  // FILTRO TODOS (SOLO UI DEL SELECT DE VIAJES)
   const ogFiltro=document.createElement('optgroup'); ogFiltro.label='FILTRO';
   ogFiltro.appendChild(new Option('TODOS','all')); sel.appendChild(ogFiltro);
 
@@ -249,7 +268,7 @@ function renderNavBar(){
   state.ordenados.forEach((g,i)=>{
     const name=(g.nombreGrupo||g.aliasGrupo||g.id);
     const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
-    const opt=new Option(`${g.destino||''} · ${name} (${code}) | IDA: ${dmy(g.fechaInicio||'')}  VUELTA: ${dmy(g.fechaFin||'')}`, `trip:${i}`);
+    const opt=new Option(`${(g.destino||'').toUpperCase()} · ${(name||'').toUpperCase()} (${code}) | IDA: ${dmy(g.fechaInicio||'')}  VUELTA: ${dmy(g.fechaFin||'')}`, `trip:${i}`);
     ogTrips.appendChild(opt);
   });
   sel.appendChild(ogTrips);
@@ -272,7 +291,7 @@ function renderNavBar(){
   }
 }
 
-/* ====== Vista grupo ====== */
+/* ====== VISTA GRUPO ====== */
 function renderOneGroup(g, preferDate){
   const cont=document.getElementById('grupos'); if(!cont) return; cont.innerHTML='';
   if(!g){ cont.innerHTML='<p class="muted">NO HAY VIAJES.</p>'; return; }
@@ -283,12 +302,12 @@ function renderOneGroup(g, preferDate){
   const rango = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
   const header=document.createElement('div'); header.className='group-card';
-  header.innerHTML=`<h3>${name} || CÓDIGO: (${code})</h3>
+  header.innerHTML=`<h3>${(name||'').toUpperCase()} · CÓDIGO: (${code})</h3>
     <div class="grid-mini">
-      <div class="lab">DESTINO</div><div>${g.destino||'—'}</div>
-      <div class="lab">GRUPO</div><div>${name}</div>
+      <div class="lab">DESTINO</div><div>${(g.destino||'—').toUpperCase()}</div>
+      <div class="lab">GRUPO</div><div>${(name||'').toUpperCase()}</div>
       <div class="lab">PAX TOTAL</div><div>${(g.cantidadgrupo ?? g.pax ?? 0)}</div>
-      <div class="lab">PROGRAMA</div><div>${g.programa||'—'}</div>
+      <div class="lab">PROGRAMA</div><div>${(g.programa||'—').toUpperCase()}</div>
       <div class="lab">FECHAS</div><div>${rango}</div>
     </div>
     <div class="rowflex" style="margin-top:.6rem">
@@ -321,7 +340,7 @@ function renderOneGroup(g, preferDate){
   renderGastos(g, paneGastos);
   show('resumen');
 
-  // búsqueda interna (re-render panes manteniendo la pestaña activa)
+  // BÚSQUEDA INTERNA
   const input=header.querySelector('#searchTrips');
   input.value = state.groupQ || '';
   let tmr=null;
@@ -330,7 +349,7 @@ function renderOneGroup(g, preferDate){
   },180); };
 }
 
-/* ====== Resumen (Hotel + Vuelos) ====== */
+/* ====== RESUMEN (HOTEL + VUELOS) ====== */
 async function renderResumen(g, pane){
   pane.innerHTML='<div class="muted">CARGANDO…</div>';
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML='';
@@ -349,32 +368,27 @@ async function renderResumen(g, pane){
   // ===== HOTEL =====
   try{
     const h = await loadHotelInfo(g);
-    D_HOTEL('renderResumen -> h', h);
+    D_HOTEL('RENDERRESUMEN -> H', h);
 
     if(!h){
       hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>';
     }else{
-      // doc de "hoteles" que vino desde loadHotelInfo
       let H = h.hotel || {};
-      D_HOTEL('doc hoteles (inicial)', H);
+      D_HOTEL('DOC HOTELES (INICIAL)', H);
 
-      // (fallback) si viniera vacío y hay hotelId, intenta leer directo
       if ((!H || !H.nombre) && h.hotelId){
         try{
           const hd = await getDoc(doc(db,'hoteles', String(h.hotelId)));
-          D_HOTEL('FALLBACK getDoc(hoteles, hotelId) exists?', hd.exists(), 'hotelId=', String(h.hotelId));
+          D_HOTEL('FALLBACK GETDOC(HOTELES, HOTELID)', hd.exists(), 'HOTELID=', String(h.hotelId));
           if(hd.exists()) H = { id: hd.id, ...(hd.data()||{}) };
         }catch(e){
-          D_HOTEL('ERROR FALLBACK getDoc hoteles por ID', e?.code || e, e?.message || '');
+          D_HOTEL('ERROR FALLBACK GETDOC HOTELES', e?.code || e, e?.message || '');
         }
       }
 
-      // datos combinados
       const nombre    = String(h.hotelNombre || H.nombre || '').toUpperCase();
-      const direccion = H.direccion || h.direccion || '';
-      const cNombre   = H.contactoNombre || '';
-      const cTelefono = H.contactoTelefono || '';
-      const cCorreo   = H.contactoCorreo || '';
+      const direccion = (H.direccion || h.direccion || '').toUpperCase();
+      const cTelefono = (H.contactoTelefono || '').toUpperCase();
       const status    = (h.status || '').toString().toUpperCase();
       const ciISO     = toISO(h.checkIn);
       const coISO     = toISO(h.checkOut);
@@ -382,28 +396,25 @@ async function renderResumen(g, pane){
         ? Number(h.noches)
         : (ciISO && coISO ? Math.max(0, daysInclusive(ciISO,coISO)-1) : '');
 
-      D_HOTEL('se va a pintar', { nombre, direccion, cNombre, cTelefono, cCorreo, status, ciISO, coISO, noches, hotelId:h?.hotelId });
+      D_HOTEL('SE VA A PINTAR', { nombre, direccion, cTelefono, status, ciISO, coISO, noches, hotelId:h?.hotelId });
 
-      // distribuciones
       const est = h.estudiantes || {F:0,M:0,O:0};
       const estTot = Number(h.estudiantesTotal ?? (est.F+est.M+est.O));
       const adu = h.adultos || {F:0,M:0,O:0};
       const aduTot = Number(h.adultosTotal ?? (adu.F+adu.M+adu.O));
 
-      // habitaciones (si existen)
       const hab = h.habitaciones || {};
       const habLine = (hab.singles!=null || hab.dobles!=null || hab.triples!=null || hab.cuadruples!=null)
         ? `HABITACIONES: ${[
-            (hab.singles!=null?`Singles: ${hab.singles}`:''),
-            (hab.dobles!=null?`Dobles: ${hab.dobles}`:''),
-            (hab.triples!=null?`Triples: ${hab.triples}`:''),
-            (hab.cuadruples!=null?`Cuádruples: ${hab.cuadruples}`:'')
+            (hab.singles!=null?`SINGLES: ${hab.singles}`:''),
+            (hab.dobles!=null?`DOBLES: ${hab.dobles}`:''),
+            (hab.triples!=null?`TRIPLES: ${hab.triples}`:''),
+            (hab.cuadruples!=null?`CUÁDRUPLES: ${hab.cuadruples}`:'')
           ].filter(Boolean).join(' · ')}`
         : '';
 
       const contactoLine = [cTelefono].filter(Boolean).join(' · ');
 
-      // texto para filtro local
       const txtMatch = norm([
         nombre, direccion, contactoLine, status,
         dmy(ciISO), dmy(coISO),
@@ -424,14 +435,14 @@ async function renderResumen(g, pane){
           <div class="meta"><strong>CHECK-IN/OUT:</strong> ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?` · NOCHES: ${noches}`:'')}</div>
           <div class="meta"><strong>ESTUDIANTES:</strong> F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · ADULTOS: F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
           ${habLine ? `<div class="meta">${habLine}</div>` : ''}
-          ${h.coordinadores!=null ? `<div class="meta"><strong>COORDINADORES:</strong> ${h.coordinadores}</div>` : ''}
-          ${h.conductores!=null ? `<div class="meta"><strong>CONDUCTORES:</strong> ${h.conductores}</div>` : ''}
+          ${h.coordinadores!=null ? `<div class="meta"><strong>COORDINADORES:</strong> ${(String(h.coordinadores)).toUpperCase()}</div>` : ''}
+          ${h.conductores!=null ? `<div class="meta"><strong>CONDUCTORES:</strong> ${(String(h.conductores)).toUpperCase()}</div>` : ''}
         `;
       }
     }
   }catch(e){
     console.error(e);
-    D_HOTEL('ERROR renderResumen HOTEL', e?.code || e, e?.message || '');
+    D_HOTEL('ERROR RENDERRESUMEN HOTEL', e?.code || e, e?.message || '');
     hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>';
   }
 
@@ -449,8 +460,8 @@ async function renderResumen(g, pane){
       const tb=table.querySelector('tbody');
       flt.forEach(v=>{
         const tr=document.createElement('tr');
-        tr.innerHTML=`<td>${v.numero||''}</td><td>${v.proveedor||''}</td>
-          <td>${v.origen||''} — ${v.destino||''}</td>
+        tr.innerHTML=`<td>${(v.numero||'').toString().toUpperCase()}</td><td>${(v.proveedor||'').toString().toUpperCase()}</td>
+          <td>${(v.origen||'').toString().toUpperCase()} — ${(v.destino||'').toString().toUpperCase()}</td>
           <td>${dmy(toISO(v.fechaIda))||''}</td><td>${dmy(toISO(v.fechaVuelta))||''}</td>`;
         tb.appendChild(tr);
       });
@@ -462,14 +473,12 @@ async function renderResumen(g, pane){
   }
 }
 
-/* ====== Índice de Hoteles (por id y por nombre normalizado) ====== */
+/* ====== ÍNDICE DE HOTELES ====== */
 async function ensureHotelesIndex(){
   if (state.cache.hoteles.loaded) return state.cache.hoteles;
-
   const byId  = new Map();
   const bySlug= new Map();
   const all   = [];
-
   const snap = await getDocs(collection(db,'hoteles'));
   snap.forEach(d=>{
     const x = d.data() || {};
@@ -479,41 +488,25 @@ async function ensureHotelesIndex(){
     if (s) bySlug.set(s, doc);
     all.push(doc);
   });
-
   state.cache.hoteles = { loaded:true, byId, bySlug, all };
-  D_HOTEL('Índice hoteles cargado', { count: all.length });
+  D_HOTEL('ÍNDICE HOTELES CARGADO', { count: all.length });
   return state.cache.hoteles;
 }
 
-/* ====== Hotel: lee asignación y cruza con "hoteles" (id → nombre/dirección/contacto) ====== */
-/* ====== Hotel: lee asignación y cruza con "hoteles" ====== */
+/* ====== HOTEL: ASIGNACIÓN + CRUCE CON "HOTELES" ====== */
 async function loadHotelInfo(g){
   const key = g.numeroNegocio;
-  if (state.cache.hotel.has(key)) {
-    D_HOTEL('CACHE HIT loadHotelInfo', { numeroNegocio:key });
-    return state.cache.hotel.get(key);
-  }
+  if (state.cache.hotel.has(key)) { D_HOTEL('CACHE HIT LOADHOTELINFO', { numeroNegocio:key }); return state.cache.hotel.get(key); }
+  D_HOTEL('INI LOADHOTELINFO', { grupoDocId: g.id, numeroNegocio: key, destino: g.destino });
 
-  D_HOTEL('INI loadHotelInfo', { grupoDocId: g.id, numeroNegocio: key, destino: g.destino });
-
-  // 1) Candidatas de hotelAssignments
+  // 1) CANDIDATAS EN "HOTELASSIGNMENTS"
   let cand = [];
-  try{
-    const qs = await getDocs(query(collection(db,'hotelAssignments'), where('grupoId','==',String(key))));
-    qs.forEach(d=> cand.push({ id:d.id, ...(d.data()||{}) }));
-  }catch(e){ D_HOTEL('ERROR query hotelAssignments by grupoId', e?.code||e, e?.message||''); }
-  try{
-    const qs2 = await getDocs(query(collection(db,'hotelAssignments'), where('grupoDocId','==',String(g.id))));
-    qs2.forEach(d=> cand.push({ id:d.id, ...(d.data()||{}) }));
-  }catch(e){ D_HOTEL('ERROR query hotelAssignments by grupoDocId', e?.code||e, e?.message||''); }
+  try{ const qs = await getDocs(query(collection(db,'hotelAssignments'), where('grupoId','==',String(key)))); qs.forEach(d=> cand.push({ id:d.id, ...(d.data()||{}) })); }catch(e){ D_HOTEL('ERROR QUERY HOTELASSIGNMENTS GRUPOID', e); }
+  try{ const qs2 = await getDocs(query(collection(db,'hotelAssignments'), where('grupoDocId','==',String(g.id)))); qs2.forEach(d=> cand.push({ id:d.id, ...(d.data()||{}) })); }catch(e){ D_HOTEL('ERROR QUERY HOTELASSIGNMENTS GRUPODOCID', e); }
 
-  if (!cand.length){
-    state.cache.hotel.set(key,null);
-    D_HOTEL('SIN ASIGNACIÓN → return null');
-    return null;
-  }
+  if (!cand.length){ state.cache.hotel.set(key,null); D_HOTEL('SIN ASIGNACIÓN → NULL'); return null; }
 
-  // 2) Elegir la asignación más cercana al rango del viaje
+  // 2) ELEGIR POR SOLAPAMIENTO/PROXIMIDAD
   let elegido=null, score=1e15;
   const rangoIni = toISO(g.fechaInicio), rangoFin = toISO(g.fechaFin);
   cand.forEach(x=>{
@@ -525,92 +518,56 @@ async function loadHotelInfo(g){
     }
     if (s<score){ score=s; elegido=x; }
   });
-  D_HOTEL('asignación elegida', elegido);
+  D_HOTEL('ASIGNACIÓN ELEGIDA', elegido);
 
-  // 3) Resolver doc del hotel
+  // 3) RESOLVER DOC HOTEL
   const { byId, bySlug, all } = await ensureHotelesIndex();
   let hotelDoc = null;
 
-  // 3.a) Variantes de ID directo
+  // 3.a) INTENTOS POR ID/REF/PATH
   const tryIds = [];
   if (elegido?.hotelId)     tryIds.push(String(elegido.hotelId));
   if (elegido?.hotelDocId)  tryIds.push(String(elegido.hotelDocId));
   if (elegido?.hotel?.id)   tryIds.push(String(elegido.hotel.id));
-  // Posible DocumentReference
-  if (elegido?.hotelRef && typeof elegido.hotelRef === 'object' && 'id' in elegido.hotelRef){
-    tryIds.push(String(elegido.hotelRef.id));
-  }
-  // A veces guardan "hoteles/<id>"
-  if (elegido?.hotelPath && typeof elegido.hotelPath === 'string'){
-    const m = elegido.hotelPath.match(/hoteles\/([^/]+)/i);
-    if (m) tryIds.push(m[1]);
-  }
-
+  if (elegido?.hotelRef && typeof elegido.hotelRef === 'object' && 'id' in elegido.hotelRef){ tryIds.push(String(elegido.hotelRef.id)); }
+  if (elegido?.hotelPath && typeof elegido.hotelPath === 'string'){ const m = elegido.hotelPath.match(/hoteles\/([^/]+)/i); if (m) tryIds.push(m[1]); }
   for (const id of tryIds){
-    if (byId.has(id)){ hotelDoc = byId.get(id); D_HOTEL('match por índice/byId', id); break; }
-    try{
-      const hd = await getDoc(doc(db,'hoteles', id));
-      D_HOTEL('getDoc(hoteles, id) exists?', hd.exists(), 'id=', id);
-      if (hd.exists()){ hotelDoc = { id:hd.id, ...hd.data() }; break; }
-    }catch(e){ D_HOTEL('ERROR getDoc hoteles por ID', id, e?.code||e, e?.message||''); }
+    if (byId.has(id)){ hotelDoc = byId.get(id); D_HOTEL('MATCH ÍNDICE BYID', id); break; }
+    try{ const hd = await getDoc(doc(db,'hoteles', id)); if (hd.exists()){ hotelDoc = { id:hd.id, ...hd.data() }; break; } }catch(e){ D_HOTEL('ERROR GETDOC HOTELES POR ID', id, e); }
   }
 
-  // 3.b) Fuzzy por nombre
+  // 3.b) FUZZY POR NOMBRE/SLUG
   if (!hotelDoc){
     const s = norm(elegido?.nombre || elegido?.hotelNombre || '');
     const dest = norm(g.destino || '');
-    D_HOTEL('buscando por nombre/slug', { slugBuscado:s, destino:dest });
-    if (s && bySlug.has(s)){
-      hotelDoc = bySlug.get(s);
-      D_HOTEL('match exacto bySlug', hotelDoc);
-    } else if (s){
+    D_HOTEL('BUSCANDO POR NOMBRE/SLUG', { slugBuscado:s, destino:dest });
+    if (s && bySlug.has(s)){ hotelDoc = bySlug.get(s); }
+    else if (s){
       const candidatos = [];
-      for (const [slugName, docu] of bySlug){
-        if (slugName.includes(s) || s.includes(slugName)) candidatos.push(docu);
-      }
-      hotelDoc = candidatos.length === 1
-        ? candidatos[0]
-        : (candidatos.find(d => norm(d.destino||d.ciudad||'') === dest) || candidatos[0] || null);
-      D_HOTEL('match fuzzy', { candidatos, elegido: hotelDoc });
+      for (const [slugName, docu] of bySlug){ if (slugName.includes(s) || s.includes(slugName)) candidatos.push(docu); }
+      hotelDoc = candidatos.length === 1 ? candidatos[0] : (candidatos.find(d => norm(d.destino||d.ciudad||'') === dest) || candidatos[0] || null);
+      D_HOTEL('MATCH FUZZY', { candidatos, elegido: hotelDoc });
     }
   }
 
-  // 3.c) Heurística final: por destino (+ opcionalmente solapamiento de fechas)
+  // 3.c) HEURÍSTICA FINAL POR DESTINO/FECHAS
   if (!hotelDoc){
     const dest = norm(g.destino || '');
     const ci = toISO(elegido?.checkIn), co = toISO(elegido?.checkOut);
-
-    const overlapDays = (A,B,C,D)=>{
-      if(!A||!B||!C||!D) return 0;
-      const s = Math.max(new Date(A).getTime(), new Date(C).getTime());
-      const e = Math.min(new Date(B).getTime(), new Date(D).getTime());
-      return (e>=s) ? Math.round((e - s)/86400000) + 1 : 0; // inclusivo
-    };
-
-    // Primero por destino que “parece” el mismo
+    const overlapDays = (A,B,C,D)=>{ if(!A||!B||!C||!D) return 0; const s = Math.max(new Date(A).getTime(), new Date(C).getTime()); const e = Math.min(new Date(B).getTime(), new Date(D).getTime()); return (e>=s) ? Math.round((e - s)/86400000) + 1 : 0; };
     let candidatos = all.filter(h => norm(h.destino||h.ciudad||'') === dest);
-    // Si hay fechas, prioriza mayor solapamiento
-    if (ci && co){
-      candidatos = candidatos
-        .map(h => ({ h, ov: overlapDays(ci, co, toISO(h.fechaInicio), toISO(h.fechaFin)) }))
-        .sort((a,b)=> b.ov - a.ov)
-        .map(x=>x.h);
-    }
+    if (ci && co){ candidatos = candidatos.map(h => ({ h, ov: overlapDays(ci, co, toISO(h.fechaInicio), toISO(h.fechaFin)) })).sort((a,b)=> b.ov - a.ov).map(x=>x.h); }
     hotelDoc = candidatos[0] || null;
-    D_HOTEL('heurística destino/fechas', { elegido: hotelDoc, total: candidatos.length, ci, co });
+    D_HOTEL('HEURÍSTICA DESTINO/FECHAS', { elegido: hotelDoc, total: candidatos.length, ci, co });
   }
 
-  const out = {
-    ...elegido,
-    hotel: hotelDoc,
-    hotelNombre: elegido?.nombre || elegido?.hotelNombre || hotelDoc?.nombre || ''
-  };
-
+  const out = { ...elegido, hotel: hotelDoc, hotelNombre: elegido?.nombre || elegido?.hotelNombre || hotelDoc?.nombre || '' };
   state.cache.hotel.set(key, out);
-  D_HOTEL('OUT loadHotelInfo', out);
+  D_HOTEL('OUT LOADHOTELINFO', out);
   return out;
 }
 
+/* ====== VUELOS ====== */
 async function loadVuelosInfo(g){
   const key=g.numeroNegocio; if(state.cache.vuelos.has(key)) return state.cache.vuelos.get(key);
   let found=[];
@@ -622,7 +579,7 @@ async function loadVuelosInfo(g){
   found.sort((a,b)=> (toISO(a.fechaIda)||'').localeCompare(toISO(b.fechaIda)||'')); state.cache.vuelos.set(key,found); return found;
 }
 
-/* ====== Itinerario + Bitácora + Vouchers ====== */
+/* ====== ITINERARIO + BITÁCORA + VOUCHERS ====== */
 function getSavedAsistencia(grupo, fechaISO, actividad){
   const byDate=grupo?.asistencias?.[fechaISO]; if(!byDate) return null;
   const key=slug(actividad||'actividad');
@@ -689,11 +646,11 @@ async function renderActs(grupo, fechaISO, cont){
 
     const div=document.createElement('div'); div.className='act';
     div.innerHTML=`
-      <h4>${actName} ${estado?`· <span class="muted">${estado}</span>`:''}</h4>
+      <h4>${(actName||'').toUpperCase()} ${estado?`· <span class="muted">${String(estado).toUpperCase()}</span>`:''}</h4>
       <div class="meta">${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')} · PLAN: <strong>${plan}</strong> PAX</div>
       <div class="rowflex" style="margin:.35rem 0">
         <input type="number" min="0" inputmode="numeric" placeholder="ASISTENTES" value="${paxFinalInit}"/>
-        <textarea placeholder="NOTA (se guarda en bitácora al GUARDAR)"></textarea>
+        <textarea placeholder="NOTA (SE GUARDA EN BITÁCORA AL GUARDAR)"></textarea>
         <button class="btn ok btnSave">GUARDAR</button>
         ${tipo!=='NOAPLICA'?`<button class="btn sec btnVch">FINALIZAR…</button>`:''}
       </div>
@@ -703,10 +660,10 @@ async function renderActs(grupo, fechaISO, cont){
       </div>`;
     cont.appendChild(div);
 
-    // Bitácora
+    // BITÁCORA
     const itemsWrap=div.querySelector('.bitItems'); await loadBitacora(grupo.id,fechaISO,actKey,itemsWrap);
 
-    // Guardar asistencia (+nota → bitácora → alerta staff)
+    // GUARDAR ASISTENCIA + NOTA (→ BITÁCORA → ALERTA STAFF)
     div.querySelector('.btnSave').onclick=async ()=>{
       const btn=div.querySelector('.btnSave'); btn.disabled=true;
       try{
@@ -723,19 +680,19 @@ async function renderActs(grupo, fechaISO, cont){
           const coll=collection(db,'grupos',grupo.id,'bitacora',`${fechaISO}-${actKey}`,'items');
           await addDoc(coll,{ texto:nota, byUid:auth.currentUser.uid, byEmail:(auth.currentUser.email||'').toLowerCase(), ts:serverTimestamp() });
 
-          // ALERTA PARA STAFF (operaciones)
+          // ALERTA PARA STAFF (OPERACIONES)
           await addDoc(collection(db,'alertas'),{
             audience:'staff',
-            mensaje: `Nota en ${actName}: ${nota}`,
+            mensaje: `NOTA EN ${actName.toUpperCase()}: ${nota.toUpperCase()}`,
             createdAt: serverTimestamp(),
             createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() },
             readBy:{},
             groupInfo:{
               grupoId:grupo.id,
-              nombre: grupo.nombreGrupo||grupo.aliasGrupo||grupo.id,
+              nombre: (grupo.nombreGrupo||grupo.aliasGrupo||grupo.id),
               code: (grupo.numeroNegocio||'')+(grupo.identificador?('-'+grupo.identificador):''),
-              destino: grupo.destino||null,
-              programa: grupo.programa||null,
+              destino: (grupo.destino||null),
+              programa: (grupo.programa||null),
               fechaActividad: fechaISO,
               actividad: actName
             }
@@ -743,7 +700,7 @@ async function renderActs(grupo, fechaISO, cont){
 
           await loadBitacora(grupo.id,fechaISO,actKey,itemsWrap);
           div.querySelector('textarea').value='';
-          await renderGlobalAlerts(); // actualiza panel
+          await renderGlobalAlerts();
         }
         btn.textContent='GUARDADO'; setTimeout(()=>{ btn.textContent='GUARDAR'; btn.disabled=false; },900);
       }catch(e){ console.error(e); btn.disabled=false; alert('NO SE PUDO GUARDAR.'); }
@@ -760,16 +717,17 @@ async function loadBitacora(grupoId, fechaISO, actKey, wrap){
     const coll=collection(db,'grupos',grupoId,'bitacora',`${fechaISO}-${actKey}`,'items');
     const qs=await getDocs(query(coll,orderBy('ts','desc'),limit(50)));
     const frag=document.createDocumentFragment();
-    qs.forEach(d=>{ const x=d.data()||{}; const quien=String(x.byEmail||x.byUid||'USUARIO');
+    qs.forEach(d=>{ const x=d.data()||{}; const quien=String(x.byEmail||x.byUid||'USUARIO').toUpperCase();
       const cuando=x.ts?.seconds?new Date(x.ts.seconds*1000):null;
-      const hora=cuando?cuando.toLocaleString('es-CL'):''; const div=document.createElement('div'); div.className='meta';
-      div.textContent=`• ${x.texto||''} — ${quien}${hora?(' · '+hora):''}`; frag.appendChild(div);
+      const hora=cuando?cuando.toLocaleString('es-CL').toUpperCase():'';
+      const div=document.createElement('div'); div.className='meta';
+      div.textContent=`• ${(x.texto||'').toString().toUpperCase()} — ${quien}${hora?(' · '+hora):''}`; frag.appendChild(div);
     });
     wrap.innerHTML=''; wrap.appendChild(frag); if(!qs.size) wrap.innerHTML='<div class="muted">AÚN NO HAY NOTAS.</div>';
   }catch(e){ console.error(e); wrap.innerHTML='<div class="muted">NO SE PUDO CARGAR LA BITÁCORA.</div>'; }
 }
 
-/* ====== Servicios / Vouchers ====== */
+/* ====== SERVICIOS / VOUCHERS ====== */
 async function findServicio(destino, nombre){
   if(!destino||!nombre) return null;
   const want=norm(nombre);
@@ -786,12 +744,14 @@ async function findServicio(destino, nombre){
 function renderVoucherHTMLSync(g, fechaISO, act, proveedorDoc=null, compact=false){
   const paxPlan=calcPlan(act,g); const asis=getSavedAsistencia(g,fechaISO,act.actividad); const paxAsist=asis?.paxFinal??'';
   const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
-  const provTexto = proveedorDoc ? `${proveedorDoc.nombre||''}${proveedorDoc.rut?(' · '+proveedorDoc.rut):''}${proveedorDoc.direccion?(' · '+proveedorDoc.direccion):''}` : (act.proveedor||'');
+  const provTexto = proveedorDoc
+    ? `${(proveedorDoc.nombre||'').toString().toUpperCase()}${proveedorDoc.rut?(' · '+String(proveedorDoc.rut).toUpperCase()):''}${proveedorDoc.direccion?(' · '+String(proveedorDoc.direccion).toUpperCase()):''}`
+    : (String(act.proveedor||'').toUpperCase());
   return `
     <div class="card">
-      <h3>${act.actividad||'SERVICIO'}</h3>
+      <h3>${(act.actividad||'SERVICIO').toString().toUpperCase()}</h3>
       <div class="meta">PROVEEDOR: ${provTexto||'—'}</div>
-      <div class="meta">GRUPO: ${g.nombreGrupo||g.aliasGrupo||g.id} (${code})</div>
+      <div class="meta">GRUPO: ${(g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase()} (${code})</div>
       <div class="meta">FECHA: ${dmy(fechaISO)}</div>
       <div class="meta">PAX PLAN: ${paxPlan} · PAX ASISTENTES: ${paxAsist}</div>
       ${compact?'':'<hr><div class="meta">FIRMA COORDINADOR: ________________________________</div>'}
@@ -801,7 +761,7 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   const back=document.getElementById('modalBack');
   const title=document.getElementById('modalTitle');
   const body=document.getElementById('modalBody');
-  title.textContent=`VOUCHER — ${act.actividad||''} — ${dmy(fechaISO)}`;
+  title.textContent=`VOUCHER — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)}`;
 
   let proveedorDoc=null;
   try{
@@ -828,18 +788,18 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
     body.innerHTML= `${voucherHTML}
       <div class="rowflex" style="margin-top:.6rem">
         <div style="display:flex;gap:.4rem;align-items:center;width:100%">
-          <input id="vchClave" type="password" placeholder="CLAVE (o acerque tarjeta NFC)" style="flex:1"/>
-          <button id="vchEye" class="btn sec" title="Mostrar/Ocultar">👁</button>
+          <input id="vchClave" type="password" placeholder="CLAVE (O ACERQUE TARJETA NFC)" style="flex:1"/>
+          <button id="vchEye" class="btn sec" title="MOSTRAR/OCULTAR">👁</button>
         </div>
         <button id="vchFirmar" class="btn ok">FIRMAR</button>
         <button id="vchPend" class="btn warn">PENDIENTE</button>
       </div>
-      <div class="meta">TIP: Si tu móvil soporta NFC, puedes acercar la tarjeta para leer la clave automáticamente.</div>`;
+      <div class="meta">TIP: SI TU MÓVIL SOPORTA NFC, PUEDES ACERCAR LA TARJETA PARA LEER LA CLAVE AUTOMÁTICAMENTE.</div>`;
     document.getElementById('vchEye').onclick=()=>{ const inp=document.getElementById('vchClave'); inp.type = (inp.type==='password'?'text':'password'); };
     document.getElementById('vchFirmar').onclick=async ()=>{
       const val=(document.getElementById('vchClave').value||'').trim();
-      if(!val){ alert('Ingresa la clave.'); return; }
-      if(norm(val)!==norm(clave||'')){ alert('Clave incorrecta.'); return; }
+      if(!val){ alert('INGRESA LA CLAVE.'); return; }
+      if(norm(val)!==norm(clave||'')){ alert('CLAVE INCORRECTA.'); return; }
       await setEstadoServicio(g,fechaISO,act,'FINALIZADA', true);
     };
     document.getElementById('vchPend').onclick =()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE',  true);
@@ -867,14 +827,22 @@ async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
 
     if(logBitacora){
       const coll=collection(db,'grupos',g.id,'bitacora',`${fechaISO}-${key}`,'items');
-      await addDoc(coll,{ texto:`Actividad ${estado.toLowerCase()}`, byUid:state.user.uid, byEmail:(state.user.email||'').toLowerCase(), ts:serverTimestamp() });
+      await addDoc(coll,{ texto:`ACTIVIDAD ${estado.toLowerCase()}`, byUid:state.user.uid, byEmail:(state.user.email||'').toLowerCase(), ts:serverTimestamp() });
     }
-  }catch(e){ console.error(e); alert('No fue posible actualizar el estado.'); }
+  }catch(e){ console.error(e); alert('NO FUE POSIBLE ACTUALIZAR EL ESTADO.'); }
 }
 
 /* ====== ALERTAS ====== */
 
-/** Construye destinatarios por filtros (destinos, rango) escaneando TODOS los grupos */
+/** AYUDA: OBTENER NOMBRE POR EMAIL (MAYÚSCULAS) */
+function upperNameByEmail(email){
+  const e=(email||'').toLowerCase();
+  const c=state.coordinadores.find(x=>(x.email||'').toLowerCase()===e);
+  const n=(c?.nombre||'').toString().toUpperCase();
+  return n || e.toUpperCase();
+}
+
+/** DESTINATARIOS POR FILTROS (DESTINOS, RANGO/FECHA) ESCANEANDO TODOS LOS GRUPOS */
 async function recipientsFromFilters(destinosList, rangoStr){
   const wantedDest = destinosList.map(d=>norm(d)).filter(Boolean);
   let A=null,B=null;
@@ -894,19 +862,18 @@ async function recipientsFromFilters(destinosList, rangoStr){
       dateOk = !( (fin && fin < A) || (ini && ini > B) );
     }
     if(destOk && dateOk){
-      // por id de doc o por email
-      const ids = coordDocIdsOf(g);
-      ids.forEach(id=>r.add(String(id)));
+      const ids = coordDocIdsOf(g); ids.forEach(id=>r.add(String(id)));
       emailsOf(g).forEach(e=>{ if(mapEmailToId.has(e)) r.add(mapEmailToId.get(e)); });
     }
   });
   return r;
 }
 
+/** MODAL: CREAR ALERTA (STAFF) */
 async function openCreateAlertModal(){
   const back=document.getElementById('modalBack'), body=document.getElementById('modalBody'), title=document.getElementById('modalTitle');
   title.textContent='CREAR ALERTA (STAFF)';
-  const coordOpts=state.coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${c.email}</option>`).join('');
+  const coordOpts=state.coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${(c.email||'').toUpperCase()}</option>`).join('');
   body.innerHTML=`
     <div class="rowflex"><textarea id="alertMsg" placeholder="MENSAJE" style="width:100%"></textarea></div>
     <div class="rowflex">
@@ -914,8 +881,8 @@ async function openCreateAlertModal(){
       <select id="alertCoords" multiple size="8" style="width:100%">${coordOpts}</select>
     </div>
     <div class="rowflex">
-      <input id="alertDestinos" type="text" placeholder="DESTINOS (separados por coma, opcional)"/>
-      <input id="alertRango" type="text" placeholder="RANGO dd-mm-aaaa..dd-mm-aaaa o FECHA única"/>
+      <input id="alertDestinos" type="text" placeholder="DESTINOS (SEPARADOS POR COMA, OPCIONAL)"/>
+      <input id="alertRango" type="text" placeholder="RANGO DD-MM-AAAA..DD-MM-AAAA O FECHA ÚNICA"/>
     </div>
     <div class="rowflex"><button id="alertSave" class="btn ok">ENVIAR</button></div>`;
   document.getElementById('alertSave').onclick=async ()=>{
@@ -923,21 +890,20 @@ async function openCreateAlertModal(){
     const sel=Array.from(document.getElementById('alertCoords').selectedOptions).map(o=>o.value);
     const destinos=(document.getElementById('alertDestinos').value||'').split(',').map(x=>x.trim()).filter(Boolean);
     const rango=(document.getElementById('alertRango').value||'').trim();
-    if(!msg && !destinos.length){ alert('Escribe un mensaje.'); return; }
+    if(!msg && !destinos.length){ alert('ESCRIBE UN MENSAJE O USA FILTROS.'); return; }
 
     const set=new Set(sel);
-    // expandir por filtros
     try{
       const fromFilters = await recipientsFromFilters(destinos, rango);
       fromFilters.forEach(id=>set.add(id));
     }catch(e){ console.error(e); }
 
     const forCoordIds=[...set];
-    if(!forCoordIds.length){ alert('No hay destinatarios. Revisa filtros/selección.'); return; }
+    if(!forCoordIds.length){ alert('NO HAY DESTINATARIOS. REVISA FILTROS/SELECCIÓN.'); return; }
 
     await addDoc(collection(db,'alertas'),{
       audience:'coord',
-      mensaje:msg,
+      mensaje: msg.toUpperCase(),
       forCoordIds,
       meta:{ filtros:{ destinos, rango } },
       createdAt:serverTimestamp(),
@@ -951,23 +917,15 @@ async function openCreateAlertModal(){
   back.style.display='flex';
 }
 
-/** Panel global de alertas (bajo selector) */
-/** Panel global de alertas (bajo selector) */
+/** PANEL GLOBAL DE ALERTAS */
 async function renderGlobalAlerts(){
   const box = ensurePanel('alertsPanel');
 
-  // Cargar todas
-  const all=[];
-  try{
-    const qs=await getDocs(collection(db,'alertas'));
-    qs.forEach(d=>all.push({id:d.id, ...d.data()}));
-  }catch(e){
-    console.error(e);
-    box.innerHTML='<div class="muted">NO SE PUDIERON CARGAR LAS ALERTAS.</div>';
-    return;
-  }
+  // CARGAR TODAS
+  const all=[]; try{ const qs=await getDocs(collection(db,'alertas')); qs.forEach(d=>all.push({id:d.id, ...d.data()})); }
+  catch(e){ console.error(e); box.innerHTML='<div class="muted">NO SE PUDIERON CARGAR LAS ALERTAS.</div>'; return; }
 
-  // Resolver target “para mí”
+  // TARGET "PARA MÍ"
   const myCoordId = state.isStaff
     ? (state.viewingCoordId || (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self'))
     : (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self');
@@ -975,7 +933,7 @@ async function renderGlobalAlerts(){
   const paraMi = all.filter(a => (a.audience!=='staff') && Array.isArray(a.forCoordIds) && a.forCoordIds.includes(myCoordId));
   const ops    = state.isStaff ? all.filter(a => a.audience==='staff') : [];
 
-  // Sub-UI: lista con tabs NO LEÍDAS / LEÍDAS
+  // SUB-UI: LISTA CON TABS "NO LEÍDAS / LEÍDAS" + DETALLE DE LECTORES
   const renderList = (arr, scope)=>{
     const readerKey = (scope==='ops') ? `staff:${(state.user.email||'').toLowerCase()}` : `coord:${myCoordId}`;
     const isRead = (a)=>{
@@ -986,17 +944,37 @@ async function renderGlobalAlerts(){
     const unread = arr.filter(a=>!isRead(a));
     const read   = arr.filter(a=> isRead(a));
 
+    const mkReadersLine = (a)=>{
+      const rb=a.readBy||{};
+      const entries = Object.entries(rb).map(([k,v])=>{
+        const who = k.toUpperCase();
+        const when = (v?.seconds)? new Date(v.seconds*1000).toLocaleString('es-CL').toUpperCase() : '';
+        return `${who}${when?(' · '+when):''}`;
+      });
+      return entries.length ? `<div class="meta"><strong>LEÍDO POR:</strong> ${entries.join(' · ')}</div>` : '';
+    };
+
     const mkCard = (a)=>{
       const li=document.createElement('div'); li.className='alert-card';
-      const fecha=a.createdAt?.seconds? new Date(a.createdAt.seconds*1000).toLocaleDateString('es-CL') : '';
-      const autor=a.createdBy?.email||'';
+      const fecha=a.createdAt?.seconds? new Date(a.createdAt.seconds*1000).toLocaleDateString('es-CL').toUpperCase() : '';
+      const autorEmail=(a.createdBy?.email||'').toUpperCase();
+      const autorNombre = upperNameByEmail(a.createdBy?.email || '');
       const gi=a.groupInfo||null;
+
+      // TEXTO CABECERA SEGÚN ÁMBITO
+      const cab = (scope==='ops') ? 'OPERACIONES' : 'PARA MÍ';
+      // PARA COORDINADOR: TIPO PERSONAL/GLOBAL
+      const tipoCoord = (scope!=='ops')
+        ? (Array.isArray(a.forCoordIds) && a.forCoordIds.length>1 ? 'GLOBAL' : 'PERSONAL')
+        : null;
+
       li.innerHTML=`
-        <div class="alert-title">${scope==='ops'?'OPERACIONES':'PARA MÍ'}</div>
-        <div class="meta">FECHA: ${fecha} · AUTOR: ${autor}</div>
-        ${gi?`<div class="meta">GRUPO: ${gi.nombre||''} (${gi.code||''}) · DESTINO: ${gi.destino||''} · PROGRAMA: ${gi.programa||''}</div>
-             <div class="meta">FECHA ACTIVIDAD: ${dmy(gi.fechaActividad||'')} · ACTIVIDAD: ${gi.actividad||''}</div>`:''}
-        <div style="margin:.45rem 0">${a.mensaje||''}</div>
+        <div class="alert-title">${cab}${tipoCoord?` · ${tipoCoord}`:''}</div>
+        <div class="meta">FECHA: ${fecha} · AUTOR: ${autorNombre} (${autorEmail})</div>
+        ${gi?`<div class="meta">GRUPO: ${(gi.nombre||'').toString().toUpperCase()} (${(gi.code||'').toString().toUpperCase()}) · DESTINO: ${(gi.destino||'').toString().toUpperCase()} · PROGRAMA: ${(gi.programa||'').toString().toUpperCase()}</div>
+             <div class="meta">FECHA ACTIVIDAD: ${dmy(gi.fechaActividad||'')} · ACTIVIDAD: ${(gi.actividad||'').toString().toUpperCase()}</div>`:''}
+        <div style="margin:.45rem 0">${(a.mensaje||'').toString().toUpperCase()}</div>
+        ${mkReadersLine(a)}
         <div class="rowflex"><button class="btn ok btnRead">CONFIRMAR LECTURA</button></div>`;
       li.querySelector('.btnRead').onclick=async ()=>{
         try{
@@ -1004,15 +982,15 @@ async function renderGlobalAlerts(){
           if(scope==='ops'){ payload[`readBy.staff:${(state.user.email||'').toLowerCase()}`]=serverTimestamp(); }
           else            { payload[`readBy.coord:${myCoordId}`]=serverTimestamp(); }
           await updateDoc(path,payload); await renderGlobalAlerts();
-        }catch(e){ console.error(e); alert('No se pudo confirmar.'); }
+        }catch(e){ console.error(e); alert('NO SE PUDO CONFIRMAR.'); }
       };
       return li;
     };
 
     const wrap=document.createElement('div');
     const tabs=document.createElement('div'); tabs.className='tabs';
-    const t1=document.createElement('div'); t1.className='tab active'; t1.textContent='NO LEÍDAS';
-    const t2=document.createElement('div'); t2.className='tab';         t2.textContent='LEÍDAS';
+    const t1=document.createElement('div'); t1.className='tab active'; t1.textContent=`NO LEÍDAS (${unread.length})`;
+    const t2=document.createElement('div'); t2.className='tab';         t2.textContent=`LEÍDAS (${read.length})`;
     tabs.appendChild(t1); tabs.appendChild(t2); wrap.appendChild(tabs);
 
     const cont=document.createElement('div'); wrap.appendChild(cont);
@@ -1025,43 +1003,42 @@ async function renderGlobalAlerts(){
     t1.onclick = ()=>renderTab('unread');
     t2.onclick = ()=>renderTab('read');
     renderTab('unread');
-    return wrap;
+    return { ui:wrap, unreadCount:unread.length, readCount:read.length };
   };
 
-  // Cabecera
-  const head=document.createElement('div'); head.innerHTML='<h4 style="margin:.1rem 0 .6rem">ALERTAS</h4>';
-  box.innerHTML=''; box.appendChild(head);
+  // CABECERA CON CONTADOR TOTAL
+  const head=document.createElement('div');
 
-  // Área de contenido
-  const area=document.createElement('div'); box.appendChild(area);
-  const uiMi = renderList(paraMi,'mi');
-  const uiOp = state.isStaff ? renderList(ops,'ops') : null;
+  // ÁREA DE CONTENIDO
+  const area=document.createElement('div');
+
+  // RENDERIZAR LISTAS
+  const mi = renderList(paraMi,'mi');
+  const op = state.isStaff ? renderList(ops,'ops') : { ui:null, unreadCount:0 };
+
+  const totalUnread = (mi.unreadCount||0) + (op.unreadCount||0);
+  head.innerHTML=`<h4 style="margin:.1rem 0 .6rem">ALERTAS ${totalUnread>0?`<span class="badge">${totalUnread}</span>`:''}</h4>`;
+
+  box.innerHTML=''; box.appendChild(head); box.appendChild(area);
 
   if (!state.isStaff){
-    // NO staff → mostramos DIRECTO la lista (sin la pastilla “PARA MÍ”)
-    area.innerHTML='';
-    area.appendChild(uiMi);
-    return;
+    area.innerHTML=''; area.appendChild(mi.ui); return; // COORD: SOLO "PARA MÍ"
   }
 
-  // Staff → mantener tabs de ámbito: PARA MÍ / OPERACIONES
+  // STAFF: TABS DE ÁMBITO + BADGES
   const scopeTabs=document.createElement('div'); scopeTabs.className='tabs';
-  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.textContent='PARA MÍ';
-  const tbOps=document.createElement('div'); tbOps.className='tab';         tbOps.textContent='OPERACIONES';
+  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.innerHTML=`PARA MÍ ${mi.unreadCount?`<span class="badge">${mi.unreadCount}</span>`:''}`;
+  const tbOps=document.createElement('div'); tbOps.className='tab';         tbOps.innerHTML=`OPERACIONES ${op.unreadCount?`<span class="badge">${op.unreadCount}</span>`:''}`;
   scopeTabs.appendChild(tbMi); scopeTabs.appendChild(tbOps);
   box.insertBefore(scopeTabs, area);
 
-  const showScope=(s)=>{ 
-    area.innerHTML=''; 
-    if(s==='mi'){ tbMi.classList.add('active'); tbOps.classList.remove('active'); area.appendChild(uiMi); }
-    else       { tbOps.classList.add('active'); tbMi.classList.remove('active'); area.appendChild(uiOp); }
-  };
+  const showScope=(s)=>{ area.innerHTML=''; if(s==='mi'){ tbMi.classList.add('active'); tbOps.classList.remove('active'); area.appendChild(mi.ui); } else { tbOps.classList.add('active'); tbMi.classList.remove('active'); area.appendChild(op.ui); } };
   tbMi.onclick = ()=> showScope('mi');
   tbOps.onclick = ()=> showScope('ops');
   showScope('mi');
 }
 
-/* ====== Gastos ====== */
+/* ====== GASTOS ====== */
 async function renderGastos(g, pane){
   pane.innerHTML='';
   const form=document.createElement('div'); form.className='act';
@@ -1090,12 +1067,12 @@ async function renderGastos(g, pane){
       const moneda=form.querySelector('#spMoneda').value;
       const valor =Number(form.querySelector('#spValor').value||0);
       const file  =form.querySelector('#spImg').files[0]||null;
-      if(!asunto || !valor){ alert('Asunto y valor obligatorios.'); return; }
+      if(!asunto || !valor){ alert('ASUNTO Y VALOR OBLIGATORIOS.'); return; }
 
       btn.disabled=true;
       let imgUrl=null, imgPath=null;
       if(file){
-        if (file.size > 10*1024*1024){ alert('La imagen supera 10MB.'); btn.disabled=false; return; }
+        if (file.size > 10*1024*1024){ alert('LA IMAGEN SUPERA 10MB.'); btn.disabled=false; return; }
         const safe = file.name.replace(/[^a-z0-9.\-_]/gi,'_');
         const uid  = (auth.currentUser && auth.currentUser.uid) || state.user.uid;
         const path = `gastos/${uid}/${Date.now()}_${safe}`;
@@ -1114,7 +1091,7 @@ async function renderGastos(g, pane){
       });
       form.querySelector('#spAsunto').value=''; form.querySelector('#spValor').value=''; form.querySelector('#spImg').value='';
       await loadGastosList(g,listBox);
-    }catch(e){ console.error(e); alert('No fue posible guardar el gasto.'); }finally{ btn.disabled=false; }
+    }catch(e){ console.error(e); alert('NO FUE POSIBLE GUARDAR EL GASTO.'); }finally{ btn.disabled=false; }
   };
   await loadGastosList(g,listBox);
 }
@@ -1135,7 +1112,7 @@ async function loadGastosList(g, box){
   const tb=table.querySelector('tbody');
   list.forEach(x=>{
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${x.asunto||''}</td><td>${x.byEmail||''}</td><td>${x.moneda||''}</td><td>${Number(x.valor||0).toLocaleString('es-CL')}</td><td>${x.imgUrl?`<a href="${x.imgUrl}" target="_blank">VER</a>`:'—'}</td>`;
+    tr.innerHTML=`<td>${(x.asunto||'').toString().toUpperCase()}</td><td>${(x.byEmail||'').toString().toUpperCase()}</td><td>${(x.moneda||'').toString().toUpperCase()}</td><td>${Number(x.valor||0).toLocaleString('es-CL')}</td><td>${x.imgUrl?`<a href="${x.imgUrl}" target="_blank">VER</a>`:'—'}</td>`;
     tb.appendChild(tr);
     if(x.moneda==='CLP') tot.CLP+=Number(x.valor||0);
     if(x.moneda==='USD') tot.USD+=Number(x.valor||0);
@@ -1149,14 +1126,14 @@ async function loadGastosList(g, box){
   box.appendChild(totDiv);
 }
 
-/* ====== Imprimir Vouchers (staff) ====== */
+/* ====== IMPRIMIR VOUCHERS (STAFF) ====== */
 function openPrintVouchersModal(){
   const back=document.getElementById('modalBack'); const body=document.getElementById('modalBody'); const title=document.getElementById('modalTitle');
   title.textContent='IMPRIMIR VOUCHERS (STAFF)';
-  const coordOpts=[`<option value="__ALL__">TODOS</option>`].concat(state.coordinadores.map(c=>`<option value="${c.id}">${c.nombre}</option>`)).join('');
+  const coordOpts=[`<option value="__ALL__">TODOS</option>`].concat(state.coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'').toUpperCase()}</option>`)).join('');
   body.innerHTML=`
     <div class="rowflex"><label>COORDINADOR</label><select id="pvCoord">${coordOpts}</select></div>
-    <div class="rowflex"><input type="text" id="pvDestino" placeholder="DESTINO (opcional)"/><input type="text" id="pvRango" placeholder="RANGO dd-mm-aaaa..dd-mm-aaaa (opcional)"/></div>
+    <div class="rowflex"><input type="text" id="pvDestino" placeholder="DESTINO (OPCIONAL)"/><input type="text" id="pvRango" placeholder="RANGO DD-MM-AAAA..DD-MM-AAAA (OPCIONAL)"/></div>
     <div class="rowflex"><button id="pvGo" class="btn ok">GENERAR</button></div>`;
   document.getElementById('pvGo').onclick=async ()=>{
     const coordSel=document.getElementById('pvCoord').value;
@@ -1190,9 +1167,10 @@ async function buildPrintableVouchers(list){
       }
     }
   }
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Vouchers</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>VOUCHERS</title>
 <style>body{font-family:system-ui,Segoe UI,Roboto,Arial;color:#111;padding:20px}
 .card{border:1px solid #999;border-radius:8px;padding:12px;margin:10px 0}
 h3{margin:.2rem 0 .4rem}.meta{color:#333;font-size:14px}hr{border:0;border-top:1px dashed #999;margin:.4rem 0}</style>
-</head><body><h2>Vouchers</h2>${rows || '<div>Sin actividades.</div>'}</body></html>`;
+</head><body><h2>VOUCHERS</h2>${rows || '<div>SIN ACTIVIDADES.</div>'}</body></html>`;
 }
+
