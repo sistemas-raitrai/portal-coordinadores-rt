@@ -283,8 +283,9 @@ function renderOneGroup(g, preferDate){
   const rango = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
   const header=document.createElement('div'); header.className='group-card';
-  header.innerHTML=`<h3>${name} (${code})</h3>
+  header.innerHTML=`<h3>${name} CÓDIGO: (${code})</h3>
     <div class="grid-mini">
+      <div class="lab">CÓDIGO</div><div>${${code}}</div>
       <div class="lab">DESTINO</div><div>${g.destino||'—'}</div>
       <div class="lab">GRUPO</div><div>${name}</div>
       <div class="lab">PAX TOTAL</div><div>${(g.cantidadgrupo ?? g.pax ?? 0)}</div>
