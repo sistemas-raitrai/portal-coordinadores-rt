@@ -342,21 +342,64 @@ async function renderResumen(g, pane){
 
   pane.appendChild(wrap);
 
-  // HOTEL
-  try{
-    const h=await loadHotelInfo(g);
-    if(!h){ hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>'; }
-    else{
-      const nombre=h.hotelNombre||h.hotel?.nombre||'HOTEL';
-      const fechas=`${dmy(h.checkIn||'')} — ${dmy(h.checkOut||'')}`;
-      const dir=h.hotel?.direccion||'';
-      const contacto=[h.hotel?.contactoNombre,h.hotel?.contactoTelefono,h.hotel?.contactoCorreo].filter(Boolean).join(' · ');
-      const block = `<h4>${nombre}</h4>${dir?`<div class="prov">${dir}</div>`:''}
-        <div class="meta">CHECK-IN/OUT: ${fechas}</div>${contacto?`<div class="meta">${contacto}</div>`:''}`;
-      const textMatch = norm([nombre,dir,contacto,fechas].join(' '));
-      hotelBox.innerHTML = (!q || textMatch.includes(q)) ? block : '<h4>HOTEL</h4><div class="muted">SIN COINCIDENCIAS.</div>';
-    }
-  }catch(e){ console.error(e); hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>'; }
+   // HOTEL
+   try{
+     const h = await loadHotelInfo(g);
+     if(!h){
+       hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>';
+     }else{
+       const nombre    = h.hotel?.nombre || h.hotelNombre || 'HOTEL';
+       const fechas    = `${dmy(h.checkIn||'')} — ${dmy(h.checkOut||'')}`;
+       const dir       = h.hotel?.direccion || '';
+       const contacto  = [h.hotel?.contactoNombre, h.hotel?.contactoTelefono, h.hotel?.contactoCorreo]
+                           .filter(Boolean).join(' · ');
+       const statusTxt = h.status ? String(h.status).toUpperCase() : null;
+   
+       // Distribución de habitaciones
+       const hab = h.habitaciones || {};
+       const habLine = ['singles','dobles','triples','cuadruples']
+         .map(k => (Number(hab[k]||0)>0 ? `${k.toUpperCase()}: ${hab[k]}` : null))
+         .filter(Boolean).join(' · ');
+       const noches = h.noches ?? (daysInclusive(h.checkIn,h.checkOut) || '');
+   
+       // Desglose de pasajeros
+       const est = h.estudiantes || {}, ad = h.adultos || {};
+       const estTot = h.estudiantesTotal ?? (['F','M','O'].reduce((s,k)=> s+Number(est[k]||0),0));
+       const adTot  = h.adultosTotal      ?? (['F','M','O'].reduce((s,k)=> s+Number(ad[k]||0),0));
+   
+       const paxLines = [];
+       if (estTot){
+         paxLines.push(`ESTUDIANTES: F ${est.F||0} · M ${est.M||0} · O ${est.O||0} (TOTAL ${estTot})`);
+       }
+       if (adTot){
+         paxLines.push(`ADULTOS: F ${ad.F||0} · M ${ad.M||0} · O ${ad.O||0} (TOTAL ${adTot})`);
+       }
+   
+       const extras = [];
+       if (h.coordinadores!=null) extras.push(`COORDINADORES: ${h.coordinadores}`);
+       if (h.conductores!=null)   extras.push(`CONDUCTORES: ${h.conductores}`);
+       if (h.cantidadgrupo!=null) extras.push(`GRUPO: ${h.cantidadgrupo}`);
+   
+       const parts = [
+         `<h4>${nombre}</h4>`,
+         statusTxt ? `<div class="meta">ESTADO: <strong>${statusTxt}</strong></div>` : '',
+         dir       ? `<div class="prov">${dir}</div>` : '',
+         `<div class="meta">CHECK-IN/OUT: ${fechas}${noches?` · NOCHES: ${noches}`:''}</div>`,
+         habLine   ? `<div class="meta">HABITACIONES: ${habLine}</div>` : '',
+         paxLines.length ? `<div class="meta">${paxLines.join(' · ')}</div>` : '',
+         extras.length   ? `<div class="meta">${extras.join(' · ')}</div>` : '',
+         contacto ? `<div class="meta">${contacto}</div>` : ''
+       ].filter(Boolean);
+   
+       const textMatch = norm(parts.join(' '));
+       hotelBox.innerHTML = (!q || textMatch.includes(q))
+         ? parts.join('')
+         : '<h4>HOTEL</h4><div class="muted">SIN COINCIDENCIAS.</div>';
+     }
+   }catch(e){
+     console.error(e);
+     hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>';
+   }
 
   // VUELOS
   try{
@@ -403,11 +446,12 @@ async function ensureHotelesIndex(){
   return state.cache.hoteles;
 }
 
+/* ====== Hotel: lee asignación y cruza con "hoteles" (id → nombre/dirección/contacto) ====== */
 async function loadHotelInfo(g){
   const key = g.numeroNegocio;
   if (state.cache.hotel.has(key)) return state.cache.hotel.get(key);
 
-  // 1) buscar asignaciones para el grupo
+  // 1) posibles asignaciones para el grupo
   let cand = [];
   try{
     const qs = await getDocs(query(collection(db,'hotelAssignments'), where('grupoId','==',String(key))));
@@ -418,10 +462,7 @@ async function loadHotelInfo(g){
     qs2.forEach(d=> cand.push({ id:d.id, ...(d.data()||{}) }));
   }catch(_){}
 
-  if (!cand.length){
-    state.cache.hotel.set(key,null);
-    return null;
-  }
+  if (!cand.length){ state.cache.hotel.set(key,null); return null; }
 
   // 2) elegir la asignación más cercana al rango del viaje
   let elegido=null, score=1e15;
@@ -437,36 +478,41 @@ async function loadHotelInfo(g){
   });
 
   // 3) cruzar con "hoteles"
-  const { byId, bySlug } = await ensureHotelesIndex();
   let hotelDoc = null;
 
-  // 3.a) por ID directo si viene en la asignación
-  if (elegido?.hotelId && byId.has(String(elegido.hotelId))){
-    hotelDoc = byId.get(String(elegido.hotelId));
-  } else {
-    // 3.b) por nombre normalizado (nombre / hotelNombre en la asignación)
-    const s = norm(elegido?.nombre || elegido?.hotelNombre || '');
-    if (s && bySlug.has(s)){
-      hotelDoc = bySlug.get(s);
-    } else if (s){
-      // 3.c) “fuzzy”: incluye/incluido + desempate por destino del grupo
-      const dest = norm(g.destino || '');
-      const candidatos = [];
-      for (const [slugName, doc] of bySlug){
-        if (slugName.includes(s) || s.includes(slugName)) candidatos.push(doc);
-      }
-      if (candidatos.length === 1){
-        hotelDoc = candidatos[0];
-      } else if (candidatos.length > 1){
-        hotelDoc = candidatos.find(d => norm(d.destino||d.ciudad||'') === dest) || candidatos[0];
+  // 3.a) primero, por ID directo (lo más confiable)
+  if (elegido?.hotelId){
+    try{
+      const hd = await getDoc(doc(db,'hoteles', String(elegido.hotelId)));
+      if (hd.exists()) hotelDoc = { id:hd.id, ...hd.data() };
+    }catch(_){}
+  }
+
+  // 3.b) si no hubo suerte con el ID, usar índice y “fuzzy” por nombre
+  if (!hotelDoc){
+    const { byId, bySlug } = await ensureHotelesIndex();
+    if (elegido?.hotelId && byId.has(String(elegido.hotelId))){
+      hotelDoc = byId.get(String(elegido.hotelId));
+    } else {
+      const s = norm(elegido?.nombre || elegido?.hotelNombre || '');
+      if (s && bySlug.has(s)){
+        hotelDoc = bySlug.get(s);
+      } else if (s){
+        const dest = norm(g.destino || '');
+        const candidatos = [];
+        for (const [slugName, docu] of bySlug){
+          if (slugName.includes(s) || s.includes(slugName)) candidatos.push(docu);
+        }
+        hotelDoc = candidatos.length === 1
+          ? candidatos[0]
+          : (candidatos.find(d => norm(d.destino||d.ciudad||'') === dest) || candidatos[0] || null);
       }
     }
   }
 
-  // 4) salida unificada para el render
   const out = {
     ...elegido,
-    hotel: hotelDoc, // aquí vienen direccion/ciudad/contacto si existen en 'hoteles'
+    hotel: hotelDoc,  // aquí vienen nombre/dirección/contacto desde 'hoteles'
     hotelNombre: elegido?.nombre || elegido?.hotelNombre || hotelDoc?.nombre || ''
   };
 
