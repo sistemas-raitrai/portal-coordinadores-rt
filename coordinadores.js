@@ -983,7 +983,7 @@ async function renderGlobalAlerts(){
       const autor=a.createdBy?.email||'';
       const gi=a.groupInfo||null;
       li.innerHTML=`
-        <div class="alert-title">${scope==='ops'?'SÓLO OPERACIONES':'NOTIFICACIONES'}</div>
+        <div class="alert-title">${scope==='ops'?'STAFF OPERACIONES':'PARA MÍ'}</div>
         <div class="meta">FECHA: ${fecha} · AUTOR: ${autor}</div>
         ${gi?`<div class="meta">GRUPO: ${gi.nombre||''} (${gi.code||''}) · DESTINO: ${gi.destino||''} · PROGRAMA: ${gi.programa||''}</div>
              <div class="meta">FECHA ACTIVIDAD: ${dmy(gi.fechaActividad||'')} · ACTIVIDAD: ${gi.actividad||''}</div>`:''}
@@ -1024,7 +1024,7 @@ async function renderGlobalAlerts(){
 
   // Tabs de ámbito: PARA MÍ / OPERACIONES
   const scopeTabs=document.createElement('div'); scopeTabs.className='tabs';
-  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.textContent='PARA MÍ';
+  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.textContent='NOTIFICACIONES';
   scopeTabs.appendChild(tbMi);
   let tbOps=null;
   if(state.isStaff){ tbOps=document.createElement('div'); tbOps.className='tab'; tbOps.textContent='OPERACIONES'; scopeTabs.appendChild(tbOps); }
