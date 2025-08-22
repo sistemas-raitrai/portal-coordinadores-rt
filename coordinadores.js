@@ -952,14 +952,22 @@ async function openCreateAlertModal(){
 }
 
 /** Panel global de alertas (bajo selector) */
+/** Panel global de alertas (bajo selector) */
 async function renderGlobalAlerts(){
   const box = ensurePanel('alertsPanel');
-  const all=[]; try{
+
+  // Cargar todas
+  const all=[];
+  try{
     const qs=await getDocs(collection(db,'alertas'));
     qs.forEach(d=>all.push({id:d.id, ...d.data()}));
-  }catch(e){ console.error(e); box.innerHTML='<div class="muted">NO SE PUDIERON CARGAR LAS ALERTAS.</div>'; return; }
+  }catch(e){
+    console.error(e);
+    box.innerHTML='<div class="muted">NO SE PUDIERON CARGAR LAS ALERTAS.</div>';
+    return;
+  }
 
-  // target de "PARA MÍ"
+  // Resolver target “para mí”
   const myCoordId = state.isStaff
     ? (state.viewingCoordId || (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self'))
     : (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self');
@@ -967,6 +975,7 @@ async function renderGlobalAlerts(){
   const paraMi = all.filter(a => (a.audience!=='staff') && Array.isArray(a.forCoordIds) && a.forCoordIds.includes(myCoordId));
   const ops    = state.isStaff ? all.filter(a => a.audience==='staff') : [];
 
+  // Sub-UI: lista con tabs NO LEÍDAS / LEÍDAS
   const renderList = (arr, scope)=>{
     const readerKey = (scope==='ops') ? `staff:${(state.user.email||'').toLowerCase()}` : `coord:${myCoordId}`;
     const isRead = (a)=>{
@@ -983,7 +992,7 @@ async function renderGlobalAlerts(){
       const autor=a.createdBy?.email||'';
       const gi=a.groupInfo||null;
       li.innerHTML=`
-        <div class="alert-title">${scope==='ops'?'STAFF OPERACIONES':'PARA MÍ'}</div>
+        <div class="alert-title">${scope==='ops'?'OPERACIONES':'PARA MÍ'}</div>
         <div class="meta">FECHA: ${fecha} · AUTOR: ${autor}</div>
         ${gi?`<div class="meta">GRUPO: ${gi.nombre||''} (${gi.code||''}) · DESTINO: ${gi.destino||''} · PROGRAMA: ${gi.programa||''}</div>
              <div class="meta">FECHA ACTIVIDAD: ${dmy(gi.fechaActividad||'')} · ACTIVIDAD: ${gi.actividad||''}</div>`:''}
@@ -1019,25 +1028,36 @@ async function renderGlobalAlerts(){
     return wrap;
   };
 
+  // Cabecera
   const head=document.createElement('div'); head.innerHTML='<h4 style="margin:.1rem 0 .6rem">ALERTAS</h4>';
   box.innerHTML=''; box.appendChild(head);
 
-  // Tabs de ámbito: PARA MÍ / OPERACIONES
-  const scopeTabs=document.createElement('div'); scopeTabs.className='tabs';
-  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.textContent='PARA MÍ';
-  scopeTabs.appendChild(tbMi);
-  let tbOps=null;
-  if(state.isStaff){ tbOps=document.createElement('div'); tbOps.className='tab'; tbOps.textContent='OPERACIONES'; scopeTabs.appendChild(tbOps); }
-  box.appendChild(scopeTabs);
-
+  // Área de contenido
   const area=document.createElement('div'); box.appendChild(area);
   const uiMi = renderList(paraMi,'mi');
   const uiOp = state.isStaff ? renderList(ops,'ops') : null;
 
-  const showScope=(s)=>{ area.innerHTML=''; if(s==='mi'){ tbMi.classList.add('active'); if(tbOps) tbOps.classList.remove('active'); area.appendChild(uiMi); }
-                        else{ if(tbOps) tbOps.classList.add('active'); tbMi.classList.remove('active'); area.appendChild(uiOp); } };
+  if (!state.isStaff){
+    // NO staff → mostramos DIRECTO la lista (sin la pastilla “PARA MÍ”)
+    area.innerHTML='';
+    area.appendChild(uiMi);
+    return;
+  }
+
+  // Staff → mantener tabs de ámbito: PARA MÍ / OPERACIONES
+  const scopeTabs=document.createElement('div'); scopeTabs.className='tabs';
+  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.textContent='PARA MÍ';
+  const tbOps=document.createElement('div'); tbOps.className='tab';         tbOps.textContent='OPERACIONES';
+  scopeTabs.appendChild(tbMi); scopeTabs.appendChild(tbOps);
+  box.insertBefore(scopeTabs, area);
+
+  const showScope=(s)=>{ 
+    area.innerHTML=''; 
+    if(s==='mi'){ tbMi.classList.add('active'); tbOps.classList.remove('active'); area.appendChild(uiMi); }
+    else       { tbOps.classList.add('active'); tbMi.classList.remove('active'); area.appendChild(uiOp); }
+  };
   tbMi.onclick = ()=> showScope('mi');
-  if(tbOps) tbOps.onclick = ()=> showScope('ops');
+  tbOps.onclick = ()=> showScope('ops');
   showScope('mi');
 }
 
