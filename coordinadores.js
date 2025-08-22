@@ -983,7 +983,7 @@ async function renderGlobalAlerts(){
       const autor=a.createdBy?.email||'';
       const gi=a.groupInfo||null;
       li.innerHTML=`
-        <div class="alert-title">${scope==='ops'?'OPERACIONES':'PARA MÍ'}</div>
+        <div class="alert-title">${scope==='ops'?'SÓLO OPERACIONES':'NOTIFICACIONES'}</div>
         <div class="meta">FECHA: ${fecha} · AUTOR: ${autor}</div>
         ${gi?`<div class="meta">GRUPO: ${gi.nombre||''} (${gi.code||''}) · DESTINO: ${gi.destino||''} · PROGRAMA: ${gi.programa||''}</div>
              <div class="meta">FECHA ACTIVIDAD: ${dmy(gi.fechaActividad||'')} · ACTIVIDAD: ${gi.actividad||''}</div>`:''}
