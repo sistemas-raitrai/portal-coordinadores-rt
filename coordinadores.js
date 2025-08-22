@@ -468,22 +468,25 @@ async function ensureHotelesIndex(){
 
   const byId  = new Map();
   const bySlug= new Map();
+  const all   = [];
 
   const snap = await getDocs(collection(db,'hoteles'));
   snap.forEach(d=>{
     const x = d.data() || {};
     const doc = { id:d.id, ...x };
-    // normalizamos el nombre (o slug si existe en el doc)
     const s = norm(x.slug || x.nombre || d.id);
     byId.set(String(d.id), doc);
     if (s) bySlug.set(s, doc);
+    all.push(doc);
   });
 
-  state.cache.hoteles = { loaded:true, byId, bySlug };
+  state.cache.hoteles = { loaded:true, byId, bySlug, all };
+  D_HOTEL('Índice hoteles cargado', { count: all.length });
   return state.cache.hoteles;
 }
 
 /* ====== Hotel: lee asignación y cruza con "hoteles" (id → nombre/dirección/contacto) ====== */
+/* ====== Hotel: lee asignación y cruza con "hoteles" ====== */
 async function loadHotelInfo(g){
   const key = g.numeroNegocio;
   if (state.cache.hotel.has(key)) {
@@ -493,30 +496,24 @@ async function loadHotelInfo(g){
 
   D_HOTEL('INI loadHotelInfo', { grupoDocId: g.id, numeroNegocio: key, destino: g.destino });
 
-  // 1) posibles asignaciones para el grupo
+  // 1) Candidatas de hotelAssignments
   let cand = [];
   try{
     const qs = await getDocs(query(collection(db,'hotelAssignments'), where('grupoId','==',String(key))));
     qs.forEach(d=> cand.push({ id:d.id, ...(d.data()||{}) }));
-  }catch(e){
-    D_HOTEL('ERROR query hotelAssignments by grupoId', e?.code || e, e?.message || '');
-  }
+  }catch(e){ D_HOTEL('ERROR query hotelAssignments by grupoId', e?.code||e, e?.message||''); }
   try{
     const qs2 = await getDocs(query(collection(db,'hotelAssignments'), where('grupoDocId','==',String(g.id))));
     qs2.forEach(d=> cand.push({ id:d.id, ...(d.data()||{}) }));
-  }catch(e){
-    D_HOTEL('ERROR query hotelAssignments by grupoDocId', e?.code || e, e?.message || '');
-  }
-
-  D_HOTEL('asignaciones encontradas', cand);
+  }catch(e){ D_HOTEL('ERROR query hotelAssignments by grupoDocId', e?.code||e, e?.message||''); }
 
   if (!cand.length){
     state.cache.hotel.set(key,null);
-    D_HOTEL('SIN ASIGNACIÓN → return null', { numeroNegocio:key });
+    D_HOTEL('SIN ASIGNACIÓN → return null');
     return null;
   }
 
-  // 2) elegir la asignación más cercana al rango del viaje
+  // 2) Elegir la asignación más cercana al rango del viaje
   let elegido=null, score=1e15;
   const rangoIni = toISO(g.fechaInicio), rangoFin = toISO(g.fechaFin);
   cand.forEach(x=>{
@@ -528,57 +525,84 @@ async function loadHotelInfo(g){
     }
     if (s<score){ score=s; elegido=x; }
   });
-
   D_HOTEL('asignación elegida', elegido);
 
-  // 3) cruzar con "hoteles"
+  // 3) Resolver doc del hotel
+  const { byId, bySlug, all } = await ensureHotelesIndex();
   let hotelDoc = null;
 
-  // 3.a) primero, por ID directo (lo más confiable)
-  if (elegido?.hotelId){
+  // 3.a) Variantes de ID directo
+  const tryIds = [];
+  if (elegido?.hotelId)     tryIds.push(String(elegido.hotelId));
+  if (elegido?.hotelDocId)  tryIds.push(String(elegido.hotelDocId));
+  if (elegido?.hotel?.id)   tryIds.push(String(elegido.hotel.id));
+  // Posible DocumentReference
+  if (elegido?.hotelRef && typeof elegido.hotelRef === 'object' && 'id' in elegido.hotelRef){
+    tryIds.push(String(elegido.hotelRef.id));
+  }
+  // A veces guardan "hoteles/<id>"
+  if (elegido?.hotelPath && typeof elegido.hotelPath === 'string'){
+    const m = elegido.hotelPath.match(/hoteles\/([^/]+)/i);
+    if (m) tryIds.push(m[1]);
+  }
+
+  for (const id of tryIds){
+    if (byId.has(id)){ hotelDoc = byId.get(id); D_HOTEL('match por índice/byId', id); break; }
     try{
-      const hd = await getDoc(doc(db,'hoteles', String(elegido.hotelId)));
-      D_HOTEL('getDoc(hoteles, hotelId) exists?', hd.exists(), 'hotelId=', String(elegido.hotelId));
-      if (hd.exists()) hotelDoc = { id:hd.id, ...hd.data() };
-    }catch(e){
-      D_HOTEL('ERROR getDoc hoteles por ID', e?.code || e, e?.message || '');
+      const hd = await getDoc(doc(db,'hoteles', id));
+      D_HOTEL('getDoc(hoteles, id) exists?', hd.exists(), 'id=', id);
+      if (hd.exists()){ hotelDoc = { id:hd.id, ...hd.data() }; break; }
+    }catch(e){ D_HOTEL('ERROR getDoc hoteles por ID', id, e?.code||e, e?.message||''); }
+  }
+
+  // 3.b) Fuzzy por nombre
+  if (!hotelDoc){
+    const s = norm(elegido?.nombre || elegido?.hotelNombre || '');
+    const dest = norm(g.destino || '');
+    D_HOTEL('buscando por nombre/slug', { slugBuscado:s, destino:dest });
+    if (s && bySlug.has(s)){
+      hotelDoc = bySlug.get(s);
+      D_HOTEL('match exacto bySlug', hotelDoc);
+    } else if (s){
+      const candidatos = [];
+      for (const [slugName, docu] of bySlug){
+        if (slugName.includes(s) || s.includes(slugName)) candidatos.push(docu);
+      }
+      hotelDoc = candidatos.length === 1
+        ? candidatos[0]
+        : (candidatos.find(d => norm(d.destino||d.ciudad||'') === dest) || candidatos[0] || null);
+      D_HOTEL('match fuzzy', { candidatos, elegido: hotelDoc });
     }
   }
 
-  // 3.b) si no hubo suerte con el ID, usar índice y “fuzzy” por nombre
+  // 3.c) Heurística final: por destino (+ opcionalmente solapamiento de fechas)
   if (!hotelDoc){
-    try{
-      const { byId, bySlug } = await ensureHotelesIndex();
-      if (elegido?.hotelId && byId.has(String(elegido.hotelId))){
-        hotelDoc = byId.get(String(elegido.hotelId));
-        D_HOTEL('match por índice/byId', hotelDoc);
-      } else {
-        const s = norm(elegido?.nombre || elegido?.hotelNombre || '');
-        const dest = norm(g.destino || '');
-        D_HOTEL('buscando por nombre/slug', { slugBuscado:s, destino:dest });
+    const dest = norm(g.destino || '');
+    const ci = toISO(elegido?.checkIn), co = toISO(elegido?.checkOut);
 
-        if (s && bySlug.has(s)){
-          hotelDoc = bySlug.get(s);
-          D_HOTEL('match exacto bySlug', hotelDoc);
-        } else if (s){
-          const candidatos = [];
-          for (const [slugName, docu] of bySlug){
-            if (slugName.includes(s) || s.includes(slugName)) candidatos.push(docu);
-          }
-          hotelDoc = candidatos.length === 1
-            ? candidatos[0]
-            : (candidatos.find(d => norm(d.destino||d.ciudad||'') === dest) || candidatos[0] || null);
-          D_HOTEL('match fuzzy', { candidatos, elegido: hotelDoc });
-        }
-      }
-    }catch(e){
-      D_HOTEL('ERROR ensureHotelesIndex/fuzzy', e?.code || e, e?.message || '');
+    const overlapDays = (A,B,C,D)=>{
+      if(!A||!B||!C||!D) return 0;
+      const s = Math.max(new Date(A).getTime(), new Date(C).getTime());
+      const e = Math.min(new Date(B).getTime(), new Date(D).getTime());
+      return (e>=s) ? Math.round((e - s)/86400000) + 1 : 0; // inclusivo
+    };
+
+    // Primero por destino que “parece” el mismo
+    let candidatos = all.filter(h => norm(h.destino||h.ciudad||'') === dest);
+    // Si hay fechas, prioriza mayor solapamiento
+    if (ci && co){
+      candidatos = candidatos
+        .map(h => ({ h, ov: overlapDays(ci, co, toISO(h.fechaInicio), toISO(h.fechaFin)) }))
+        .sort((a,b)=> b.ov - a.ov)
+        .map(x=>x.h);
     }
+    hotelDoc = candidatos[0] || null;
+    D_HOTEL('heurística destino/fechas', { elegido: hotelDoc, total: candidatos.length, ci, co });
   }
 
   const out = {
     ...elegido,
-    hotel: hotelDoc,  // aquí vienen nombre/dirección/contacto desde 'hoteles'
+    hotel: hotelDoc,
     hotelNombre: elegido?.nombre || elegido?.hotelNombre || hotelDoc?.nombre || ''
   };
 
