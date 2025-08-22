@@ -1024,7 +1024,7 @@ async function renderGlobalAlerts(){
 
   // Tabs de ámbito: PARA MÍ / OPERACIONES
   const scopeTabs=document.createElement('div'); scopeTabs.className='tabs';
-  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.textContent='NOTIFICACIONES';
+  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.textContent='PARA MÍ';
   scopeTabs.appendChild(tbMi);
   let tbOps=null;
   if(state.isStaff){ tbOps=document.createElement('div'); tbOps.className='tab'; tbOps.textContent='OPERACIONES'; scopeTabs.appendChild(tbOps); }
