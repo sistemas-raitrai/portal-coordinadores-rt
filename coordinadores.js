@@ -342,64 +342,74 @@ async function renderResumen(g, pane){
 
   pane.appendChild(wrap);
 
-   // HOTEL
-   try{
-     const h = await loadHotelInfo(g);
-     if(!h){
-       hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>';
-     }else{
-       const nombre    = h.hotel?.nombre || h.hotelNombre || 'HOTEL';
-       const fechas    = `${dmy(h.checkIn||'')} — ${dmy(h.checkOut||'')}`;
-       const dir       = h.hotel?.direccion || '';
-       const contacto  = [h.hotel?.contactoNombre, h.hotel?.contactoTelefono, h.hotel?.contactoCorreo]
-                           .filter(Boolean).join(' · ');
-       const statusTxt = h.status ? String(h.status).toUpperCase() : null;
-   
-       // Distribución de habitaciones
-       const hab = h.habitaciones || {};
-       const habLine = ['singles','dobles','triples','cuadruples']
-         .map(k => (Number(hab[k]||0)>0 ? `${k.toUpperCase()}: ${hab[k]}` : null))
-         .filter(Boolean).join(' · ');
-       const noches = h.noches ?? (daysInclusive(h.checkIn,h.checkOut) || '');
-   
-       // Desglose de pasajeros
-       const est = h.estudiantes || {}, ad = h.adultos || {};
-       const estTot = h.estudiantesTotal ?? (['F','M','O'].reduce((s,k)=> s+Number(est[k]||0),0));
-       const adTot  = h.adultosTotal      ?? (['F','M','O'].reduce((s,k)=> s+Number(ad[k]||0),0));
-   
-       const paxLines = [];
-       if (estTot){
-         paxLines.push(`ESTUDIANTES: F ${est.F||0} · M ${est.M||0} · O ${est.O||0} (TOTAL ${estTot})`);
-       }
-       if (adTot){
-         paxLines.push(`ADULTOS: F ${ad.F||0} · M ${ad.M||0} · O ${ad.O||0} (TOTAL ${adTot})`);
-       }
-   
-       const extras = [];
-       if (h.coordinadores!=null) extras.push(`COORDINADORES: ${h.coordinadores}`);
-       if (h.conductores!=null)   extras.push(`CONDUCTORES: ${h.conductores}`);
-       if (h.cantidadgrupo!=null) extras.push(`GRUPO: ${h.cantidadgrupo}`);
-   
-       const parts = [
-         `<h4>${nombre}</h4>`,
-         statusTxt ? `<div class="meta">ESTADO: <strong>${statusTxt}</strong></div>` : '',
-         dir       ? `<div class="prov">${dir}</div>` : '',
-         `<div class="meta">CHECK-IN/OUT: ${fechas}${noches?` · NOCHES: ${noches}`:''}</div>`,
-         habLine   ? `<div class="meta">HABITACIONES: ${habLine}</div>` : '',
-         paxLines.length ? `<div class="meta">${paxLines.join(' · ')}</div>` : '',
-         extras.length   ? `<div class="meta">${extras.join(' · ')}</div>` : '',
-         contacto ? `<div class="meta">${contacto}</div>` : ''
-       ].filter(Boolean);
-   
-       const textMatch = norm(parts.join(' '));
-       hotelBox.innerHTML = (!q || textMatch.includes(q))
-         ? parts.join('')
-         : '<h4>HOTEL</h4><div class="muted">SIN COINCIDENCIAS.</div>';
-     }
-   }catch(e){
-     console.error(e);
-     hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>';
-   }
+     // HOTEL
+  try{
+    const h = await loadHotelInfo(g);
+    if(!h){
+      hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>';
+    }else{
+      // datos combinados: asignación + doc de "hoteles"
+      const H   = h.hotel || {};
+      const nombre      = String(h.hotelNombre || H.nombre || '').toUpperCase();
+      const direccion   = H.direccion || h.direccion || '';
+      const cNombre     = H.contactoNombre || '';
+      const cTelefono   = H.contactoTelefono || '';
+      const cCorreo     = H.contactoCorreo || '';
+      const status      = (h.status || '').toString().toUpperCase();
+      const ciISO       = toISO(h.checkIn);
+      const coISO       = toISO(h.checkOut);
+      const noches      = (h.noches != null) ? Number(h.noches) :
+                          (ciISO && coISO ? Math.max(0, daysInclusive(ciISO,coISO)-1) : '');
+
+      // distribuciones
+      const est = h.estudiantes || {F:0,M:0,O:0};
+      const estTot = Number(h.estudiantesTotal ?? (est.F+est.M+est.O));
+      const adu = h.adultos     || {F:0,M:0,O:0};
+      const aduTot = Number(h.adultosTotal ?? (adu.F+adu.M+adu.O));
+
+      // habitaciones (si existen)
+      const hab = h.habitaciones || {};
+      const habLine = (hab.singles!=null || hab.dobles!=null || hab.triples!=null || hab.cuadruples!=null)
+        ? `HABITACIONES: ${[
+            (hab.singles!=null?`Singles: ${hab.singles}`:''),
+            (hab.dobles!=null?`Dobles: ${hab.dobles}`:''),
+            (hab.triples!=null?`Triples: ${hab.triples}`:''),
+            (hab.cuadruples!=null?`Cuádruples: ${hab.cuadruples}`:'')
+          ].filter(Boolean).join(' · ')}`
+        : '';
+
+      const contactoLine = [cNombre, cTelefono].filter(Boolean).join(' · ') + (cCorreo?` · ${cCorreo}`:'');
+
+      // texto para filtro local
+      const txtMatch = norm([
+        nombre, direccion, contactoLine,
+        status, dmy(ciISO), dmy(coISO),
+        `estudiantes f ${est.F} m ${est.M} o ${est.O} total ${estTot}`,
+        `adultos f ${adu.F} m ${adu.M} o ${adu.O} total ${aduTot}`,
+        habLine
+      ].join(' '));
+
+      if ( (state.groupQ||'').trim() && !txtMatch.includes( norm(state.groupQ) ) ){
+        hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN COINCIDENCIAS.</div>';
+      } else {
+        hotelBox.innerHTML = `
+          <h4>HOTEL</h4>
+          ${nombre ? `<div><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
+          ${direccion ? `<div><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
+          ${contactoLine ? `<div><strong>CONTACTO:</strong> ${contactoLine}</div>` : ''}
+          ${status ? `<div class="meta">ESTADO: <strong>${status}</strong></div>` : ''}
+          <div class="meta">CHECK-IN/OUT: ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?` · NOCHES: ${noches}`:'')}</div>
+          <div class="meta">ESTUDIANTES: F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · ADULTOS: F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
+          ${habLine ? `<div class="meta">${habLine}</div>` : ''}
+          ${h.coordinadores!=null ? `<div class="meta">COORDINADORES: ${h.coordinadores}</div>` : ''}
+          ${h.conductores!=null ? `<div class="meta">CONDUCTORES: ${h.conductores}</div>` : ''}
+        `;
+      }
+    }
+  }catch(e){
+    console.error(e);
+    hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>';
+  }
 
   // VUELOS
   try{
