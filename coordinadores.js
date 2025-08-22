@@ -40,7 +40,7 @@ function emailsOf(g){ const out=new Set(), push=e=>{if(e) out.add(String(e).toLo
 function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); };
   push(g?.coordinadorId); arrify(g?.coordinadoresIds).forEach(push);
   // fallback via email → id conocido
-  const mapEmailToId = new Map(.coordinadores.map(c=>[String(c.email||'').toLowerCase(), c.id]));
+  const mapEmailToId = new Map(state.coordinadores.map(c => [String(c.email || '').toLowerCase(), c.id]));
   emailsOf(g).forEach(e=>{ if(mapEmailToId.has(e)) out.add(mapEmailToId.get(e)); });
   return [...out];
 }
