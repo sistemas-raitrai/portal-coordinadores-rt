@@ -979,7 +979,7 @@ async function renderGlobalAlerts(){
       const gi=a.groupInfo||null;
 
       // TEXTO CABECERA SEGÚN ÁMBITO
-      const cab = (scope==='ops') ? 'PARA OPERACIONES' : 'PARA COORDINADOR(A)';
+      const cab = (scope==='ops') ? 'NUEVO COMENTARIO' : 'NOTIFICACIÓN)';
       // PARA COORDINADOR: TIPO PERSONAL/GLOBAL
       const tipoCoord = (scope!=='ops')
         ? (Array.isArray(a.forCoordIds) && a.forCoordIds.length>1 ? 'GLOBAL' : 'PERSONAL')
@@ -1044,8 +1044,8 @@ async function renderGlobalAlerts(){
 
   // STAFF: TABS DE ÁMBITO + BADGES
   const scopeTabs=document.createElement('div'); scopeTabs.className='tabs';
-  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.innerHTML=`PARA MÍ ${mi.unreadCount?`<span class="badge">${mi.unreadCount}</span>`:''}`;
-  const tbOps=document.createElement('div'); tbOps.className='tab';         tbOps.innerHTML=`OPERACIONES ${op.unreadCount?`<span class="badge">${op.unreadCount}</span>`:''}`;
+  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.innerHTML=`PARA COORDINADOR(A) ${mi.unreadCount?`<span class="badge">${mi.unreadCount}</span>`:''}`;
+  const tbOps=document.createElement('div'); tbOps.className='tab';         tbOps.innerHTML=`PARA OPERACIONES ${op.unreadCount?`<span class="badge">${op.unreadCount}</span>`:''}`;
   scopeTabs.appendChild(tbMi); scopeTabs.appendChild(tbOps);
   box.insertBefore(scopeTabs, area);
 
