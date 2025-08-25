@@ -255,8 +255,7 @@ function renderStats(list){
   p.innerHTML = `
     <div class="stats-wrap">
       <div class="meta-line meta">
-        <span class="item prefix"><strong>MIS VIAJES:</strong></span>
-        <span class="item nowrap">CANTIDAD: <strong>${n}</strong></span>
+        <span class="item nowrap">N° VIAJES: <strong>${n}</strong></span>
         <span class="item nowrap">DÍAS EN VIAJE: <strong>${totalDias}</strong></span>
         <span class="item nowrap">TOTAL PAX: <strong>${paxTot}</strong></span>
         <span class="item">RANGO DE FECHAS: <strong>${minIni?dmy(minIni):'—'} — ${maxFin?dmy(maxFin):'—'}</strong></span>
