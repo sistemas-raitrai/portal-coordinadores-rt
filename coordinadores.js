@@ -256,11 +256,11 @@ function renderStats(list){
     <div class="stats-wrap">
       <div class="meta-line">
         <span class="item"><h4 style="margin:.1rem 0 .0rem"><strong>MIS VIAJES:</strong></span>
-        <span class="item"><strong>CANTIDAD:</strong> ${n}</span>
-        <span class="item"><strong>DÍAS EN VIAJE:</strong> ${totalDias}</span>
-        <span class="item"><strong>TOTAL PAX:</strong> ${paxTot}</span>
-        <span class="item"><strong>RANGO DE FECHAS:</strong> ${minIni?dmy(minIni):'—'} — ${maxFin?dmy(maxFin):'—'}</span>
-        <span class="item"><strong>DESTINOS:</strong> ${destinos.length?destinos.join(' · '):'—'}</span>
+        <span class="item">CANTIDAD: ${n}</span>
+        <span class="item">DÍAS EN VIAJE: ${totalDias}</span>
+        <span class="item">TOTAL PAX: ${paxTot}</span>
+        <span class="item">RANGO DE FECHAS: ${minIni?dmy(minIni):'—'} — ${maxFin?dmy(maxFin):'—'}</span>
+        <span class="item">DESTINOS: ${destinos.length?destinos.join(' · '):'—'}</span>
       </div>
     </div>`;
 }
