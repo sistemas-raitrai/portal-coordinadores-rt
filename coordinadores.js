@@ -463,8 +463,9 @@ async function renderResumen(g, pane){
           ${direccion ? `<div class="meta"><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
           ${contactoLine ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoLine}</div>` : ''}
           ${status ? `<div class="meta"><strong>ESTADO:</strong> ${status}</div>` : ''}
-          <div class="meta"><strong>CHECK-IN/OUT:</strong> ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?` · NOCHES: ${noches}`:'')}</div>
-          <div class="meta"><strong>ESTUDIANTES:</strong> F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · ADULTOS: F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
+          <div class="meta"><strong>CHECK-IN/OUT:</strong> ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?`</div>
+          <div class="meta"><strong>NOCHES:</strong> ${noches}`:'')}</div>
+          <div class="meta"><strong>ESTUDIANTES:</strong> F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · <strong>ADULTOS:</strong> F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
           ${habLine ? `<div class="meta">${habLine}</div>` : ''}
           ${h.coordinadores!=null ? `<div class="meta"><strong>COORDINADORES:</strong> ${(String(h.coordinadores)).toUpperCase()}</div>` : ''}
           ${h.conductores!=null ? `<div class="meta"><strong>CONDUCTORES:</strong> ${(String(h.conductores)).toUpperCase()}</div>` : ''}
