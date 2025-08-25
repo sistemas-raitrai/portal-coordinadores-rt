@@ -449,29 +449,46 @@ async function renderResumen(g, pane){
   // ===== VUELOS =====
   try{
     const vuelos = await loadVuelosInfo(g);
-    const flt = (!q)?vuelos : vuelos.filter(v=>{
+    const flt = (!q) ? vuelos : vuelos.filter(v=>{
       const s=[v.numero,v.proveedor,v.origen,v.destino,toISO(v.fechaIda),toISO(v.fechaVuelta)].join(' ');
       return norm(s).includes(q);
     });
-    if(!flt.length){ vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS.</div>'; }
-    else{
-      const table=document.createElement('table'); table.className='table';
-      table.innerHTML='<thead><tr><th>#</th><th>PROVEEDOR</th><th>RUTA</th><th>IDA</th><th>VUELTA</th></tr></thead><tbody></tbody>';
-      const tb=table.querySelector('tbody');
-      flt.forEach(v=>{
-        const tr=document.createElement('tr');
-        tr.innerHTML=`<td>${(v.numero||'').toString().toUpperCase()}</td><td>${(v.proveedor||'').toString().toUpperCase()}</td>
-          <td>${(v.origen||'').toString().toUpperCase()} — ${(v.destino||'').toString().toUpperCase()}</td>
-          <td>${dmy(toISO(v.fechaIda))||''}</td><td>${dmy(toISO(v.fechaVuelta))||''}</td>`;
-        tb.appendChild(tr);
+
+    if(!flt.length){
+      vuelosBox.innerHTML = '<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS.</div>';
+    }else{
+      vuelosBox.innerHTML = '<h4>TRANSPORTE / VUELOS</h4>';
+
+      flt.forEach((v, i) => {
+        const numero   = (v.numero || '').toString().toUpperCase();
+        const empresa  = (v.proveedor || '').toString().toUpperCase();
+        const ruta     = [v.origen, v.destino].map(x => (x||'').toString().toUpperCase()).filter(Boolean).join(' — ');
+        const ida      = dmy(toISO(v.fechaIda))  || '';
+        const vuelta   = dmy(toISO(v.fechaVuelta)) || '';
+
+        const block = document.createElement('div');
+        block.innerHTML = `
+          <div class="meta"><strong>N° VUELO:</strong> ${numero || '—'}</div>
+          <div class="meta"><strong>EMPRESA:</strong> ${empresa || '—'}</div>
+          <div class="meta"><strong>RUTA:</strong> ${ruta || '—'}</div>
+          <div class="meta"><strong>IDA:</strong> ${ida || '—'}</div>
+          <div class="meta"><strong>VUELTA:</strong> ${vuelta || '—'}</div>
+        `;
+        vuelosBox.appendChild(block);
+
+        // SEPARADOR ENTRE VUELOS (OPCIONAL)
+        if (i < flt.length - 1){
+          const hr = document.createElement('div');
+          hr.style.cssText = 'border-top:1px dashed var(--line);opacity:.55;margin:.5rem 0;';
+          vuelosBox.appendChild(hr);
+        }
       });
-      vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4>'; vuelosBox.appendChild(table);
     }
   }catch(e){
     console.error(e);
-    vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">ERROR AL CARGAR.</div>';
+    vuelosBox.innerHTML = '<h4>TRANSPORTE / VUELOS</h4><div class="muted">ERROR AL CARGAR.</div>';
   }
-}
+
 
 /* ====== ÍNDICE DE HOTELES ====== */
 async function ensureHotelesIndex(){
@@ -649,8 +666,8 @@ async function renderActs(grupo, fechaISO, cont){
       <h4>${(actName||'').toUpperCase()} ${estado?`· <span class="muted">${String(estado).toUpperCase()}</span>`:''}</h4>
       <div class="meta">${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')} · PLAN: <strong>${plan}</strong> PAX</div>
       <div class="rowflex" style="margin:.35rem 0">
-        <input type="number" min="0" inputmode="numeric" placeholder="ASISTENTES" value="${paxFinalInit}"/>
-        <textarea placeholder="NOTA (SE GUARDA EN BITÁCORA AL GUARDAR)"></textarea>
+        <input type="number" min="0" inputmode="numeric" placeholder="N° ASISTENCIA" value="${paxFinalInit}"/>
+        <textarea placeholder="COMENTARIOS"></textarea>
         <button class="btn ok btnSave">GUARDAR</button>
         ${tipo!=='NOAPLICA'?`<button class="btn sec btnVch">FINALIZAR…</button>`:''}
       </div>
