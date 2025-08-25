@@ -87,7 +87,8 @@ function ensurePanel(id, html=''){
 }
 function enforceOrder(){
   const wrap=document.querySelector('.wrap');
-  ['staffBar','alertsPanel','navPanel','statsPanel','gruposPanel'].forEach(id=>{
+   // ORDEN: STAFF → STATS → ALERTAS → NAVEGADOR → GRUPOS
+  ['staffBar','statsPanel','alertsPanel','navPanel','gruposPanel'].forEach(id=>{
     const n=document.getElementById(id); if(n) wrap.appendChild(n);
   });
 }
@@ -206,8 +207,8 @@ async function loadGruposForCoordinador(coord, user){
   state.filter={type:'all',value:null};
   state.groupQ='';
 
-  renderNavBar();
   renderStatsFiltered();
+  renderNavBar();
 
   const { g:qsG, f:qsF } = parseQS();
   let idx=0;
@@ -248,8 +249,9 @@ function renderStats(list){
 
   p.innerHTML = `
     <div style="display:grid;gap:.4rem">
-      <div class="meta">TOTAL VIAJES: <strong>${n}</strong> · TOTAL DÍAS: <strong>${totalDias}</strong> · TOTAL PAX: <strong>${paxTot}</strong></div>
-      <div class="meta">RANGO GLOBAL: ${minIniISO?dmy(minIniISO):'—'} — ${maxFinISO?dmy(maxFinISO):'—'}</div>
+      <div class="meta"><strong>VIAJES:</strong></div>
+      <div class="meta">CANTIDAD: <strong>${n}</strong> · DÍAS EN VIAJE: <strong>${totalDias}</strong> · TOTAL PAX: <strong>${paxTot}</strong></div>
+      <div class="meta">RANGO DE FECHAS: ${minIniISO?dmy(minIniISO):'—'} — ${maxFinISO?dmy(maxFinISO):'—'}</div>
       <div class="meta">DESTINOS: ${destinos.length? destinos.join(' · ') : '—'}</div>
     </div>`;
 }
@@ -979,7 +981,7 @@ async function renderGlobalAlerts(){
       const gi=a.groupInfo||null;
 
       // TEXTO CABECERA SEGÚN ÁMBITO
-      const cab = (scope==='ops') ? 'NUEVO COMENTARIO' : 'NOTIFICACIÓN)';
+      const cab = (scope==='ops') ? 'NUEVO COMENTARIO' : 'NOTIFICACIÓN';
       // PARA COORDINADOR: TIPO PERSONAL/GLOBAL
       const tipoCoord = (scope!=='ops')
         ? (Array.isArray(a.forCoordIds) && a.forCoordIds.length>1 ? 'GLOBAL' : 'PERSONAL')
