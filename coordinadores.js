@@ -87,21 +87,21 @@ function ensurePanel(id, html=''){
 /* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
   if (!user){ location.href='index.html'; return; }
-  state.user=user; state.isStaff=STAFF_EMAILS.has((user.email||'').toLowerCase());
+  state.user=user; state.is=_EMAILS.has((user.email||'').toLowerCase());
 
   const coords = await loadCoordinadores(); state.coordinadores = coords;
 
-  // STAFF: SELECTOR CON "TODOS"
-  if (state.isStaff){ await showStaffSelector(coords); }
+  // : SELECTOR CON "TODOS"
+  if (state.is){ await showSelector(coords); }
   else {
     const mine = findCoordinadorForUser(coords, user);
     state.viewingCoordId = mine.id || 'self';
     await loadGruposForCoordinador(mine, user);
   }
 
-  // BOTONES SOLO PARA STAFF (en NAV solo queda imprimir; crear alerta va en Alertas)
+  // BOTONES SOLO PARA  (en NAV solo queda imprimir; crear alerta va en Alertas)
   const btnPrint = document.getElementById('btnPrintVch');
-  if (btnPrint) btnPrint.style.display = state.isStaff ? '' : 'none';
+  if (btnPrint) btnPrint.style.display = state.is ? '' : 'none';
   const legacyNewAlert = document.getElementById('btnNewAlert');
   if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
@@ -132,9 +132,9 @@ function findCoordinadorForUser(coordinadores, user){
   return { id:'self', nombre: user.displayName || email, email, uid };
 }
 
-/* ====== SELECTOR STAFF (CON "TODOS") ====== */
-async function showStaffSelector(coordinadores){
-  const bar=ensurePanel('staffBar',
+/* ====== SELECTOR  (CON "TODOS") ====== */
+async function showSelector(coordinadores){
+  const bar=ensurePanel('Bar',
     '<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>'+
     '<select id="coordSelect"></select>'
   );
@@ -146,11 +146,11 @@ async function showStaffSelector(coordinadores){
     const id = sel.value || '';
     const elegido = (id==='__ALL__') ? { id:'__ALL__' } : (coordinadores.find(c=>c.id===id) || null);
     state.viewingCoordId = id || null;
-    localStorage.setItem('rt_staff_coord', id);
+    localStorage.setItem('rt__coord', id);
     await loadGruposForCoordinador(elegido, state.user);
     await renderGlobalAlerts();
   };
-  const last=localStorage.getItem('rt_staff_coord');
+  const last=localStorage.getItem('rt__coord');
   if (last){
     sel.value=last;
     const elegido = (last==='__ALL__') ? { id:'__ALL__' } : (coordinadores.find(c=>c.id===last) || null);
@@ -288,7 +288,7 @@ function renderNavBar(){
   sel.onchange=async ()=>{ const v=sel.value||''; if(v==='all'){ state.filter={type:'all',value:null}; renderStatsFiltered(); sel.value=`trip:${state.idx}`; }
     else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; await renderOneGroup(state.ordenados[state.idx]); } };
 
-  if(state.isStaff){
+  if(state.is){
     p.querySelector('#btnPrintVch').onclick = openPrintVouchersModal;
     // (botón crear alerta se mueve al panel de alertas)
   }
@@ -732,7 +732,7 @@ async function renderActs(grupo, fechaISO, cont){
     // BITÁCORA
     const itemsWrap=div.querySelector('.bitItems'); await loadBitacora(grupo.id,fechaISO,actKey,itemsWrap);
 
-    // GUARDAR ASISTENCIA + NOTA (→ BITÁCORA → ALERTA STAFF)
+    // GUARDAR ASISTENCIA + NOTA (→ BITÁCORA → ALERTA )
     div.querySelector('.btnSave').onclick=async ()=>{
       const btn=div.querySelector('.btnSave'); btn.disabled=true;
       try{
@@ -749,9 +749,9 @@ async function renderActs(grupo, fechaISO, cont){
           const coll=collection(db,'grupos',grupo.id,'bitacora',`${fechaISO}-${actKey}`,'items');
           await addDoc(coll,{ texto:nota, byUid:auth.currentUser.uid, byEmail:(auth.currentUser.email||'').toLowerCase(), ts:serverTimestamp() });
 
-          // ALERTA PARA STAFF (OPERACIONES)
+          // ALERTA PARA  (OPERACIONES)
           await addDoc(collection(db,'alertas'),{
-            audience:'staff',
+            audience:'',
             mensaje: `NOTA EN ${actName.toUpperCase()}: ${nota.toUpperCase()}`,
             createdAt: serverTimestamp(),
             createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() },
@@ -938,21 +938,21 @@ async function recipientsFromFilters(destinosList, rangoStr){
   return r;
 }
 
-/** MODAL: CREAR ALERTA (STAFF) */
+/** MODAL: CREAR ALERTA () */
 async function openCreateAlertModal(){
   const back=document.getElementById('modalBack'), body=document.getElementById('modalBody'), title=document.getElementById('modalTitle');
-  title.textContent='CREAR ALERTA (STAFF)';
+  title.textContent='CREAR ALERTA ()';
   const coordOpts=state.coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${(c.email||'').toUpperCase()}</option>`).join('');
   body.innerHTML=`
-    <div class="rowflex"><textarea id="alertMsg" placeholder="MENSAJE" style="width:100%"></textarea></div>
+   <div class="rowflex">
+      <input id="alertDestinos" type="text" placeholder="DESTINOS (SEPARADOS POR COMA, OPCIONAL)"/>
+      <input id="alertRango" type="text" placeholder="RANGO DD-MM-AAAA..DD-MM-AAAA O FECHA ÚNICA"/>
+    </div>
     <div class="rowflex">
       <label>DESTINATARIOS (COORDINADORES)</label>
       <select id="alertCoords" multiple size="8" style="width:100%">${coordOpts}</select>
     </div>
-    <div class="rowflex">
-      <input id="alertDestinos" type="text" placeholder="DESTINOS (SEPARADOS POR COMA, OPCIONAL)"/>
-      <input id="alertRango" type="text" placeholder="RANGO DD-MM-AAAA..DD-MM-AAAA O FECHA ÚNICA"/>
-    </div>
+    <div class="rowflex"><textarea id="alertMsg" placeholder="MENSAJE" style="width:100%"></textarea></div>
     <div class="rowflex"><button id="alertSave" class="btn ok">ENVIAR</button></div>`;
   document.getElementById('alertSave').onclick=async ()=>{
     const msg=(document.getElementById('alertMsg').value||'').trim();
@@ -1004,19 +1004,19 @@ async function renderGlobalAlerts(){
   }
 
   // RESOLVER TARGET "PARA MÍ"
-  const myCoordId = state.isStaff
+  const myCoordId = state.is
     ? (state.viewingCoordId || (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self'))
     : (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self');
 
-  const paraMi = all.filter(a => (a.audience!=='staff') && Array.isArray(a.forCoordIds) && a.forCoordIds.includes(myCoordId));
-  const ops    = state.isStaff ? all.filter(a => a.audience==='staff') : [];
+  const paraMi = all.filter(a => (a.audience!=='') && Array.isArray(a.forCoordIds) && a.forCoordIds.includes(myCoordId));
+  const ops    = state.is ? all.filter(a => a.audience==='') : [];
 
   // SUB-UI: LISTA CON TABS "NO LEÍDAS / LEÍDAS" + DETALLE DE LECTORES
   const renderList = (arr, scope)=>{
-    const readerKey = (scope==='ops') ? `staff:${(state.user.email||'').toLowerCase()}` : `coord:${myCoordId}`;
+    const readerKey = (scope==='ops') ? `:${(state.user.email||'').toLowerCase()}` : `coord:${myCoordId}`;
     const isRead = (a)=>{
       const rb=a.readBy||{};
-      if(scope==='ops') return Object.keys(rb||{}).some(k=>k.startsWith('staff:'));
+      if(scope==='ops') return Object.keys(rb||{}).some(k=>k.startsWith(':'));
       return !!rb[readerKey];
     };
     const unread = arr.filter(a=>!isRead(a));
@@ -1055,7 +1055,7 @@ async function renderGlobalAlerts(){
       li.querySelector('.btnRead').onclick=async ()=>{
         try{
           const path=doc(db,'alertas',a.id); const payload={};
-          if(scope==='ops'){ payload[`readBy.staff:${(state.user.email||'').toLowerCase()}`]=serverTimestamp(); }
+          if(scope==='ops'){ payload[`readBy.:${(state.user.email||'').toLowerCase()}`]=serverTimestamp(); }
           else            { payload[`readBy.coord:${myCoordId}`]=serverTimestamp(); }
           await updateDoc(path,payload); await renderGlobalAlerts();
         }catch(e){ console.error(e); alert('NO SE PUDO CONFIRMAR.'); }
