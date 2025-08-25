@@ -59,7 +59,7 @@ const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
 const STAFF_EMAILS = new Set(['aleoperaciones@raitrai.cl','operaciones@raitrai.cl','anamaria@raitrai.cl','tomas@raitrai.cl','sistemas@raitrai.cl'].map(x=>x.toLowerCase()));
 const state = {
   user:null,
-  isStaff:false,
+  is:false,
   coordinadores:[],
   viewingCoordId:null,              // STAFF: ID SELECCIONADO · COORD: SU PROPIO ID
   grupos:[], ados:[], idx:0,
@@ -1098,7 +1098,7 @@ async function renderGlobalAlerts(){
 
   // RENDERIZAR LISTAS (Y CONTADORES)
   const mi = renderList(paraMi,'mi');
-  const op = state.isStaff ? renderList(ops,'ops') : { ui:null, unreadCount:0 };
+  const op = state.is ? renderList(ops,'ops') : { ui:null, unreadCount:0 };
 
   const totalUnread = (mi.unreadCount||0) + (op.unreadCount||0);
 
@@ -1107,7 +1107,7 @@ async function renderGlobalAlerts(){
     <div class="alert-title-row">
       <h4 style="margin:.1rem 0 .0rem">ALERTAS ${totalUnread>0?`<span class="badge">${totalUnread}</span>`:''}</h4>
     </div>
-    ${state.isStaff ? `
+    ${state.is ? `
       <div class="scope-chips">
         <div id="chipMi"  class="scope-chip active">PARA COORDINADOR(A) ${mi.unreadCount?`<span class="badge">${mi.unreadCount}</span>`:''}</div>
         <div id="chipOps" class="scope-chip">PARA OPERACIONES ${op.unreadCount?`<span class="badge">${op.unreadCount}</span>`:''}</div>
@@ -1116,7 +1116,7 @@ async function renderGlobalAlerts(){
   `;
 
   // Insertar botón “CREAR ALERTA…” (solo staff)
-  if (state.isStaff){
+  if (state.is){
     const createBtn = document.createElement('button');
     createBtn.id = 'btnNewAlertPanel';
     createBtn.className = 'btn sec';
@@ -1130,7 +1130,7 @@ async function renderGlobalAlerts(){
 
   // LÓGICA DE CAMBIO DE ÁMBITO (SOLO STAFF)
   const showScope=(s)=>{
-    if(!state.isStaff){ area.innerHTML=''; area.appendChild(mi.ui); return; }
+    if(!state.is){ area.innerHTML=''; area.appendChild(mi.ui); return; }
     const chipMi=head.querySelector('#chipMi');
     const chipOps=head.querySelector('#chipOps');
     if(s==='mi'){
@@ -1141,7 +1141,7 @@ async function renderGlobalAlerts(){
       area.innerHTML=''; area.appendChild(op.ui);
     }
   };
-  if(state.isStaff){
+  if(state.is){
     head.querySelector('#chipMi').onclick  = ()=>showScope('mi');
     head.querySelector('#chipOps').onclick = ()=>showScope('ops');
     showScope('mi');
