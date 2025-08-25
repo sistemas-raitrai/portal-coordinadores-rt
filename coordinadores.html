@@ -73,6 +73,36 @@
     table.table th,table.table td{border-top:1px solid var(--line);padding:.55rem .4rem;text-align:left;white-space:nowrap;font-size:var(--fs-sm)}
     .totline{margin-top:.6rem;font-weight:700}
 
+    /* TABLAS RESPONSIVE (ESPECIALMENTE PARA GASTOS) */
+    @media (max-width: 680px){
+      table.table{display:block;border:0;overflow:visible}
+      table.table thead{display:none}
+      table.table tbody{display:block}
+      table.table tr{
+        display:grid;
+        grid-template-columns: 1fr;
+        gap:.35rem;
+        padding:.6rem .2rem;
+        border-top:1px solid var(--line);
+      }
+      table.table td{
+        display:flex;
+        gap:.6rem;
+        align-items:center;
+        white-space:normal;          /* EVITA SUPERPOSICIÓN */
+        word-break:break-word;
+      }
+      table.table td::before{
+        content: attr(data-label);
+        min-width:120px;             /* ANCHO DE ETIQUETA */
+        font-weight:700;
+        color:#cbd5e1;
+      }
+      /* QUE LA LÍNEA DE TOTALES TAMBIÉN SE AJUSTE */
+      .totline{white-space:normal; line-height:1.35}
+    }
+
+
     /* MODAL */
     #modalBack{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:14px;z-index:999}
     #modalDialog{max-width:720px;width:100%;background:#0f1a38;border:1px solid var(--line);border-radius:12px}
