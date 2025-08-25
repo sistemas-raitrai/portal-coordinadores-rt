@@ -62,7 +62,7 @@ const state = {
   isStaff:false,
   coordinadores:[],
   viewingCoordId:null,              // STAFF: ID SELECCIONADO · COORD: SU PROPIO ID
-  grupos:[], ordenados:[], idx:0,
+  grupos:[], ados:[], idx:0,
   filter:{ type:'all', value:null },
   groupQ:'',
   alertsTimer:null,                 // AUTO-REFRESCO DE ALERTAS (60S)
@@ -79,14 +79,14 @@ function ensurePanel(id, html=''){
   let p=document.getElementById(id);
   if(!p){ p=document.createElement('div'); p.id=id; p.className='panel'; document.querySelector('.wrap').prepend(p); }
   if(html) p.innerHTML=html;
-  enforceOrder(); // <- vuelve a llamar aquí si quieres que siempre respete el orden
+  enforceOrder(); // <- vuelve a llamar aquí si quieres que siempre respete el 
   return p;
 }
 
 function enforceOrder(){
   const wrap=document.querySelector('.wrap');
   // ORDEN CORRECTO: STAFF -> ALERTAS -> STATS -> NAV -> GRUPOS
-  ['staffBar','alertsPanel','statsPanel','navPanel','gruposPanel'].forEach(id=>{
+  ['staffBar','statsPanel','alertsPanel','navPanel','gruposPanel'].forEach(id=>{
     const n=document.getElementById(id);
     if(n) wrap.appendChild(n);
   });
