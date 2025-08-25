@@ -4,6 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>PORTAL COORDINADORES RT</title>
+  <link rel="icon" type="image/png" href="RaitraiLogo.png" />
 
   <!-- CSS MOBILE-FIRST -->
   <style>
@@ -152,14 +153,25 @@
     .tab.active{background:#1e293b}
     .alert-card{border:1px solid var(--line);border-radius:12px;padding:10px;background:#0f1a38}
     .alert-title{font-weight:700;margin:.2rem 0 .35rem}
-    .badge{display:inline-block;min-width:1.5em;padding:.05rem .5rem;margin-left:.35rem;border-radius:999px;background:#7c3aed;color:#fff;font-weight:800;text-align:center}
-    /* CABECERA DE ALERTAS: TÍTULO + PASTILLAS SUTILES */
+    
+    /* CABECERA DE ALERTAS: TÍTULO + PASTILLAS SUTILES AL LADO */
     .alert-head{display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap}
     .alert-title-row{display:flex;align-items:center;gap:.5rem}
-    .badge{display:inline-block;background:#475569;color:#e5e7eb;border-radius:999px;padding:.05rem .45rem;font-size:var(--fs-meta);font-weight:800}
     
-    /* PASTILLAS SUTILES DE ÁMBITO (DISTINTAS A LAS TABS DE NO LEÍDAS/LEÍDAS) */
-    .scope-chips{display:flex;gap:.35rem;align-items:center}
+    /* BADGE (ÚNICA DEFINICIÓN — SUTIL) */
+    .badge{
+      display:inline-block;
+      min-width:1.5em;
+      padding:.05rem .45rem;
+      border-radius:999px;
+      background:#475569;
+      color:#e5e7eb;
+      font-weight:800;
+      font-size:var(--fs-meta);
+    }
+    
+    /* PASTILLAS SUTILES DE ÁMBITO (DISTINTAS A NO LEÍDAS/LEÍDAS) */
+    .scope-chips{display:flex;gap:.35rem;align-items:center;flex-wrap:wrap}
     .scope-chip{
       border:1px solid var(--line);
       background:transparent;
@@ -174,8 +186,9 @@
     .scope-chip.active{background:#16213d;opacity:1}
     .scope-chip .badge{background:#64748b}
     
-    /* (OPCIONAL) SEPARADOR SUAVE ENTRE TARJETAS DE ALERTAS */
+    /* OPCIONAL: SEPARADOR SUAVE ENTRE TARJETAS */
     .alert-sep{border-top:1px dashed var(--line);opacity:.55;margin:.6rem 0}
+
     
   </style>
 </head>
