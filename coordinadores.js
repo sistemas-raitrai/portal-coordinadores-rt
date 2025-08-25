@@ -936,15 +936,23 @@ async function openCreateAlertModal(){
   back.style.display='flex';
 }
 
+
 /** PANEL GLOBAL DE ALERTAS */
 async function renderGlobalAlerts(){
   const box = ensurePanel('alertsPanel');
 
-  // CARGAR TODAS
-  const all=[]; try{ const qs=await getDocs(collection(db,'alertas')); qs.forEach(d=>all.push({id:d.id, ...d.data()})); }
-  catch(e){ console.error(e); box.innerHTML='<div class="muted">NO SE PUDIERON CARGAR LAS ALERTAS.</div>'; return; }
+  // CARGAR TODAS LAS ALERTAS
+  const all=[];
+  try{
+    const qs=await getDocs(collection(db,'alertas'));
+    qs.forEach(d=>all.push({id:d.id, ...d.data()}));
+  }catch(e){
+    console.error(e);
+    box.innerHTML='<div class="muted">NO SE PUDIERON CARGAR LAS ALERTAS.</div>';
+    return;
+  }
 
-  // TARGET "PARA MÍ"
+  // RESOLVER TARGET "PARA MÍ"
   const myCoordId = state.isStaff
     ? (state.viewingCoordId || (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self'))
     : (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self');
@@ -980,9 +988,7 @@ async function renderGlobalAlerts(){
       const autorNombre = upperNameByEmail(a.createdBy?.email || '');
       const gi=a.groupInfo||null;
 
-      // TEXTO CABECERA SEGÚN ÁMBITO
       const cab = (scope==='ops') ? 'NUEVO COMENTARIO' : 'NOTIFICACIÓN';
-      // PARA COORDINADOR: TIPO PERSONAL/GLOBAL
       const tipoCoord = (scope!=='ops')
         ? (Array.isArray(a.forCoordIds) && a.forCoordIds.length>1 ? 'GLOBAL' : 'PERSONAL')
         : null;
@@ -1025,36 +1031,52 @@ async function renderGlobalAlerts(){
     return { ui:wrap, unreadCount:unread.length, readCount:read.length };
   };
 
-  // CABECERA CON CONTADOR TOTAL
-  const head=document.createElement('div');
-
-  // ÁREA DE CONTENIDO
+  // PREPARAR CABECERA + CONTENEDOR
+  const head=document.createElement('div'); head.className='alert-head';
   const area=document.createElement('div');
 
-  // RENDERIZAR LISTAS
+  // RENDERIZAR LISTAS (Y CONTADORES)
   const mi = renderList(paraMi,'mi');
   const op = state.isStaff ? renderList(ops,'ops') : { ui:null, unreadCount:0 };
 
   const totalUnread = (mi.unreadCount||0) + (op.unreadCount||0);
-  head.innerHTML=`<h4 style="margin:.1rem 0 .6rem">ALERTAS ${totalUnread>0?`<span class="badge">${totalUnread}</span>`:''}</h4>`;
 
+  // TÍTULO + PASTILLAS (A LA DERECHA DEL TÍTULO)
+  head.innerHTML = `
+    <div class="alert-title-row">
+      <h4 style="margin:.1rem 0 .0rem">ALERTAS ${totalUnread>0?`<span class="badge">${totalUnread}</span>`:''}</h4>
+    </div>
+    ${state.isStaff ? `
+      <div class="scope-chips">
+        <div id="chipMi"  class="scope-chip active">PARA COORDINADOR(A) ${mi.unreadCount?`<span class="badge">${mi.unreadCount}</span>`:''}</div>
+        <div id="chipOps" class="scope-chip">PARA OPERACIONES ${op.unreadCount?`<span class="badge">${op.unreadCount}</span>`:''}</div>
+      </div>
+    ` : '' }
+  `;
+
+  // PINTAR
   box.innerHTML=''; box.appendChild(head); box.appendChild(area);
 
-  if (!state.isStaff){
-    area.innerHTML=''; area.appendChild(mi.ui); return; // COORD: SOLO "PARA MÍ"
+  // LÓGICA DE CAMBIO DE ÁMBITO (SOLO STAFF)
+  const showScope=(s)=>{
+    if(!state.isStaff){ area.innerHTML=''; area.appendChild(mi.ui); return; }
+    const chipMi=head.querySelector('#chipMi');
+    const chipOps=head.querySelector('#chipOps');
+    if(s==='mi'){
+      chipMi.classList.add('active'); chipOps.classList.remove('active');
+      area.innerHTML=''; area.appendChild(mi.ui);
+    }else{
+      chipOps.classList.add('active'); chipMi.classList.remove('active');
+      area.innerHTML=''; area.appendChild(op.ui);
+    }
+  };
+  if(state.isStaff){
+    head.querySelector('#chipMi').onclick  = ()=>showScope('mi');
+    head.querySelector('#chipOps').onclick = ()=>showScope('ops');
+    showScope('mi');
+  }else{
+    area.appendChild(mi.ui); // COORDINADOR: SOLO “PARA MÍ”
   }
-
-  // STAFF: TABS DE ÁMBITO + BADGES
-  const scopeTabs=document.createElement('div'); scopeTabs.className='tabs';
-  const tbMi=document.createElement('div'); tbMi.className='tab active'; tbMi.innerHTML=`PARA COORDINADOR(A) ${mi.unreadCount?`<span class="badge">${mi.unreadCount}</span>`:''}`;
-  const tbOps=document.createElement('div'); tbOps.className='tab';         tbOps.innerHTML=`PARA OPERACIONES ${op.unreadCount?`<span class="badge">${op.unreadCount}</span>`:''}`;
-  scopeTabs.appendChild(tbMi); scopeTabs.appendChild(tbOps);
-  box.insertBefore(scopeTabs, area);
-
-  const showScope=(s)=>{ area.innerHTML=''; if(s==='mi'){ tbMi.classList.add('active'); tbOps.classList.remove('active'); area.appendChild(mi.ui); } else { tbOps.classList.add('active'); tbMi.classList.remove('active'); area.appendChild(op.ui); } };
-  tbMi.onclick = ()=> showScope('mi');
-  tbOps.onclick = ()=> showScope('ops');
-  showScope('mi');
 }
 
 /* ====== GASTOS ====== */
