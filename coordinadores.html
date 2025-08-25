@@ -102,6 +102,38 @@
       .totline{white-space:normal; line-height:1.35}
     }
 
+    /* LINKS EN TABLAS/TARJETAS (EJ: COMPROBANTE EN GASTOS) */
+    :root{
+      --link: #ffffff;         /* BLANCO */
+      --link-hover: #f1f5f9;   /* UN POCO MÁS CLARO AL PASAR */
+      --link-visited: #cbd5e1; /* GRIS SUAVE DESPUÉS DE ABRIR */
+    }
+    
+    table.table a,
+    .act a{
+      color: var(--link);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    
+    table.table a:hover,
+    table.table a:focus,
+    .act a:hover,
+    .act a:focus{
+      color: var(--link-hover);
+    }
+    
+    table.table a:visited,
+    .act a:visited{
+      color: var(--link-visited);
+    }
+    
+    /* MEJOR ACCESIBILIDAD AL ENFOQUE CON TECLADO */
+    table.table a:focus-visible,
+    .act a:focus-visible{
+      outline: 2px solid #e2e8f0;
+      outline-offset: 2px;
+    } 
 
     /* MODAL */
     #modalBack{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:14px;z-index:999}
