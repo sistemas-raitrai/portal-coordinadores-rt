@@ -83,7 +83,7 @@ function ensurePanel(id, html=''){
   let p=document.getElementById(id);
   if(!p){ p=document.createElement('div'); p.id=id; p.className='panel'; document.querySelector('.wrap').prepend(p); }
   if(html) p.innerHTML=html;
-  enforceOrder(); return p;
+  return p;
 }
 function enforceOrder(){
   const wrap=document.querySelector('.wrap');
