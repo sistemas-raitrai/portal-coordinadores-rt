@@ -251,8 +251,8 @@ function renderStats(list){
     <div style="display:grid;gap:.4rem">
       <div class="meta"><h4 style="margin:.1rem 0 .6rem"><strong>VIAJES:</strong></div>
       <div class="meta">CANTIDAD: <strong>${n}</strong> · DÍAS EN VIAJE: <strong>${totalDias}</strong> · TOTAL PAX: <strong>${paxTot}</strong></div>
-      <div class="meta">RANGO DE FECHAS: ${minIniISO?dmy(minIniISO):'—'} — ${maxFinISO?dmy(maxFinISO):'—'}</div>
-      <div class="meta">DESTINOS: ${destinos.length? destinos.join(' · ') : '—'}</div>
+      <div class="meta">RANGO DE FECHAS: <strong>${minIniISO?dmy(minIniISO):'—'} — ${maxFinISO?dmy(maxFinISO):'—'}</strong></div>
+      <div class="meta">DESTINOS: <strong>${destinos.length? destinos.join(' · ') : '—'}</strong></div>
     </div>`;
 }
 
