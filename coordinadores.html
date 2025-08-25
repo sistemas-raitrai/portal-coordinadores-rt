@@ -205,43 +205,58 @@
     /* SI TU H4 DE TÍTULO ESTÁ DENTRO DE .alert-head, APLANA SUS MÁRGENES */
     #alertsPanel .alert-head h4{ margin: 0; }
 
-    /* STATS: contenedor */
-    #statsPanel .stats-wrap{ max-width: 980px; margin-inline: auto; }
+    /* =========================
+   STATS — ancho y layout
+   ========================= */
+
+    /* Contenedor: usa todo el ancho en todas las vistas */
+    #statsPanel .stats-wrap{
+      max-width: none;   /* antes: 980px */
+      width: 100%;
+      margin-inline: 0;  /* antes: auto */
+    }
     
-    /* Línea: móvil apilado */
+    /* Móvil: los ítems van apilados */
     #statsPanel .meta-line{
       display: grid;
       gap: .35rem;
     }
     
     /* Ítems: permiten romper línea si hace falta */
-    #statsPanel .meta-line .item{ 
-      white-space: normal; 
+    #statsPanel .meta-line .item{
+      white-space: normal;
       min-width: 0;
-      overflow-wrap: anywhere;   /* por si hay destinos largos */
+      overflow-wrap: anywhere;  /* por si hay destinos muy largos */
     }
     
-    /* Solo algunos ítems van sin salto (son cortos) */
+    /* (Opcional) Forzar no-salto en ítems cortos */
     #statsPanel .meta-line .item.nowrap{ white-space: nowrap; }
     
-    /* Prefijo “MIS VIAJES:” un poco más marcado */
+    /* (Opcional) Dar más peso al prefijo, si lo usas */
     #statsPanel .meta-line .item.prefix{ font-weight: 800; }
     
-    /* Escritorio: intenta línea única; si no cabe, envuelve sin desbordar */
+    /* Escritorio: no achicar el panel y formar una línea (envolviendo si no cabe) */
     @media (min-width: 900px){
+      #statsPanel{
+        max-width: none;   /* antes: 820px */
+        margin-inline: 0;
+      }
+    
       #statsPanel .meta-line{
         display: flex;
         flex-wrap: wrap;         /* mantiene el texto dentro del panel */
         align-items: baseline;
         gap: .6rem 1.2rem;
       }
+    
+      /* Separadores en desktop (no se añade al último) */
       #statsPanel .meta-line .item:not(:last-child)::after{
         content: " ·";
         margin-left: .6rem;
         opacity: .75;
       }
-    } 
-        
+    }
+      
   </style>
 </head>
 <body>
