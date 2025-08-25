@@ -189,6 +189,21 @@
     /* OPCIONAL: SEPARADOR SUAVE ENTRE TARJETAS */
     .alert-sep{border-top:1px dashed var(--line);opacity:.55;margin:.6rem 0}
 
+    /* ESPACIOS EN EL PANEL DE ALERTAS */
+    #alertsPanel .alert-head{
+      margin-bottom: .55rem;        /* SEPARA EL TÍTULO "ALERTAS" DE LAS TABS */
+    }
+    
+    #alertsPanel .tabs{
+      margin: .25rem 0 .75rem;      /* AIRE POR ENCIMA Y DEBAJO DE "NO LEÍDAS / LEÍDAS" */
+    }
+    
+    #alertsPanel .alert-card{
+      margin-bottom: .70rem;        /* ESPACIO ENTRE TARJETAS/CONTENEDORES */
+    }
+    
+    /* SI TU H4 DE TÍTULO ESTÁ DENTRO DE .alert-head, APLANA SUS MÁRGENES */
+    #alertsPanel .alert-head h4{ margin: 0; }
     
   </style>
 </head>
