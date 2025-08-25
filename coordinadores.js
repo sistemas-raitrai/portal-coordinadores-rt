@@ -255,12 +255,12 @@ function renderStats(list){
   p.innerHTML = `
     <div class="stats-wrap">
       <div class="meta-line meta">
-        <span class="item prefix">MIS VIAJES:</span>
-        <span class="item nowrap">CANTIDAD: ${n}</span>
-        <span class="item nowrap">DÍAS EN VIAJE: ${totalDias}</span>
-        <span class="item nowrap">TOTAL PAX: ${paxTot}</span>
-        <span class="item">RANGO DE FECHAS: ${minIni?dmy(minIni):'—'} — ${maxFin?dmy(maxFin):'—'}</span>
-        <span class="item">DESTINOS: ${destinos.length?destinos.join(' · '):'—'}</span>
+        <span class="item prefix"><strong>MIS VIAJES:</strong></span>
+        <span class="item nowrap">CANTIDAD: <strong>${n}</strong></span>
+        <span class="item nowrap">DÍAS EN VIAJE: <strong>${totalDias}</strong></span>
+        <span class="item nowrap">TOTAL PAX: <strong>${paxTot}</strong></span>
+        <span class="item">RANGO DE FECHAS: <strong>${minIni?dmy(minIni):'—'} — ${maxFin?dmy(maxFin):'—'}</strong></span>
+        <span class="item">DESTINOS: <strong>${destinos.length?destinos.join(' · '):'—'}</strong></span>
       </div>
     </div>`;
 }
