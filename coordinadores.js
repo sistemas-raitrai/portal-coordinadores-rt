@@ -143,7 +143,7 @@ function findCoordinadorForUser(coordinadores, user){
 
 /* ====== SELECTOR  (CON "TODOS") ====== */
 async function showSelector(coordinadores){
-  const bar=ensurePanel('Bar',
+  const bar=ensurePanel('staffBar',
     '<label style="display:block;margin-bottom:6px;color:#cbd5e1">VER VIAJES POR COORDINADOR</label>'+
     '<select id="coordSelect"></select>'
   );
