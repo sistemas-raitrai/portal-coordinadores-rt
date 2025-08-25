@@ -86,7 +86,7 @@ function ensurePanel(id, html=''){
 function enforceOrder(){
   const wrap=document.querySelector('.wrap');
   // ORDEN CORRECTO: STAFF -> ALERTAS -> STATS -> NAV -> GRUPOS
-  ['staffBar','statsPanel','alertsPanel','navPanel','gruposPanel'].forEach(id=>{
+  ['staffBar','alertsPanel','statsPanel','navPanel','gruposPanel'].forEach(id=>{
     const n=document.getElementById(id);
     if(n) wrap.appendChild(n);
   });
