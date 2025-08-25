@@ -204,7 +204,31 @@
     
     /* SI TU H4 DE TÍTULO ESTÁ DENTRO DE .alert-head, APLANA SUS MÁRGENES */
     #alertsPanel .alert-head h4{ margin: 0; }
+
+    /* STATS: LÍNEA ÚNICA EN ESCRITORIO, APILADO EN MÓVIL */
+    #statsPanel .stats-wrap{ max-width: 980px; margin-inline: auto; }
+    #statsPanel .meta-line{
+      display: grid;
+      gap: .35rem;                 /* VERSIÓN MÓVIL: APILADO */
+    }
+    #statsPanel .meta-line .item{ white-space: nowrap; }
     
+    /* ESCRITORIO: TODO EN UNA LÍNEA CON SEPARADORES · */
+    @media (min-width: 900px){
+      #statsPanel .meta-line{
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: .6rem 1.2rem;          /* ESPACIO ENTRE ÍTEMS */
+      }
+      #statsPanel .meta-line .item:not(:last-child)::after{
+        content: " ·";
+        margin-left: .6rem;
+        opacity: .75;
+      }
+    }
+    
+        
   </style>
 </head>
 <body>
