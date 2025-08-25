@@ -238,21 +238,29 @@ function getFilteredList(){ const base=state.ordenados.slice();
 }
 function renderStatsFiltered(){ renderStats(getFilteredList()); }
 function renderStats(list){
-  const p=ensurePanel('statsPanel');
-  if(!list.length){ p.innerHTML='<div class="muted">SIN VIAJES PARA EL FILTRO ACTUAL.</div>'; return; }
-  const n=list.length;
-  const minIniISO=list.map(g=>g.fechaInicio).filter(Boolean).sort()[0]||'';
-  const maxFinISO=list.map(g=>g.fechaFin).filter(Boolean).sort().slice(-1)[0]||'';
-  const totalDias=list.reduce((s,g)=> s+daysInclusive(g.fechaInicio,g.fechaFin),0);
-  const paxTot=list.reduce((s,g)=> s+paxOf(g),0);
-  const destinos=[...new Set(list.map(g=>String(g.destino||'')).filter(Boolean).map(x=>x.toUpperCase()))];
+  const p = ensurePanel('statsPanel');
+  if (!list.length){
+    p.innerHTML = '<div class="muted">SIN VIAJES PARA EL FILTRO ACTUAL.</div>';
+    return;
+  }
+
+  const n        = list.length;
+  const minIni   = list.map(g=>g.fechaInicio).filter(Boolean).sort()[0] || '';
+  const maxFin   = list.map(g=>g.fechaFin).filter(Boolean).sort().slice(-1)[0] || '';
+  const totalDias= list.reduce((s,g)=> s + daysInclusive(g.fechaInicio,g.fechaFin), 0);
+  const paxTot   = list.reduce((s,g)=> s + paxOf(g), 0);
+  const destinos = [...new Set(list.map(g=>String(g.destino||'')).filter(Boolean))]
+                    .map(x=>x.toUpperCase());
 
   p.innerHTML = `
-    <div style="display:grid;gap:.4rem">
-      <div class="meta"><h4 style="margin:.1rem 0 .6rem"><strong>VIAJES:</strong></div>
-      <div class="meta">CANTIDAD: <strong>${n}</strong> · DÍAS EN VIAJE: <strong>${totalDias}</strong> · TOTAL PAX: <strong>${paxTot}</strong></div>
-      <div class="meta">RANGO DE FECHAS: <strong>${minIniISO?dmy(minIniISO):'—'} — ${maxFinISO?dmy(maxFinISO):'—'}</strong></div>
-      <div class="meta">DESTINOS: <strong>${destinos.length? destinos.join(' · ') : '—'}</strong></div>
+    <div class="stats-wrap">
+      <div class="meta-line">
+        <span class="item"><strong>CANTIDAD:</strong> ${n}</span>
+        <span class="item"><strong>DÍAS EN VIAJE:</strong> ${totalDias}</span>
+        <span class="item"><strong>TOTAL PAX:</strong> ${paxTot}</span>
+        <span class="item"><strong>RANGO DE FECHAS:</strong> ${minIni?dmy(minIni):'—'} — ${maxFin?dmy(maxFin):'—'}</span>
+        <span class="item"><strong>DESTINOS:</strong> ${destinos.length?destinos.join(' · '):'—'}</span>
+      </div>
     </div>`;
 }
 
