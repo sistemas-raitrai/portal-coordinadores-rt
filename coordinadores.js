@@ -86,7 +86,7 @@ function ensurePanel(id, html=''){
 function enforceOrder(){
   const wrap=document.querySelector('.wrap');
   // ORDEN CORRECTO: STAFF -> ALERTAS -> STATS -> NAV -> GRUPOS
-  ['staffBar','alertsPanel','statsPanel','navPanel','gruposPanel'].forEach(id=>{
+  ['staffBar','alertsPanel','','navPanel','gruposPanel'].forEach(id=>{
     const n=document.getElementById(id);
     if(n) wrap.appendChild(n);
   });
@@ -242,7 +242,7 @@ function renderStatsFiltered(){ renderStats(getFilteredList()); }
 function renderStats(list){
   const p = ensurePanel('statsPanel');
   if (!list.length){
-    p.innerHTML = '<div class="muted">SIN VIAJES PARA EL FILTRO ACTUAL.</div>';
+    p.innerHTML = '<div class="muted">SIN VIAJES ASIGNADOS.</div>';
     return;
   }
 
@@ -257,6 +257,7 @@ function renderStats(list){
   p.innerHTML = `
     <div class="stats-wrap">
       <div class="meta-line meta">
+        <span class="item nowrap"><strong><h4>DESPACHO</h4></strong></span>
         <span class="item nowrap">N° VIAJES: <strong>${n}</strong></span>
         <span class="item nowrap">DÍAS EN VIAJE: <strong>${totalDias}</strong></span>
         <span class="item nowrap">TOTAL PAX: <strong>${paxTot}</strong></span>
