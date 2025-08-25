@@ -10,7 +10,7 @@
        · EN BITÁCORA, AL GUARDAR NOTA SE GENERA ALERTA PARA "OPERACIONES"
        · TARJETAS: MUESTRAN QUIÉN Y CUÁNDO CONFIRMÓ LECTURA
        · TIPO (PARA COORD.): "PERSONAL" O "GLOBAL" SEGÚN Nº DE DESTINATARIOS
-       · CONTADOR AL LADO DEL TÍTULO "ALERTAS" Y EN PESTAÑAS (AUTO-REFRESCO 60S)
+       · CONTADOR AL LADO DEL TÍTULO "" Y EN PESTAÑAS (AUTO-REFRESCO 60S)
    - VISTA "PARA MÍ" (COORD O STAFF VIENDO A UN COORD) Y "OPERACIONES" (SOLO STAFF)
    - BUSCADOR INTERNO DE GRUPO (#SEARCHTRIPS)
    - VOUCHERS: CLAVE CON OJO (TOGGLE), ESTADOS Y VERSIÓN IMPRIMIBLE
@@ -255,6 +255,7 @@ function renderStats(list){
   p.innerHTML = `
     <div class="stats-wrap">
       <div class="meta-line">
+        <span class="item"><h4 style="margin:.1rem 0 .0rem"><strong>MIS VIAJES:</strong></span>
         <span class="item"><strong>CANTIDAD:</strong> ${n}</span>
         <span class="item"><strong>DÍAS EN VIAJE:</strong> ${totalDias}</span>
         <span class="item"><strong>TOTAL PAX:</strong> ${paxTot}</span>
