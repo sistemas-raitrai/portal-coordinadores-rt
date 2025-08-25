@@ -95,7 +95,8 @@ function enforceOrder(){
 /* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
   if (!user){ location.href='index.html'; return; }
-  state.user=user; state.is=_EMAILS.has((user.email||'').toLowerCase());
+  state.user = user;
+  state.is = STAFF_EMAILS.has((user.email||'').toLowerCase());
 
   const coords = await loadCoordinadores(); state.coordinadores = coords;
 
