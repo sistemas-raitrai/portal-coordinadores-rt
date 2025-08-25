@@ -256,8 +256,8 @@ function renderStats(list){
 
   p.innerHTML = `
     <div class="stats-wrap">
+      <div><strong><h4>DESPACHO</h4></strong></span></div>    
       <div class="meta-line meta">
-        <span class="item nowrap"><strong><h4>DESPACHO</h4></strong></span>
         <span class="item nowrap">N° VIAJES: <strong>${n}</strong></span>
         <span class="item nowrap">DÍAS EN VIAJE: <strong>${totalDias}</strong></span>
         <span class="item nowrap">TOTAL PAX: <strong>${paxTot}</strong></span>
