@@ -979,7 +979,7 @@ async function renderGlobalAlerts(){
       const gi=a.groupInfo||null;
 
       // TEXTO CABECERA SEGÚN ÁMBITO
-      const cab = (scope==='ops') ? 'OPERACIONES' : 'PARA MÍ';
+      const cab = (scope==='ops') ? 'PARA OPERACIONES' : 'PARA COORDINADOR(A)';
       // PARA COORDINADOR: TIPO PERSONAL/GLOBAL
       const tipoCoord = (scope!=='ops')
         ? (Array.isArray(a.forCoordIds) && a.forCoordIds.length>1 ? 'GLOBAL' : 'PERSONAL')
