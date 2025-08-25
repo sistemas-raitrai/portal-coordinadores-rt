@@ -313,7 +313,7 @@ function renderOneGroup(g, preferDate){
       <div class="lab">FECHAS</div><div>${rango}</div>
     </div>
     <div class="rowflex" style="margin-top:.6rem">
-      <input id="searchTrips" type="text" placeholder="..."/>
+      <input id="searchTrips" type="text" placeholder="BUSCADOR EN RESUMEN, ITINERARIO Y GASTOS..."/>
     </div>`;
   cont.appendChild(header);
 
