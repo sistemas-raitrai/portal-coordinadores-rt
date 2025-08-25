@@ -311,7 +311,7 @@ function renderOneGroup(g, preferDate){
       <div class="lab">FECHAS</div><div>${rango}</div>
     </div>
     <div class="rowflex" style="margin-top:.6rem">
-      <input id="searchTrips" type="text" placeholder="BUSCAR EN ESTE GRUPO (FECHAS, ACTIVIDADES, GASTOS…)"/>
+      <input id="searchTrips" type="text" placeholder="..."/>
     </div>`;
   cont.appendChild(header);
 
