@@ -1130,14 +1130,21 @@ async function loadGastosList(g, box){
   table.innerHTML='<thead><tr><th>ASUNTO</th><th>AUTOR</th><th>MONEDA</th><th>VALOR</th><th>COMPROBANTE</th></tr></thead><tbody></tbody>';
   const tb=table.querySelector('tbody');
   list.forEach(x=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${(x.asunto||'').toString().toUpperCase()}</td><td>${(x.byEmail||'').toString().toUpperCase()}</td><td>${(x.moneda||'').toString().toUpperCase()}</td><td>${Number(x.valor||0).toLocaleString('es-CL')}</td><td>${x.imgUrl?`<a href="${x.imgUrl}" target="_blank">VER</a>`:'—'}</td>`;
-    tb.appendChild(tr);
-    if(x.moneda==='CLP') tot.CLP+=Number(x.valor||0);
-    if(x.moneda==='USD') tot.USD+=Number(x.valor||0);
-    if(x.moneda==='BRL') tot.BRL+=Number(x.valor||0);
-    if(x.moneda==='ARS') tot.ARS+=Number(x.valor||0);
-  });
+     const tr=document.createElement('tr');
+     tr.innerHTML = `
+       <td data-label="ASUNTO">${(x.asunto||'').toString().toUpperCase()}</td>
+       <td data-label="AUTOR">${(x.byEmail||'').toString().toUpperCase()}</td>
+       <td data-label="MONEDA">${(x.moneda||'').toString().toUpperCase()}</td>
+       <td data-label="VALOR">${Number(x.valor||0).toLocaleString('es-CL')}</td>
+       <td data-label="COMPROBANTE">${x.imgUrl?`<a href="${x.imgUrl}" target="_blank">VER</a>`:'—'}</td>
+     `;
+     tb.appendChild(tr);
+   
+     if(x.moneda==='CLP') tot.CLP+=Number(x.valor||0);
+     if(x.moneda==='USD') tot.USD+=Number(x.valor||0);
+     if(x.moneda==='BRL') tot.BRL+=Number(x.valor||0);
+     if(x.moneda==='ARS') tot.ARS+=Number(x.valor||0);
+ });
   tot.CLPconv = tot.CLP + (tot.USD*(tasas.USD||0)) + (tot.BRL*(tasas.BRL||0)) + (tot.ARS*(tasas.ARS||0));
   box.innerHTML='<h4>GASTOS DEL GRUPO</h4>'; box.appendChild(table);
   const totDiv=document.createElement('div'); totDiv.className='totline';
