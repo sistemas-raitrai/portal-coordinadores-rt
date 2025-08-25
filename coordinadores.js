@@ -74,15 +74,23 @@ const state = {
   }
 };
 
-/* ====== HELPERS UI ====== */
+// ====== HELPERS UI ======
 function ensurePanel(id, html=''){
   let p=document.getElementById(id);
   if(!p){ p=document.createElement('div'); p.id=id; p.className='panel'; document.querySelector('.wrap').prepend(p); }
   if(html) p.innerHTML=html;
-  // ⚠️ ya no reordenamos el DOM aquí para evitar parpadeo
+  enforceOrder(); // <- vuelve a llamar aquí si quieres que siempre respete el orden
   return p;
 }
-// (dejamos enforceOrder sin uso – se evita reinyectar nodos)
+
+function enforceOrder(){
+  const wrap=document.querySelector('.wrap');
+  // ORDEN CORRECTO: STAFF -> ALERTAS -> STATS -> NAV -> GRUPOS
+  ['staffBar','alertsPanel','statsPanel','navPanel','gruposPanel'].forEach(id=>{
+    const n=document.getElementById(id);
+    if(n) wrap.appendChild(n);
+  });
+}
 
 /* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
