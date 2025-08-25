@@ -1,20 +1,7 @@
 /* COORDINADORES.JS — PORTAL COORDINADORES RT
    — VERSIÓN: ALERTAS MEJORADAS + MOBILE + TODO EN MAYÚSCULAS EN LA UI
-
-   FUNCIONALIDADES CLAVE
-   - ORDEN DE PANELES: STAFFBAR → ALERTSPANEL → NAVPANEL → STATSPANEL → GRUPOSPANEL
-   - STAFF: SELECTOR CON OPCIÓN "TODOS" PARA VER TODOS LOS GRUPOS/ESTADÍSTICAS
-   - ALERTAS:
-       · ENVÍO A COORDINADORES SELECCIONADOS (MULTISELECT)
-       · EXPANSIÓN POR DESTINO Y/O POR FECHA O RANGO (SE RESUELVEN DESTINATARIOS)
-       · EN BITÁCORA, AL GUARDAR NOTA SE GENERA ALERTA PARA "OPERACIONES"
-       · TARJETAS: MUESTRAN QUIÉN Y CUÁNDO CONFIRMÓ LECTURA
-       · TIPO (PARA COORD.): "PERSONAL" O "GLOBAL" SEGÚN Nº DE DESTINATARIOS
-       · CONTADOR AL LADO DEL TÍTULO "" Y EN PESTAÑAS (AUTO-REFRESCO 60S)
-   - VISTA "PARA MÍ" (COORD O STAFF VIENDO A UN COORD) Y "OPERACIONES" (SOLO STAFF)
-   - BUSCADOR INTERNO DE GRUPO (#SEARCHTRIPS)
-   - VOUCHERS: CLAVE CON OJO (TOGGLE), ESTADOS Y VERSIÓN IMPRIMIBLE
-   - TODO TEXTO MOSTRADO EN LA UI → MAYÚSCULAS (SIN ALTERAR DATOS EN BD)
+   — Cambios: orden de actividades por hora, botón “Crear Alerta” en Alertas,
+              contadores de búsqueda por pestaña, menos parpadeo en auto-refresco.
 */
 
 import { app, db, auth, storage } from './firebase-init-portal.js';
@@ -38,6 +25,15 @@ const ymdFromDMY=(s)=>{ const t=(s||'').trim(); if(/^\d{2}-\d{2}-\d{4}$/.test(t)
 const daysInclusive=(ini,fin)=>{ const a=toISO(ini), b=toISO(fin); if(!a||!b) return 0; return Math.max(1,Math.round((new Date(b)-new Date(a))/86400000)+1); };
 const rangoFechas=(ini,fin)=>{ const out=[]; const A=toISO(ini), B=toISO(fin); if(!A||!B) return out; for(let d=new Date(A+'T00:00:00'); d<=new Date(B+'T00:00:00'); d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10)); return out; };
 const parseQS=()=>{ const p=new URLSearchParams(location.search); return { g:p.get('g')||'', f:p.get('f')||'' }; };
+
+/* Tiempo: HH:MM → minutos (sin hora => muy grande para que quede al final) */
+const timeVal = (t) => {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(t||'').trim());
+  if (!m) return 1e9;
+  const h = Math.max(0, Math.min(23, parseInt(m[1],10)));
+  const mi = Math.max(0, Math.min(59, parseInt(m[2],10)));
+  return h*60 + mi;
+};
 
 /* ===== DEBUG HOTEL ===== */
 const DEBUG_HOTEL = true;
@@ -83,15 +79,10 @@ function ensurePanel(id, html=''){
   let p=document.getElementById(id);
   if(!p){ p=document.createElement('div'); p.id=id; p.className='panel'; document.querySelector('.wrap').prepend(p); }
   if(html) p.innerHTML=html;
+  // ⚠️ ya no reordenamos el DOM aquí para evitar parpadeo
   return p;
 }
-function enforceOrder(){
-  const wrap=document.querySelector('.wrap');
-   // ORDEN: STAFF → STATS → ALERTAS → NAVEGADOR → GRUPOS
-  ['staffBar','statsPanel','alertsPanel','navPanel','gruposPanel'].forEach(id=>{
-    const n=document.getElementById(id); if(n) wrap.appendChild(n);
-  });
-}
+// (dejamos enforceOrder sin uso – se evita reinyectar nodos)
 
 /* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
@@ -108,14 +99,16 @@ onAuthStateChanged(auth, async (user) => {
     await loadGruposForCoordinador(mine, user);
   }
 
-  // BOTONES SOLO PARA STAFF
-  document.getElementById('btnPrintVch').style.display = state.isStaff ? '' : 'none';
-  document.getElementById('btnNewAlert').style.display = state.isStaff ? '' : 'none';
+  // BOTONES SOLO PARA STAFF (en NAV solo queda imprimir; crear alerta va en Alertas)
+  const btnPrint = document.getElementById('btnPrintVch');
+  if (btnPrint) btnPrint.style.display = state.isStaff ? '' : 'none';
+  const legacyNewAlert = document.getElementById('btnNewAlert');
+  if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
   // PANEL ALERTAS
   await renderGlobalAlerts();
 
-  // AUTO-REFRESCO CADA 60S (EVITAR MULTIPLES INTERVALOS)
+  // AUTO-REFRESCO CADA 60S (solo alertas, sin reordenar paneles)
   if (!state.alertsTimer){
     state.alertsTimer = setInterval(renderGlobalAlerts, 60000);
   }
@@ -147,7 +140,7 @@ async function showStaffSelector(coordinadores){
   );
   const sel=bar.querySelector('#coordSelect');
   sel.innerHTML =
-    '<option value="__ALL__">TODOS</option>' +                     // ⬅️ NUEVO
+    '<option value="__ALL__">TODOS</option>' +
     coordinadores.map(c => `<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${(c.email||'').toUpperCase()}</option>`).join('');
   sel.onchange = async ()=> {
     const id = sel.value || '';
@@ -190,7 +183,7 @@ async function loadGruposForCoordinador(coord, user){
       numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || d.id),
       identificador: String(raw.identificador || raw.codigo || '')
     };
-    if (isAll){ wanted.push(g); return; } // ⬅️ NUEVO: STAFF → TODOS
+    if (isAll){ wanted.push(g); return; }
     const gEmails=emailsOf(raw), gDocIds=coordDocIdsOf(raw);
     const match=(emailElegido && gEmails.includes(emailElegido)) ||
                 (docIdElegido && gDocIds.includes(docIdElegido)) ||
@@ -221,7 +214,7 @@ async function loadGruposForCoordinador(coord, user){
     if(last){ const i=state.ordenados.findIndex(x=> x.id===last || x.numeroNegocio===last); if(i>=0) idx=i; }
   }
   state.idx=Math.max(0,Math.min(idx,state.ordenados.length-1));
-  renderOneGroup(state.ordenados[state.idx], qsF);
+  await renderOneGroup(state.ordenados[state.idx], qsF);
 }
 
 /* ====== NORMALIZADOR DE ITINERARIO ====== */
@@ -284,25 +277,25 @@ function renderNavBar(){
   sel.appendChild(ogTrips);
   sel.value=`trip:${state.idx}`;
 
-  p.querySelector('#btnPrev').onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
+  p.querySelector('#btnPrev').onclick=async ()=>{ const list=getFilteredList(); if(!list.length) return;
     const cur=state.ordenados[state.idx]?.id; const j=list.findIndex(g=>g.id===cur);
     const j2=Math.max(0,j-1), targetId=list[j2].id;
-    state.idx=state.ordenados.findIndex(g=>g.id===targetId); renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`; };
-  p.querySelector('#btnNext').onclick=()=>{ const list=getFilteredList(); if(!list.length) return;
+    state.idx=state.ordenados.findIndex(g=>g.id===targetId); await renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`; };
+  p.querySelector('#btnNext').onclick=async ()=>{ const list=getFilteredList(); if(!list.length) return;
     const cur=state.ordenados[state.idx]?.id; const j=list.findIndex(g=>g.id===cur);
     const j2=Math.min(list.length-1,j+1), targetId=list[j2].id;
-    state.idx=state.ordenados.findIndex(g=>g.id===targetId); renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`; };
-  sel.onchange=()=>{ const v=sel.value||''; if(v==='all'){ state.filter={type:'all',value:null}; renderStatsFiltered(); sel.value=`trip:${state.idx}`; }
-    else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; renderOneGroup(state.ordenados[state.idx]); } };
+    state.idx=state.ordenados.findIndex(g=>g.id===targetId); await renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`; };
+  sel.onchange=async ()=>{ const v=sel.value||''; if(v==='all'){ state.filter={type:'all',value:null}; renderStatsFiltered(); sel.value=`trip:${state.idx}`; }
+    else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; await renderOneGroup(state.ordenados[state.idx]); } };
 
   if(state.isStaff){
     p.querySelector('#btnPrintVch').onclick = openPrintVouchersModal;
-    p.querySelector('#btnNewAlert').onclick = openCreateAlertModal;
+    // (botón crear alerta se mueve al panel de alertas)
   }
 }
 
 /* ====== VISTA GRUPO ====== */
-function renderOneGroup(g, preferDate){
+async function renderOneGroup(g, preferDate){
   const cont=document.getElementById('grupos'); if(!cont) return; cont.innerHTML='';
   if(!g){ cont.innerHTML='<p class="muted">NO HAY VIAJES.</p>'; return; }
   localStorage.setItem('rt_last_group', g.id);
@@ -340,22 +333,46 @@ function renderOneGroup(g, preferDate){
   const paneResumen=tabs.querySelector('#paneResumen');
   const paneItin=tabs.querySelector('#paneItin');
   const paneGastos=tabs.querySelector('#paneGastos');
-  const show = (w)=>{ paneResumen.style.display=w==='resumen'?'':'none'; paneItin.style.display=w==='itin'?'':'none'; paneGastos.style.display=w==='gastos'?'':'none'; };
-  tabs.querySelector('#tabResumen').onclick=()=>show('resumen');
-  tabs.querySelector('#tabItin').onclick   =()=>show('itin');
-  tabs.querySelector('#tabGastos').onclick =()=>show('gastos');
+  const btnResumen=tabs.querySelector('#tabResumen');
+  const btnItin=tabs.querySelector('#tabItin');
+  const btnGastos=tabs.querySelector('#tabGastos');
 
-  renderResumen(g, paneResumen);
-  renderItinerario(g, paneItin, preferDate);
-  renderGastos(g, paneGastos);
+  const setTabLabel=(btn, base, n)=>{
+    const q=(state.groupQ||'').trim();
+    btn.textContent = (q && n>0) ? `${base} (${n})` : base;
+  };
+  const show = (w)=>{ paneResumen.style.display=w==='resumen'?'':'none'; paneItin.style.display=w==='itin'?'':'none'; paneGastos.style.display=w==='gastos'?'':'none'; };
+  btnResumen.onclick=()=>show('resumen');
+  btnItin.onclick   =()=>show('itin');
+  btnGastos.onclick =()=>show('gastos');
+
+  // Render y contadores de búsqueda por pestaña
+  const resumenHits = await renderResumen(g, paneResumen);
+  const itinHits    = renderItinerario(g, paneItin, preferDate);
+  const gastosHits  = await renderGastos(g, paneGastos);
+  setTabLabel(btnResumen, 'RESUMEN', resumenHits);
+  setTabLabel(btnItin,    'ITINERARIO', itinHits);
+  setTabLabel(btnGastos,  'GASTOS', gastosHits);
+
   show('resumen');
 
   // BÚSQUEDA INTERNA
   const input=header.querySelector('#searchTrips');
   input.value = state.groupQ || '';
   let tmr=null;
-  input.oninput=()=>{ clearTimeout(tmr); tmr=setTimeout(()=>{ state.groupQ=input.value||''; const active=paneItin.style.display!=='none'?'itin':(paneGastos.style.display!=='none'?'gastos':'resumen');
-    renderResumen(g, paneResumen); const last=localStorage.getItem('rt_last_date_'+g.id); renderItinerario(g, paneItin, last || preferDate); renderGastos(g, paneGastos); show(active);
+  input.oninput=()=>{ clearTimeout(tmr); tmr=setTimeout(async ()=>{
+    state.groupQ=input.value||'';
+    const active=paneItin.style.display!=='none'?'itin':(paneGastos.style.display!=='none'?'gastos':'resumen');
+
+    const r = await renderResumen(g, paneResumen);
+    const i = renderItinerario(g, paneItin, localStorage.getItem('rt_last_date_'+g.id) || preferDate);
+    const ga= await renderGastos(g, paneGastos);
+
+    setTabLabel(btnResumen,'RESUMEN',r);
+    setTabLabel(btnItin,'ITINERARIO',i);
+    setTabLabel(btnGastos,'GASTOS',ga);
+
+    show(active);
   },180); };
 }
 
@@ -363,7 +380,9 @@ function renderOneGroup(g, preferDate){
 async function renderResumen(g, pane){
   pane.innerHTML='<div class="muted">CARGANDO…</div>';
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML='';
-  const q = norm(state.groupQ||'');
+  const qRaw = (state.groupQ||'').trim();
+  const q = norm(qRaw);
+  let hits = 0;
 
   // HOTEL
   const hotelBox=document.createElement('div'); hotelBox.className='act';
@@ -433,9 +452,11 @@ async function renderResumen(g, pane){
         habLine
       ].join(' '));
 
-      if ( (state.groupQ||'').trim() && !txtMatch.includes( norm(state.groupQ) ) ){
+      const matched = q && txtMatch.includes(q);
+      if (q && !matched){
         hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN COINCIDENCIAS.</div>';
       } else {
+        if (matched) hits += 1;
         hotelBox.innerHTML = `
           <h4>HOTEL</h4>
           ${nombre    ? `<div class="meta"><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
@@ -463,6 +484,7 @@ async function renderResumen(g, pane){
       const s=[v.numero,v.proveedor,v.origen,v.destino,toISO(v.fechaIda),toISO(v.fechaVuelta)].join(' ');
       return norm(s).includes(q);
     });
+    if (q) hits += flt.length;
 
     if(!flt.length){
       vuelosBox.innerHTML = '<h4>TRANSPORTE / VUELOS</h4><div class="muted">SIN VUELOS.</div>';
@@ -486,7 +508,6 @@ async function renderResumen(g, pane){
         `;
         vuelosBox.appendChild(block);
 
-        // SEPARADOR ENTRE VUELOS (OPCIONAL)
         if (i < flt.length - 1){
           const hr = document.createElement('div');
           hr.style.cssText = 'border-top:1px dashed var(--line);opacity:.55;margin:.5rem 0;';
@@ -498,6 +519,8 @@ async function renderResumen(g, pane){
     console.error(e);
     vuelosBox.innerHTML = '<h4>TRANSPORTE / VUELOS</h4><div class="muted">ERROR AL CARGAR.</div>';
   }
+
+  return hits;
 }
 
 /* ====== ÍNDICE DE HOTELES ====== */
@@ -551,7 +574,6 @@ async function loadHotelInfo(g){
   const { byId, bySlug, all } = await ensureHotelesIndex();
   let hotelDoc = null;
 
-  // 3.a) INTENTOS POR ID/REF/PATH
   const tryIds = [];
   if (elegido?.hotelId)     tryIds.push(String(elegido.hotelId));
   if (elegido?.hotelDocId)  tryIds.push(String(elegido.hotelDocId));
@@ -622,11 +644,22 @@ function calcPlan(actividad, grupo){
   if(s>0) return s; const base=(grupo && (grupo.cantidadgrupo!=null?grupo.cantidadgrupo:grupo.pax)); return Number(base||0);
 }
 
+function countItinHits(g, qNorm){
+  if(!qNorm) return 0;
+  let c=0;
+  const map=g.itinerario||{};
+  for(const f of Object.keys(map)){
+    const arr = Array.isArray(map[f]) ? map[f] : [];
+    c += arr.filter(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(qNorm)).length;
+  }
+  return c;
+}
+
 function renderItinerario(g, pane, preferDate){
   pane.innerHTML='';
-  const q = norm(state.groupQ||'');
+  const qNorm = norm(state.groupQ||'');
   const fechas=rangoFechas(g.fechaInicio,g.fechaFin);
-  if(!fechas.length){ pane.innerHTML='<div class="muted">FECHAS NO DEFINIDAS.</div>'; return; }
+  if(!fechas.length){ pane.innerHTML='<div class="muted">FECHAS NO DEFINIDAS.</div>'; return 0; }
 
   const pillsWrap=document.createElement('div'); pillsWrap.className='date-pills'; pane.appendChild(pillsWrap);
   const actsWrap=document.createElement('div'); actsWrap.className='acts'; pane.appendChild(actsWrap);
@@ -634,11 +667,11 @@ function renderItinerario(g, pane, preferDate){
   const hoy=toISO(new Date());
   let startDate=preferDate || ((hoy>=fechas[0] && hoy<=fechas.at(-1))?hoy:fechas[0]);
 
-  const fechasMostrar = (!q) ? fechas : fechas.filter(f=>{
+  const fechasMostrar = (!qNorm) ? fechas : fechas.filter(f=>{
     const arr=(g.itinerario && g.itinerario[f])? g.itinerario[f] : [];
-    return arr.some(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(q));
+    return arr.some(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(qNorm));
   });
-  if(!fechasMostrar.length){ actsWrap.innerHTML='<div class="muted">SIN COINCIDENCIAS PARA EL ITINERARIO.</div>'; return; }
+  if(!fechasMostrar.length){ actsWrap.innerHTML='<div class="muted">SIN COINCIDENCIAS PARA EL ITINERARIO.</div>'; return 0; }
   if(!fechasMostrar.includes(startDate)) startDate=fechasMostrar[0];
 
   fechasMostrar.forEach(f=>{
@@ -649,12 +682,19 @@ function renderItinerario(g, pane, preferDate){
 
   const last=localStorage.getItem('rt_last_date_'+g.id); if(last && fechasMostrar.includes(last)) startDate=last;
   renderActs(g,startDate,actsWrap);
+
+  // devolver cantidad de coincidencias totales en ITINERARIO
+  return countItinHits(g, qNorm);
 }
 
 async function renderActs(grupo, fechaISO, cont){
   cont.innerHTML='';
   const q = norm(state.groupQ||'');
   let acts=(grupo.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
+
+  // Orden por hora de inicio (temprano → tarde)
+  acts = acts.slice().sort((a,b)=> timeVal(a.horaInicio) - timeVal(b.horaInicio));
+
   if(q) acts = acts.filter(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(q));
   if (!acts.length){ cont.innerHTML='<div class="muted">SIN ACTIVIDADES PARA ESTE DÍA.</div>'; return; }
 
@@ -947,7 +987,8 @@ async function openCreateAlertModal(){
 
 /** PANEL GLOBAL DE ALERTAS */
 async function renderGlobalAlerts(){
-  const box = ensurePanel('alertsPanel');
+  const box = document.getElementById('alertsPanel');
+  if (!box) return; // existe en el HTML
 
   // CARGAR TODAS LAS ALERTAS
   const all=[];
@@ -1049,7 +1090,7 @@ async function renderGlobalAlerts(){
 
   const totalUnread = (mi.unreadCount||0) + (op.unreadCount||0);
 
-  // TÍTULO + PASTILLAS (A LA DERECHA DEL TÍTULO)
+  // TÍTULO + PASTILLAS + (BOTÓN CREAR ALERTA PARA STAFF)
   head.innerHTML = `
     <div class="alert-title-row">
       <h4 style="margin:.1rem 0 .0rem">ALERTAS ${totalUnread>0?`<span class="badge">${totalUnread}</span>`:''}</h4>
@@ -1062,7 +1103,17 @@ async function renderGlobalAlerts(){
     ` : '' }
   `;
 
-  // PINTAR
+  // Insertar botón “CREAR ALERTA…” (solo staff)
+  if (state.isStaff){
+    const createBtn = document.createElement('button');
+    createBtn.id = 'btnNewAlertPanel';
+    createBtn.className = 'btn sec';
+    createBtn.textContent = 'CREAR ALERTA…';
+    createBtn.onclick = openCreateAlertModal;
+    head.appendChild(createBtn);
+  }
+
+  // PINTAR (sin reinyectar el panel ni reordenar, para evitar parpadeo)
   box.innerHTML=''; box.appendChild(head); box.appendChild(area);
 
   // LÓGICA DE CAMBIO DE ÁMBITO (SOLO STAFF)
@@ -1142,7 +1193,8 @@ async function renderGastos(g, pane){
       await loadGastosList(g,listBox);
     }catch(e){ console.error(e); alert('NO FUE POSIBLE GUARDAR EL GASTO.'); }finally{ btn.disabled=false; }
   };
-  await loadGastosList(g,listBox);
+  const hits = await loadGastosList(g,listBox);
+  return hits;
 }
 async function getTasas(){
   if(state.cache.tasas) return state.cache.tasas;
@@ -1153,7 +1205,8 @@ async function loadGastosList(g, box){
   const coordId = state.viewingCoordId || (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self');
   const qs=await getDocs(query(collection(db,'coordinadores',coordId,'gastos'), orderBy('createdAt','desc')));
   let list=[]; qs.forEach(d=>{ const x=d.data()||{}; if(x.grupoId===g.id) list.push({id:d.id,...x}); });
-  const q = norm(state.groupQ||''); if(q){ list = list.filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(q)); }
+  const q = norm(state.groupQ||''); let hits=0;
+  if(q){ const before=list.length; list = list.filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(q)); hits = list.length; }
   const tasas=await getTasas();
   const tot={ CLP:0, USD:0, BRL:0, ARS:0, CLPconv:0 };
   const table=document.createElement('table'); table.className='table';
@@ -1169,7 +1222,7 @@ async function loadGastosList(g, box){
        <td data-label="COMPROBANTE">${x.imgUrl?`<a href="${x.imgUrl}" target="_blank">VER</a>`:'—'}</td>
      `;
      tb.appendChild(tr);
-   
+
      if(x.moneda==='CLP') tot.CLP+=Number(x.valor||0);
      if(x.moneda==='USD') tot.USD+=Number(x.valor||0);
      if(x.moneda==='BRL') tot.BRL+=Number(x.valor||0);
@@ -1180,6 +1233,7 @@ async function loadGastosList(g, box){
   const totDiv=document.createElement('div'); totDiv.className='totline';
   totDiv.textContent=`TOTAL CLP: ${tot.CLP.toLocaleString('es-CL')} · USD: ${tot.USD.toLocaleString('es-CL')} · BRL: ${tot.BRL.toLocaleString('es-CL')} · ARS: ${tot.ARS.toLocaleString('es-CL')} · EQUIV. CLP: ${Math.round(tot.CLPconv).toLocaleString('es-CL')}`;
   box.appendChild(totDiv);
+  return hits;
 }
 
 /* ====== IMPRIMIR VOUCHERS (STAFF) ====== */
@@ -1229,4 +1283,3 @@ async function buildPrintableVouchers(list){
 h3{margin:.2rem 0 .4rem}.meta{color:#333;font-size:14px}hr{border:0;border-top:1px dashed #999;margin:.4rem 0}</style>
 </head><body><h2>VOUCHERS</h2>${rows || '<div>SIN ACTIVIDADES.</div>'}</body></html>`;
 }
-
