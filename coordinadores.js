@@ -488,7 +488,7 @@ async function renderResumen(g, pane){
     console.error(e);
     vuelosBox.innerHTML = '<h4>TRANSPORTE / VUELOS</h4><div class="muted">ERROR AL CARGAR.</div>';
   }
-
+}
 
 /* ====== ÍNDICE DE HOTELES ====== */
 async function ensureHotelesIndex(){
