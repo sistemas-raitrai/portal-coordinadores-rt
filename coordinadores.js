@@ -8,7 +8,7 @@ import { app, db, auth, storage } from './firebase-init-portal.js';
 import { onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
-  collection, getDocs, getDoc, doc, updateDoc, addDoc,
+  collection, getDocs, getDoc, doc, updateDoc, addDoc, setDoc,
   serverTimestamp, query, where, orderBy, limit
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 import { ref as sRef, uploadBytes, getDownloadURL }
@@ -25,6 +25,12 @@ const ymdFromDMY=(s)=>{ const t=(s||'').trim(); if(/^\d{2}-\d{2}-\d{4}$/.test(t)
 const daysInclusive=(ini,fin)=>{ const a=toISO(ini), b=toISO(fin); if(!a||!b) return 0; return Math.max(1,Math.round((new Date(b)-new Date(a))/86400000)+1); };
 const rangoFechas=(ini,fin)=>{ const out=[]; const A=toISO(ini), B=toISO(fin); if(!A||!B) return out; for(let d=new Date(A+'T00:00:00'); d<=new Date(B+'T00:00:00'); d.setDate(d.getDate()+1)) out.push(d.toISOString().slice(0,10)); return out; };
 const parseQS=()=>{ const p=new URLSearchParams(location.search); return { g:p.get('g')||'', f:p.get('f')||'' }; };
+const pad = n => String(n).padStart(2,'0');
+const timeIdNowMs = () => {
+  const d = new Date();
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,'0')}`;
+};
+
 
 /* Tiempo: HH:MM → minutos (sin hora => muy grande para que quede al final) */
 const timeVal = (t) => {
@@ -756,8 +762,14 @@ async function renderActs(grupo, fechaISO, cont){
         await updateDoc(refGrupo,payload);
         setSavedAsistenciaLocal(grupo,fechaISO,actName,{paxFinal:pax,notas:nota});
         if(nota){
-          const coll=collection(db,'grupos',grupo.id,'bitacora',`${fechaISO}-${actKey}`,'items');
-          await addDoc(coll,{ texto:nota, byUid:auth.currentUser.uid, byEmail:(auth.currentUser.email||'').toLowerCase(), ts:serverTimestamp() });
+           const timeId = timeIdNowMs();
+           const ref = doc(db,'grupos',grupo.id,'bitacora',actKey,fechaISO,timeId);
+           await setDoc(ref, {
+             texto: nota,
+             byUid: auth.currentUser.uid,
+             byEmail: (auth.currentUser.email||'').toLowerCase(),
+             ts: serverTimestamp()
+           });
 
           // ALERTA PARA  (OPERACIONES)
           await addDoc(collection(db,'alertas'),{
@@ -793,7 +805,7 @@ async function renderActs(grupo, fechaISO, cont){
 async function loadBitacora(grupoId, fechaISO, actKey, wrap){
   wrap.innerHTML='<div class="muted">CARGANDO…</div>';
   try{
-    const coll=collection(db,'grupos',grupoId,'bitacora',`${fechaISO}-${actKey}`,'items');
+    const coll = collection(db,'grupos',grupoId,'bitacora',actKey,fechaISO);
     const qs=await getDocs(query(coll,orderBy('ts','desc'),limit(50)));
     const frag=document.createDocumentFragment();
     qs.forEach(d=>{ const x=d.data()||{}; const quien=String(x.byEmail||x.byUid||'USUARIO').toUpperCase();
@@ -905,8 +917,14 @@ async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
     renderItinerario(g, document.getElementById('paneItin'), fechaISO);
 
     if(logBitacora){
-      const coll=collection(db,'grupos',g.id,'bitacora',`${fechaISO}-${key}`,'items');
-      await addDoc(coll,{ texto:`ACTIVIDAD ${estado.toLowerCase()}`, byUid:state.user.uid, byEmail:(state.user.email||'').toLowerCase(), ts:serverTimestamp() });
+      const timeId = timeIdNowMs();
+      const ref = doc(db,'grupos',g.id,'bitacora',key,fechaISO,timeId);
+      await setDoc(ref, {
+        texto: `ACTIVIDAD ${estado.toLowerCase()}`,
+        byUid: state.user.uid,
+        byEmail: (state.user.email||'').toLowerCase(),
+        ts: serverTimestamp()
+      });
     }
   }catch(e){ console.error(e); alert('NO FUE POSIBLE ACTUALIZAR EL ESTADO.'); }
 }
