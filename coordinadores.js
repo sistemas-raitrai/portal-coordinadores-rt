@@ -410,90 +410,91 @@ async function renderResumen(g, pane){
 
   pane.appendChild(wrap);
 
-  // ===== HOTEL =====
-  try{
-    const h = await loadHotelInfo(g);
-    D_HOTEL('RENDERRESUMEN -> H', h);
-
-    if(!h){
-      hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN ASIGNACIÓN.</div>';
-    }else{
-      let H = h.hotel || {};
-      D_HOTEL('DOC HOTELES (INICIAL)', H);
-
-      if ((!H || !H.nombre) && h.hotelId){
-        try{
-          const hd = await getDoc(doc(db,'hoteles', String(h.hotelId)));
-          D_HOTEL('FALLBACK GETDOC(HOTELES, HOTELID)', hd.exists(), 'HOTELID=', String(h.hotelId));
-          if(hd.exists()) H = { id: hd.id, ...(hd.data()||{}) };
-        }catch(e){
-          D_HOTEL('ERROR FALLBACK GETDOC HOTELES', e?.code || e, e?.message || '');
-        }
-      }
-
-      const nombre    = String(h.hotelNombre || H.nombre || '').toUpperCase();
-      const direccion = (H.direccion || h.direccion || '').toUpperCase();
-      const cTelefono = (H.contactoTelefono || '').toUpperCase();
-      const status    = (h.status || '').toString().toUpperCase();
-      const ciISO     = toISO(h.checkIn);
-      const coISO     = toISO(h.checkOut);
-      const noches    = (h.noches != null)
-        ? Number(h.noches)
-        : (ciISO && coISO ? Math.max(0, daysInclusive(ciISO,coISO)-1) : '');
-
-      D_HOTEL('SE VA A PINTAR', { nombre, direccion, cTelefono, status, ciISO, coISO, noches, hotelId:h?.hotelId });
-
-      const est = h.estudiantes || {F:0,M:0,O:0};
-      const estTot = Number(h.estudiantesTotal ?? (est.F+est.M+est.O));
-      const adu = h.adultos || {F:0,M:0,O:0};
-      const aduTot = Number(h.adultosTotal ?? (adu.F+adu.M+adu.O));
-
-      const hab = h.habitaciones || {};
-      const habLine = (hab.singles!=null || hab.dobles!=null || hab.triples!=null || hab.cuadruples!=null)
-        ? `HABITACIONES: ${[
-            (hab.singles!=null?`SINGLES: ${hab.singles}`:''),
-            (hab.dobles!=null?`DOBLES: ${hab.dobles}`:''),
-            (hab.triples!=null?`TRIPLES: ${hab.triples}`:''),
-            (hab.cuadruples!=null?`CUÁDRUPLES: ${hab.cuadruples}`:'')
-          ].filter(Boolean).join(' · ')}`
-        : '';
-
-      const contactoLine = [cTelefono].filter(Boolean).join(' · ');
-
-      const txtMatch = norm([
-        nombre, direccion, contactoLine, status,
-        dmy(ciISO), dmy(coISO),
-        `estudiantes f ${est.F} m ${est.M} o ${est.O} total ${estTot}`,
-        `adultos f ${adu.F} m ${adu.M} o ${adu.O} total ${aduTot}`,
-        habLine
-      ].join(' '));
-
-      const matched = q && txtMatch.includes(q);
-      if (q && !matched){
-        hotelBox.innerHTML = '<h4>HOTEL</h4><div class="muted">SIN COINCIDENCIAS.</div>';
-      } else {
-        if (matched) hits += 1;
-        hotelBox.innerHTML = `
-          <h4>HOTEL</h4>
-          ${nombre    ? `<div class="meta"><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
-          <div class="meta"><strong>CHECK-IN/OUT:</strong> ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?`</div>
-          <div class="meta"><strong>NOCHES:</strong> ${noches}`:'')}</div>
-          ${status ? `<div class="meta"><strong>ESTADO:</strong> ${status}</div>` : ''}
-          <div class="meta"><strong>ESTUDIANTES:</strong> F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · <strong>ADULTOS:</strong> F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
-          ${habLine ? `<div class="meta">${habLine}</div>` : ''}
-          ${h.coordinadores!=null ? `<div class="meta"><strong>COORDINADORES:</strong> ${(String(h.coordinadores)).toUpperCase()}</div>` : ''}
-          ${h.conductores!=null ? `<div class="meta"><strong>CONDUCTORES:</strong> ${(String(h.conductores)).toUpperCase()}</div>` : ''}
-          
-          ${direccion ? `<div class="meta"><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
-          ${contactoLine ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoLine}</div>` : ''}       
-        `;
-      }
-    }
-  }catch(e){
-    console.error(e);
-    D_HOTEL('ERROR RENDERRESUMEN HOTEL', e?.code || e, e?.message || '');
-    hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">ERROR AL CARGAR.</div>';
-  }
+   // ===== HOTEL(ES) =====
+   try{
+     const hoteles = await loadHotelesInfo(g); // ahora devuelve array
+     D_HOTEL('RENDERRESUMEN -> HOTELES[]', hoteles);
+   
+     if (!hoteles.length){
+       hotelBox.innerHTML = '<h4>HOTELES</h4><div class="muted">SIN ASIGNACIÓN.</div>';
+     } else {
+       hotelBox.innerHTML = `<h4>HOTELES ${hoteles.length>1?`(${hoteles.length})`:''}</h4>`;
+       const q = norm((state.groupQ||'').trim());
+       let rendered = 0;
+   
+       hoteles.forEach((h, idx) => {
+         const H = h.hotel || {};
+         const nombre    = String(h.hotelNombre || H.nombre || '').toUpperCase();
+         const direccion = (H.direccion || h.direccion || '').toUpperCase();
+         const cTelefono = (H.contactoTelefono || '').toUpperCase();
+         const status    = (h.status || '').toString().toUpperCase();
+         const ciISO     = toISO(h.checkIn);
+         const coISO     = toISO(h.checkOut);
+         const noches    = (h.noches !== '' && h.noches != null) ? Number(h.noches) : '';
+   
+         const est = h.estudiantes || {F:0,M:0,O:0};
+         const estTot = Number(h.estudiantesTotal ?? (est.F+est.M+est.O));
+         const adu = h.adultos || {F:0,M:0,O:0};
+         const aduTot = Number(h.adultosTotal ?? (adu.F+adu.M+adu.O));
+   
+         const hab = h.habitaciones || {};
+         const habLine = (hab.singles!=null || hab.dobles!=null || hab.triples!=null || hab.cuadruples!=null)
+           ? `HABITACIONES: ${[
+               (hab.singles!=null?`SINGLES: ${hab.singles}`:''),
+               (hab.dobles!=null?`DOBLES: ${hab.dobles}`:''),
+               (hab.triples!=null?`TRIPLES: ${hab.triples}`:''),
+               (hab.cuadruples!=null?`CUÁDRUPLES: ${hab.cuadruples}`:'')
+             ].filter(Boolean).join(' · ')}`
+           : '';
+   
+         const contactoLine = [cTelefono].filter(Boolean).join(' · ');
+   
+         const txtMatch = norm([
+           nombre, direccion, contactoLine, status,
+           dmy(ciISO), dmy(coISO),
+           `estudiantes f ${est.F} m ${est.M} o ${est.O} total ${estTot}`,
+           `adultos f ${adu.F} m ${adu.M} o ${adu.O} total ${aduTot}`,
+           habLine
+         ].join(' '));
+   
+         const matched = q ? txtMatch.includes(q) : true;
+         if (q && matched) hits += 1;
+         if (!matched) return;
+   
+         const block = document.createElement('div');
+         block.className = 'meta';
+         block.innerHTML = `
+           <div class="card" style="margin:.4rem 0;">
+             ${nombre ? `<div class="meta"><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
+             <div class="meta"><strong>CHECK-IN/OUT:</strong> ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?`</div>
+             <div class="meta"><strong>NOCHES:</strong> ${noches}`:'')}</div>
+             ${status ? `<div class="meta"><strong>ESTADO:</strong> ${status}</div>` : ''}
+             <div class="meta"><strong>ESTUDIANTES:</strong> F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · <strong>ADULTOS:</strong> F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
+             ${habLine ? `<div class="meta">${habLine}</div>` : ''}
+             ${h.coordinadores!=null ? `<div class="meta"><strong>COORDINADORES:</strong> ${String(h.coordinadores).toUpperCase()}</div>` : ''}
+             ${h.conductores!=null ? `<div class="meta"><strong>CONDUCTORES:</strong> ${String(h.conductores).toUpperCase()}</div>` : ''}
+             ${direccion ? `<div class="meta"><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
+             ${contactoLine ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoLine}</div>` : ''}
+           </div>`;
+         hotelBox.appendChild(block);
+   
+         if (idx < hoteles.length-1) {
+           const hr = document.createElement('div');
+           hr.style.cssText = 'border-top:1px dashed var(--line);opacity:.55;margin:.5rem 0;';
+           hotelBox.appendChild(hr);
+         }
+         rendered++;
+       });
+   
+       if ((state.groupQ||'').trim() && rendered === 0){
+         hotelBox.innerHTML = '<h4>HOTELES</h4><div class="muted">SIN COINCIDENCIAS.</div>';
+       }
+     }
+   }catch(e){
+     console.error(e);
+     D_HOTEL('ERROR RENDERRESUMEN HOTELES', e?.code || e, e?.message || '');
+     hotelBox.innerHTML='<h4>HOTELES</h4><div class="muted">ERROR AL CARGAR.</div>';
+   }
 
   // ===== VUELOS =====
   try{
@@ -559,6 +560,117 @@ async function ensureHotelesIndex(){
   state.cache.hoteles = { loaded:true, byId, bySlug, all };
   D_HOTEL('ÍNDICE HOTELES CARGADO', { count: all.length });
   return state.cache.hoteles;
+}
+
+/* ====== HOTELES: TODAS LAS ASIGNACIONES DE UN GRUPO ====== */
+async function loadHotelesInfo(g){
+  const groupDocId = String(g.id || '').trim();
+  const groupNum   = String(g.numeroNegocio || '').trim();
+  const cacheKey   = `hoteles:${groupDocId || groupNum}`;
+
+  if (state.cache.hotel.has(cacheKey)) {
+    D_HOTEL('CACHE HIT loadHotelesInfo', { cacheKey });
+    return state.cache.hotel.get(cacheKey);
+  }
+
+  let cand = [];
+
+  // Esquema “bueno”: grupoId === docId del grupo
+  try {
+    if (groupDocId) {
+      const qs = await getDocs(query(collection(db,'hotelAssignments'), where('grupoId','==', groupDocId)));
+      qs.forEach(d => cand.push({ id:d.id, ...(d.data()||{}) }));
+    }
+  } catch (e) { D_HOTEL('ERR hotelAssignments.grupoId', e); }
+
+  // Fallbacks legacy (por compatibilidad de datos antiguos)
+  try {
+    if (!cand.length && groupDocId) {
+      const qs2 = await getDocs(query(collection(db,'hotelAssignments'), where('grupoDocId','==', groupDocId)));
+      qs2.forEach(d => cand.push({ id:d.id, ...(d.data()||{}) }));
+    }
+  } catch (e) { D_HOTEL('ERR hotelAssignments.grupoDocId', e); }
+
+  try {
+    if (!cand.length && groupNum) {
+      const qs3 = await getDocs(query(collection(db,'hotelAssignments'), where('grupoNumero','==', groupNum)));
+      qs3.forEach(d => cand.push({ id:d.id, ...(d.data()||{}) }));
+    }
+  } catch (e) { D_HOTEL('ERR hotelAssignments.grupoNumero', e); }
+
+  if (!cand.length){
+    state.cache.hotel.set(cacheKey, []);
+    return [];
+  }
+
+  // Orden por check-in ascendente
+  cand.sort((a,b) => (toISO(a.checkIn)||'').localeCompare(toISO(b.checkIn)||''));
+
+  // Resolver docs de hoteles para cada asignación
+  const { byId, bySlug, all } = await ensureHotelesIndex();
+  function pickHotelDoc(asig){
+    const tryIds = [];
+    if (asig?.hotelId) tryIds.push(String(asig.hotelId));
+    if (asig?.hotelDocId) tryIds.push(String(asig.hotelDocId));
+    if (asig?.hotel?.id) tryIds.push(String(asig.hotel.id));
+    if (asig?.hotelRef && typeof asig.hotelRef === 'object' && 'id' in asig.hotelRef) {
+      tryIds.push(String(asig.hotelRef.id));
+    }
+    if (asig?.hotelPath && typeof asig.hotelPath === 'string') {
+      const m = asig.hotelPath.match(/hoteles\/([^/]+)/i);
+      if (m) tryIds.push(m[1]);
+    }
+    for (const id of tryIds){
+      if (byId.has(id)) return byId.get(id);
+    }
+
+    const s = norm(asig?.nombre || asig?.hotelNombre || '');
+    const dest = norm(g.destino || '');
+    if (s && bySlug.has(s)) return bySlug.get(s);
+    if (s){
+      const candidatos = [];
+      for (const [slugName, docu] of bySlug){
+        if (slugName.includes(s) || s.includes(slugName)) candidatos.push(docu);
+      }
+      if (candidatos.length === 1) return candidatos[0];
+      return candidatos.find(d => norm(d.destino||d.ciudad||'') === dest) || candidatos[0] || null;
+    }
+
+    const ci = toISO(asig.checkIn), co = toISO(asig.checkOut);
+    const overlapDays = (A,B,C,D)=>{ if(!A||!B||!C||!D) return 0;
+      const s = Math.max(new Date(A).getTime(), new Date(C).getTime());
+      const e = Math.min(new Date(B).getTime(), new Date(D).getTime());
+      return (e>=s) ? Math.round((e - s)/86400000) + 1 : 0;
+    };
+    let candidatos = all.filter(h => norm(h.destino||h.ciudad||'') === dest);
+    if (ci && co){
+      candidatos = candidatos
+        .map(h => ({ h, ov: overlapDays(ci, co, toISO(h.fechaInicio), toISO(h.fechaFin)) }))
+        .sort((a,b)=> b.ov - a.ov).map(x=>x.h);
+    }
+    return candidatos[0] || null;
+  }
+
+  const out = cand.map(a => {
+    const H = pickHotelDoc(a);
+    const ciISO = toISO(a.checkIn);
+    const coISO = toISO(a.checkOut);
+    const noches = (typeof a.noches === 'number')
+      ? a.noches
+      : (ciISO && coISO ? Math.max(0, (new Date(coISO)-new Date(ciISO))/86400000) : '');
+    return {
+      ...a,
+      hotel: H,
+      hotelNombre: a?.hotelNombre || a?.nombre || H?.nombre || '',
+      checkIn: ciISO,
+      checkOut: coISO,
+      noches
+    };
+  });
+
+  state.cache.hotel.set(cacheKey, out);
+  if (groupNum) state.cache.hotel.set(groupNum, out);
+  return out;
 }
 
 /* ====== HOTEL: ASIGNACIÓN + CRUCE CON "HOTELES" (ROBUSTO) ====== */
