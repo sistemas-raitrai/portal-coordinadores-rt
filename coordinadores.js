@@ -957,7 +957,7 @@ async function renderActs(grupo, fechaISO, cont){
     if (isLastDay) line = line ? `${line} · ÚLTIMO DÍA DEL VIAJE` : 'ÚLTIMO DÍA DEL VIAJE';
 
     if (line) {
-      top.innerHTML = `<div class="meta" style="font-weight:600">${line}</div>`;
+      top.innerHTML = `<h4>${line}</h4>`;
       cont.appendChild(top);
     }
   } catch (e) {
