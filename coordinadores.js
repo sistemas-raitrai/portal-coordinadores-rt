@@ -936,6 +936,34 @@ function renderItinerario(g, pane, preferDate){
 
 async function renderActs(grupo, fechaISO, cont){
   cont.innerHTML='';
+     // Banner superior: Alojamiento del día + aviso último día
+  try {
+    const top = document.createElement('div');
+    top.className = 'act';
+
+    // Resolver hotel del día: checkIn <= fecha < checkOut
+    const hoteles = await loadHotelesInfo(grupo) || [];
+    const matchHotel = hoteles.find(h => {
+      const ci = toISO(h.checkIn);
+      const co = toISO(h.checkOut);
+      return ci && co && (fechaISO >= ci) && (fechaISO < co);
+    });
+
+    const hotelName = (matchHotel?.hotelNombre || matchHotel?.hotel?.nombre || '').toString().toUpperCase();
+    const isLastDay = (toISO(grupo.fechaFin) === fechaISO);
+
+    let line = '';
+    if (hotelName) line = `ALOJAMIENTO EN "${hotelName}"`;
+    if (isLastDay) line = line ? `${line} · ÚLTIMO DÍA DEL VIAJE` : 'ÚLTIMO DÍA DEL VIAJE';
+
+    if (line) {
+      top.innerHTML = `<div class="meta" style="font-weight:600">${line}</div>`;
+      cont.appendChild(top);
+    }
+  } catch (e) {
+    D_HOTEL('ERROR BANDEA ALOJAMIENTO/ÚLTIMO DÍA', e);
+  }
+
   const q = norm(state.groupQ||'');
   let acts=(grupo.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
 
