@@ -2,6 +2,7 @@
    — VERSIÓN: ALERTAS MEJORADAS + MOBILE + TODO EN MAYÚSCULAS EN LA UI
    — Cambios: orden de actividades por hora, botón “Crear Alerta” en Alertas,
               contadores de búsqueda por pestaña, menos parpadeo en auto-refresco.
+   — + VIAJE: Inicio/Termino, paxViajando, reversibles por STAFF, PAX tachado.
 */
 
 import { app, db, auth, storage } from './firebase-init-portal.js';
@@ -9,7 +10,7 @@ import { onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
   collection, getDocs, getDoc, doc, updateDoc, addDoc, setDoc,
-  serverTimestamp, query, where, orderBy, limit
+  serverTimestamp, query, where, orderBy, limit, deleteField
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 import { ref as sRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
@@ -31,6 +32,20 @@ const timeIdNowMs = () => {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,'0')}`;
 };
 
+/* ====== UTILS PAX/VIAJE (NUEVOS) ====== */
+const todayISO = () => new Date().toISOString().slice(0,10);
+const isToday = (iso) => (toISO(iso) === todayISO());
+const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
+const paxRealOf = (g) => Number(g?.paxViajando?.total || 0);
+const paxBreakdown = (g) => ({ A: Number(g?.paxViajando?.A || 0), E: Number(g?.paxViajando?.E || 0) });
+const fmtPaxPlan = (plan, g) => {
+  const real = paxRealOf(g);
+  const nPlan = Number(plan || 0);
+  if (real && real !== nPlan){
+    return `<span style="text-decoration:line-through;opacity:.7">${nPlan}</span> → <strong>${real}</strong>`;
+  }
+  return `<strong>${nPlan}</strong>`;
+};
 
 /* Tiempo: HH:MM → minutos (sin hora => muy grande para que quede al final) */
 const timeVal = (t) => {
@@ -59,7 +74,6 @@ function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x
   emailsOf(g).forEach(e=>{ if(mapEmailToId.has(e)) out.add(mapEmailToId.get(e)); });
   return [...out];
 }
-const paxOf = g => Number(g?.cantidadgrupo ?? g?.pax ?? 0);
 
 /* ====== ESTADO APP ====== */
 const STAFF_EMAILS = new Set(['aleoperaciones@raitrai.cl','operaciones@raitrai.cl','anamaria@raitrai.cl','tomas@raitrai.cl','sistemas@raitrai.cl'].map(x=>x.toLowerCase()));
@@ -85,7 +99,7 @@ function ensurePanel(id, html=''){
   let p=document.getElementById(id);
   if(!p){ p=document.createElement('div'); p.id=id; p.className='panel'; document.querySelector('.wrap').prepend(p); }
   if(html) p.innerHTML=html;
-  enforceOrder(); // <- vuelve a llamar aquí si quieres que siempre respete el 
+  enforceOrder();
   return p;
 }
 
@@ -320,19 +334,58 @@ async function renderOneGroup(g, preferDate){
   const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
   const rango = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
+  /* ——— VIAJE / PAX REAL ——— */
+  const paxPlan = paxOf(g);
+  const real = paxRealOf(g);
+  const { A: A_real, E: E_real } = paxBreakdown(g);
+  const isStartDay = isToday(g.fechaInicio);
+  const viaje = g.viaje || {};
+  const viajeEstado = viaje.estado || (viaje.fin?.at ? 'FINALIZADO' : (viaje.inicio?.at ? 'EN_CURSO' : 'PENDIENTE'));
+  const started = !!viaje.inicio?.at;
+  const finished = !!viaje.fin?.at;
+
   const header=document.createElement('div'); header.className='group-card';
   header.innerHTML=`<h3>${(name||'').toUpperCase()} · CÓDIGO: (${code})</h3>
     <div class="grid-mini">
       <div class="lab">DESTINO</div><div>${(g.destino||'—').toUpperCase()}</div>
       <div class="lab">GRUPO</div><div>${(name||'').toUpperCase()}</div>
-      <div class="lab">PAX TOTAL</div><div>${(g.cantidadgrupo ?? g.pax ?? 0)}</div>
+      <div class="lab">PAX TOTAL</div>
+      <div>${fmtPaxPlan(paxPlan, g)}${real?` <span class="muted">(A:${A_real} · E:${E_real})</span>`:''}</div>
       <div class="lab">PROGRAMA</div><div>${(g.programa||'—').toUpperCase()}</div>
       <div class="lab">FECHAS</div><div>${rango}</div>
     </div>
-    <div class="rowflex" style="margin-top:.6rem">
-      <input id="searchTrips" type="text" placeholder="BUSCADOR EN RESUMEN, ITINERARIO Y GASTOS..."/>
+
+    <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
+      <input id="searchTrips" type="text" placeholder="BUSCADOR EN RESUMEN, ITINERARIO Y GASTOS..." style="flex:1"/>
+    </div>
+
+    <div class="rowflex" style="margin-top:.4rem;gap:.5rem;align-items:center;flex-wrap:wrap">
+      ${(!started)
+          ? `<button id="btnInicioViaje" class="btn sec"${isStartDay?'':` title="No es el día de inicio. Se pedirá confirmación."`}>INICIO DE VIAJE</button>`
+          : `<div class="muted">VIAJE EN CURSO</div>`}
+      ${(started && !finished)
+          ? `<button id="btnTerminoViaje" class="btn warn">TERMINAR VIAJE</button>`
+          : ``}
+      ${(finished)
+          ? `<div class="muted">VIAJE FINALIZADO${viaje?.fin?.rendicionOk?` · RENDICIÓN HECHA`:''}${viaje?.fin?.boletaOk?` · BOLETA ENTREGADA`:''}</div>`
+          : ``}
+      ${state.is
+          ? `<div class="muted" style="opacity:.9">STAFF:</div>
+             ${started ? `<button id="btnReabrirInicio"  class="btn sec">REABRIR INICIO</button>` : ``}
+             ${finished? `<button id="btnReabrirCierre" class="btn sec">REABRIR CIERRE</button>` : ``}`
+          : ``}
     </div>`;
   cont.appendChild(header);
+
+  // Handlers viaje
+  const btnIV = header.querySelector('#btnInicioViaje');
+  if (btnIV) btnIV.onclick = () => openInicioViajeModal(g);
+  const btnTV = header.querySelector('#btnTerminoViaje');
+  if (btnTV) btnTV.onclick = () => openTerminoViajeModal(g);
+  const btnRX = header.querySelector('#btnReabrirInicio');
+  if (btnRX) btnRX.onclick = () => staffReopenInicio(g);
+  const btnRY = header.querySelector('#btnReabrirCierre');
+  if (btnRY) btnRY.onclick = () => staffReopenCierre(g);
 
   const tabs=document.createElement('div');
   tabs.innerHTML=`
@@ -400,9 +453,9 @@ async function renderResumen(g, pane){
   const q = norm(qRaw);
   let hits = 0;
 
-  // HOTEL
+  // HOTEL(ES)
   const hotelBox=document.createElement('div'); hotelBox.className='act';
-  hotelBox.innerHTML='<h4>HOTEL</h4><div class="muted">BUSCANDO…</div>'; wrap.appendChild(hotelBox);
+  hotelBox.innerHTML='<h4>HOTELES</h4><div class="muted">BUSCANDO…</div>'; wrap.appendChild(hotelBox);
 
   // VUELOS
   const vuelosBox=document.createElement('div'); vuelosBox.className='act';
@@ -410,91 +463,91 @@ async function renderResumen(g, pane){
 
   pane.appendChild(wrap);
 
-   // ===== HOTEL(ES) =====
-   try{
-     const hoteles = await loadHotelesInfo(g); // ahora devuelve array
-     D_HOTEL('RENDERRESUMEN -> HOTELES[]', hoteles);
-   
-     if (!hoteles.length){
-       hotelBox.innerHTML = '<h4>HOTELES</h4><div class="muted">SIN ASIGNACIÓN.</div>';
-     } else {
-       hotelBox.innerHTML = `<h4>HOTELES ${hoteles.length>1?`(${hoteles.length})`:''}</h4>`;
-       const q = norm((state.groupQ||'').trim());
-       let rendered = 0;
-   
-       hoteles.forEach((h, idx) => {
-         const H = h.hotel || {};
-         const nombre    = String(h.hotelNombre || H.nombre || '').toUpperCase();
-         const direccion = (H.direccion || h.direccion || '').toUpperCase();
-         const cTelefono = (H.contactoTelefono || '').toUpperCase();
-         const status    = (h.status || '').toString().toUpperCase();
-         const ciISO     = toISO(h.checkIn);
-         const coISO     = toISO(h.checkOut);
-         const noches    = (h.noches !== '' && h.noches != null) ? Number(h.noches) : '';
-   
-         const est = h.estudiantes || {F:0,M:0,O:0};
-         const estTot = Number(h.estudiantesTotal ?? (est.F+est.M+est.O));
-         const adu = h.adultos || {F:0,M:0,O:0};
-         const aduTot = Number(h.adultosTotal ?? (adu.F+adu.M+adu.O));
-   
-         const hab = h.habitaciones || {};
-         const habLine = (hab.singles!=null || hab.dobles!=null || hab.triples!=null || hab.cuadruples!=null)
-           ? `HABITACIONES: ${[
-               (hab.singles!=null?`SINGLES: ${hab.singles}`:''),
-               (hab.dobles!=null?`DOBLES: ${hab.dobles}`:''),
-               (hab.triples!=null?`TRIPLES: ${hab.triples}`:''),
-               (hab.cuadruples!=null?`CUÁDRUPLES: ${hab.cuadruples}`:'')
-             ].filter(Boolean).join(' · ')}`
-           : '';
-   
-         const contactoLine = [cTelefono].filter(Boolean).join(' · ');
-   
-         const txtMatch = norm([
-           nombre, direccion, contactoLine, status,
-           dmy(ciISO), dmy(coISO),
-           `estudiantes f ${est.F} m ${est.M} o ${est.O} total ${estTot}`,
-           `adultos f ${adu.F} m ${adu.M} o ${adu.O} total ${aduTot}`,
-           habLine
-         ].join(' '));
-   
-         const matched = q ? txtMatch.includes(q) : true;
-         if (q && matched) hits += 1;
-         if (!matched) return;
-   
-         const block = document.createElement('div');
-         block.className = 'meta';
-         block.innerHTML = `
-           <div class="card" style="margin:.4rem 0;">
-             ${nombre ? `<div class="meta"><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
-             <div class="meta"><strong>CHECK-IN/OUT:</strong> ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?`</div>
-             <div class="meta"><strong>NOCHES:</strong> ${noches}`:'')}</div>
-             ${status ? `<div class="meta"><strong>ESTADO:</strong> ${status}</div>` : ''}
-             <div class="meta"><strong>ESTUDIANTES:</strong> F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · <strong>ADULTOS:</strong> F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
-             ${habLine ? `<div class="meta">${habLine}</div>` : ''}
-             ${h.coordinadores!=null ? `<div class="meta"><strong>COORDINADORES:</strong> ${String(h.coordinadores).toUpperCase()}</div>` : ''}
-             ${h.conductores!=null ? `<div class="meta"><strong>CONDUCTORES:</strong> ${String(h.conductores).toUpperCase()}</div>` : ''}
-             ${direccion ? `<div class="meta"><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
-             ${contactoLine ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoLine}</div>` : ''}
-           </div>`;
-         hotelBox.appendChild(block);
-   
-         if (idx < hoteles.length-1) {
-           const hr = document.createElement('div');
-           hr.style.cssText = 'border-top:1px dashed var(--line);opacity:.55;margin:.5rem 0;';
-           hotelBox.appendChild(hr);
-         }
-         rendered++;
-       });
-   
-       if ((state.groupQ||'').trim() && rendered === 0){
-         hotelBox.innerHTML = '<h4>HOTELES</h4><div class="muted">SIN COINCIDENCIAS.</div>';
-       }
-     }
-   }catch(e){
-     console.error(e);
-     D_HOTEL('ERROR RENDERRESUMEN HOTELES', e?.code || e, e?.message || '');
-     hotelBox.innerHTML='<h4>HOTELES</h4><div class="muted">ERROR AL CARGAR.</div>';
-   }
+  // ===== HOTELES (múltiples) =====
+  try{
+    const hoteles = await loadHotelesInfo(g);
+    D_HOTEL('RENDERRESUMEN -> HOTELES[]', hoteles);
+
+    if (!hoteles.length){
+      hotelBox.innerHTML = '<h4>HOTELES</h4><div class="muted">SIN ASIGNACIÓN.</div>';
+    } else {
+      hotelBox.innerHTML = `<h4>HOTELES ${hoteles.length>1?`(${hoteles.length})`:''}</h4>`;
+      const qn = norm((state.groupQ||'').trim());
+      let rendered = 0;
+
+      hoteles.forEach((h, idx) => {
+        const H = h.hotel || {};
+        const nombre    = String(h.hotelNombre || H.nombre || '').toUpperCase();
+        const direccion = (H.direccion || h.direccion || '').toUpperCase();
+        const cTelefono = (H.contactoTelefono || '').toUpperCase();
+        const status    = (h.status || '').toString().toUpperCase();
+        const ciISO     = toISO(h.checkIn);
+        const coISO     = toISO(h.checkOut);
+        const noches    = (h.noches !== '' && h.noches != null) ? Number(h.noches) : '';
+
+        const est = h.estudiantes || {F:0,M:0,O:0};
+        const estTot = Number(h.estudiantesTotal ?? (est.F+est.M+est.O));
+        const adu = h.adultos || {F:0,M:0,O:0};
+        const aduTot = Number(h.adultosTotal ?? (adu.F+adu.M+adu.O));
+
+        const hab = h.habitaciones || {};
+        const habLine = (hab.singles!=null || hab.dobles!=null || hab.triples!=null || hab.cuadruples!=null)
+          ? `HABITACIONES: ${[
+              (hab.singles!=null?`SINGLES: ${hab.singles}`:''),
+              (hab.dobles!=null?`DOBLES: ${hab.dobles}`:''),
+              (hab.triples!=null?`TRIPLES: ${hab.triples}`:''),
+              (hab.cuadruples!=null?`CUÁDRUPLES: ${hab.cuadruples}`:'')
+            ].filter(Boolean).join(' · ')}`
+          : '';
+
+        const contactoLine = [cTelefono].filter(Boolean).join(' · ');
+
+        const txtMatch = norm([
+          nombre, direccion, contactoLine, status,
+          dmy(ciISO), dmy(coISO),
+          `estudiantes f ${est.F} m ${est.M} o ${est.O} total ${estTot}`,
+          `adultos f ${adu.F} m ${adu.M} o ${adu.O} total ${aduTot}`,
+          habLine
+        ].join(' '));
+
+        const matched = qn ? txtMatch.includes(qn) : true;
+        if (qn && matched) hits += 1;
+        if (!matched) return;
+
+        const block = document.createElement('div');
+        block.className = 'meta';
+        block.innerHTML = `
+          <div class="card" style="margin:.4rem 0;">
+            ${nombre ? `<div class="meta"><strong>NOMBRE:</strong> ${nombre}</div>` : ''}
+            <div class="meta"><strong>CHECK-IN/OUT:</strong> ${dmy(ciISO)} — ${dmy(coISO)}${(noches!==''?`</div>
+            <div class="meta"><strong>NOCHES:</strong> ${noches}`:'')}</div>
+            ${status ? `<div class="meta"><strong>ESTADO:</strong> ${status}</div>` : ''}
+            <div class="meta"><strong>ESTUDIANTES:</strong> F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · <strong>ADULTOS:</strong> F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})</div>
+            ${habLine ? `<div class="meta">${habLine}</div>` : ''}
+            ${h.coordinadores!=null ? `<div class="meta"><strong>COORDINADORES:</strong> ${String(h.coordinadores).toUpperCase()}</div>` : ''}
+            ${h.conductores!=null ? `<div class="meta"><strong>CONDUCTORES:</strong> ${String(h.conductores).toUpperCase()}</div>` : ''}
+            ${direccion ? `<div class="meta"><strong>DIRECCIÓN:</strong> ${direccion}</div>` : ''}
+            ${contactoLine ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoLine}</div>` : ''}
+          </div>`;
+        hotelBox.appendChild(block);
+
+        if (idx < hoteles.length-1) {
+          const hr = document.createElement('div');
+          hr.style.cssText = 'border-top:1px dashed var(--line);opacity:.55;margin:.5rem 0;';
+          hotelBox.appendChild(hr);
+        }
+        rendered++;
+      });
+
+      if ((state.groupQ||'').trim() && rendered === 0){
+        hotelBox.innerHTML = '<h4>HOTELES</h4><div class="muted">SIN COINCIDENCIAS.</div>';
+      }
+    }
+  }catch(e){
+    console.error(e);
+    D_HOTEL('ERROR RENDERRESUMEN HOTELES', e?.code || e, e?.message || '');
+    hotelBox.innerHTML='<h4>HOTELES</h4><div class="muted">ERROR AL CARGAR.</div>';
+  }
 
   // ===== VUELOS =====
   try{
@@ -551,11 +604,11 @@ async function ensureHotelesIndex(){
   const snap = await getDocs(collection(db,'hoteles'));
   snap.forEach(d=>{
     const x = d.data() || {};
-    const doc = { id:d.id, ...x };
+    theDoc = { id:d.id, ...x };
     const s = norm(x.slug || x.nombre || d.id);
-    byId.set(String(d.id), doc);
-    if (s) bySlug.set(s, doc);
-    all.push(doc);
+    byId.set(String(d.id), theDoc);
+    if (s) bySlug.set(s, theDoc);
+    all.push(theDoc);
   });
   state.cache.hoteles = { loaded:true, byId, bySlug, all };
   D_HOTEL('ÍNDICE HOTELES CARGADO', { count: all.length });
@@ -583,7 +636,7 @@ async function loadHotelesInfo(g){
     }
   } catch (e) { D_HOTEL('ERR hotelAssignments.grupoId', e); }
 
-  // Fallbacks legacy (por compatibilidad de datos antiguos)
+  // Fallbacks legacy
   try {
     if (!cand.length && groupDocId) {
       const qs2 = await getDocs(query(collection(db,'hotelAssignments'), where('grupoDocId','==', groupDocId)));
@@ -603,10 +656,10 @@ async function loadHotelesInfo(g){
     return [];
   }
 
-  // Orden por check-in ascendente
+  // Orden por check-in asc
   cand.sort((a,b) => (toISO(a.checkIn)||'').localeCompare(toISO(b.checkIn)||''));
 
-  // Resolver docs de hoteles para cada asignación
+  // Resolver docs hotel
   const { byId, bySlug, all } = await ensureHotelesIndex();
   function pickHotelDoc(asig){
     const tryIds = [];
@@ -673,13 +726,10 @@ async function loadHotelesInfo(g){
   return out;
 }
 
-/* ====== HOTEL: ASIGNACIÓN + CRUCE CON "HOTELES" (ROBUSTO) ====== */
+/* ====== (LEGACY) HOTEL: UNA ASIGNACIÓN MEJOR — se mantiene por compatibilidad ====== */
 async function loadHotelInfo(g){
-  // Claves candidatas (docId primero, luego numeroNegocio como legacy)
   const groupDocId = String(g.id || '').trim();
   const groupNum   = String(g.numeroNegocio || '').trim();
-
-  // Cachea por docId; si no hay docId, cae a numeroNegocio
   const cacheKey = groupDocId || groupNum || '';
   if (cacheKey && state.cache.hotel.has(cacheKey)) {
     D_HOTEL('CACHE HIT LOADHOTELINFO', { cacheKey, groupDocId, groupNum });
@@ -687,7 +737,6 @@ async function loadHotelInfo(g){
   }
   D_HOTEL('INI LOADHOTELINFO', { groupDocId, groupNum, grupoDoc: g.id, destino: g.destino });
 
-  // 1) Buscar asignaciones por grupoId (nuevo esquema correcto)
   let cand = [];
   try {
     if (groupDocId) {
@@ -696,7 +745,6 @@ async function loadHotelInfo(g){
     }
   } catch (e) { D_HOTEL('ERROR query grupoId', e); }
 
-  // 2) Fallbacks legacy: por grupoDocId y por numeroNegocio
   try {
     if (!cand.length && groupDocId) {
       const qs2 = await getDocs(query(collection(db,'hotelAssignments'), where('grupoDocId', '==', groupDocId)));
@@ -711,14 +759,12 @@ async function loadHotelInfo(g){
     }
   } catch (e) { D_HOTEL('ERROR query grupoNumero', e); }
 
-  // 3) Nada encontrado → cache null
   if (!cand.length) {
     if (cacheKey) state.cache.hotel.set(cacheKey, null);
     D_HOTEL('SIN ASIGNACIÓN → NULL');
     return null;
   }
 
-  // 4) Elegir la mejor por solapamiento/fecha con el rango del grupo
   let elegido = null, score = 1e15;
   const rangoIni = toISO(g.fechaInicio), rangoFin = toISO(g.fechaFin);
   for (const x of cand) {
@@ -732,11 +778,9 @@ async function loadHotelInfo(g){
   }
   D_HOTEL('ASIGNACIÓN ELEGIDA', elegido);
 
-  // 5) Resolver doc de hotel usando índice
   const { byId, bySlug, all } = await ensureHotelesIndex();
   let hotelDoc = null;
 
-  // a) Por id directos en la asignación
   const tryIds = [];
   if (elegido?.hotelId)     tryIds.push(String(elegido.hotelId));
   if (elegido?.hotelDocId)  tryIds.push(String(elegido.hotelDocId));
@@ -756,7 +800,6 @@ async function loadHotelInfo(g){
     } catch (e) { D_HOTEL('ERROR GETDOC HOTELES por ID', id, e); }
   }
 
-  // b) Fuzzy por nombre/slug si aún no
   if (!hotelDoc) {
     const s = norm(elegido?.nombre || elegido?.hotelNombre || '');
     const dest = norm(g.destino || '');
@@ -774,7 +817,6 @@ async function loadHotelInfo(g){
     }
   }
 
-  // c) Heurística por destino/fechas (último recurso)
   if (!hotelDoc) {
     const dest = norm(g.destino || '');
     const ci = toISO(elegido?.checkIn), co = toISO(elegido?.checkOut);
@@ -800,7 +842,6 @@ async function loadHotelInfo(g){
     hotelNombre: elegido?.nombre || elegido?.hotelNombre || hotelDoc?.nombre || ''
   };
 
-  // Cachea con ambas claves, por si el llamador usa una u otra
   if (groupDocId) state.cache.hotel.set(groupDocId, out);
   if (groupNum)   state.cache.hotel.set(groupNum,   out);
 
@@ -936,33 +977,23 @@ function renderItinerario(g, pane, preferDate){
 
 async function renderActs(grupo, fechaISO, cont){
   cont.innerHTML='';
-     // Banner superior: Alojamiento del día + aviso último día
+  // Banner superior: Alojamiento del día + aviso último día
   try {
     const top = document.createElement('div');
     top.className = 'act';
-
-    // Resolver hotel del día: checkIn <= fecha < checkOut
     const hoteles = await loadHotelesInfo(grupo) || [];
     const matchHotel = hoteles.find(h => {
       const ci = toISO(h.checkIn);
       const co = toISO(h.checkOut);
       return ci && co && (fechaISO >= ci) && (fechaISO < co);
     });
-
     const hotelName = (matchHotel?.hotelNombre || matchHotel?.hotel?.nombre || '').toString().toUpperCase();
     const isLastDay = (toISO(grupo.fechaFin) === fechaISO);
-
     let line = '';
     if (hotelName) line = `ALOJAMIENTO EN "${hotelName}"`;
     if (isLastDay) line = line ? `${line} · ÚLTIMO DÍA DEL VIAJE` : 'ÚLTIMO DÍA DEL VIAJE';
-
-    if (line) {
-      top.innerHTML = `<h4>${line}</h4>`;
-      cont.appendChild(top);
-    }
-  } catch (e) {
-    D_HOTEL('ERROR BANDEA ALOJAMIENTO/ÚLTIMO DÍA', e);
-  }
+    if (line) { top.innerHTML = `<h4>${line}</h4>`; cont.appendChild(top); }
+  } catch (e) { D_HOTEL('ERROR BANNER ALOJAMIENTO/ÚLTIMO DÍA', e); }
 
   const q = norm(state.groupQ||'');
   let acts=(grupo.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
@@ -989,7 +1020,10 @@ async function renderActs(grupo, fechaISO, cont){
     const div=document.createElement('div'); div.className='act';
     div.innerHTML=`
       <h4>${(actName||'').toUpperCase()} ${estado?`· <span class="muted">${String(estado).toUpperCase()}</span>`:''}</h4>
-      <div class="meta">${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')} · PLAN: <strong>${plan}</strong> PAX</div>
+      <div class="meta">
+        ${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')}
+        · PLAN: ${fmtPaxPlan(plan, grupo)} PAX
+      </div>
       <div class="rowflex" style="margin:.35rem 0">
         <input type="number" min="0" inputmode="numeric" placeholder="N° ASISTENCIA" value="${paxFinalInit}"/>
         <textarea placeholder="COMENTARIOS"></textarea>
@@ -1005,7 +1039,7 @@ async function renderActs(grupo, fechaISO, cont){
     // BITÁCORA
     const itemsWrap=div.querySelector('.bitItems'); await loadBitacora(grupo.id,fechaISO,actKey,itemsWrap);
 
-    // GUARDAR ASISTENCIA + NOTA (→ BITÁCORA → ALERTA )
+    // GUARDAR ASISTENCIA + NOTA
     div.querySelector('.btnSave').onclick=async ()=>{
       const btn=div.querySelector('.btnSave'); btn.disabled=true;
       try{
@@ -1073,6 +1107,128 @@ async function loadBitacora(grupoId, fechaISO, actKey, wrap){
     });
     wrap.innerHTML=''; wrap.appendChild(frag); if(!qs.size) wrap.innerHTML='<div class="muted">AÚN NO HAY NOTAS.</div>';
   }catch(e){ console.error(e); wrap.innerHTML='<div class="muted">NO SE PUDO CARGAR LA BITÁCORA.</div>'; }
+}
+
+/* ====== VIAJE: INICIO / TÉRMINO / REVERSIÓN ====== */
+async function openInicioViajeModal(g){
+  const back  = document.getElementById('modalBack');
+  const title = document.getElementById('modalTitle');
+  const body  = document.getElementById('modalBody');
+
+  title.textContent = `INICIO DE VIAJE — ${dmy(g.fechaInicio)}`;
+
+  const plan = paxOf(g);
+  const preA = Number(g?.paxViajando?.A || 0);
+  const preE = Number(g?.paxViajando?.E || 0);
+
+  body.innerHTML = `
+    <div class="meta">PLANIFICADO: <strong>${plan}</strong> PAX</div>
+    <div class="rowflex" style="margin:.5rem 0">
+      <input id="ivA" type="number" min="0" inputmode="numeric" placeholder="ADULTOS (A)" value="${preA||''}" />
+      <input id="ivE" type="number" min="0" inputmode="numeric" placeholder="ESTUDIANTES (E)" value="${preE||''}" />
+    </div>
+    <div class="meta">TOTAL REAL: <strong id="ivTot">${(preA+preE)||0}</strong></div>
+    <div class="rowflex" style="margin-top:.6rem">
+      <button id="ivSave" class="btn ok">GUARDAR</button>
+    </div>`;
+
+  const $A = body.querySelector('#ivA');
+  const $E = body.querySelector('#ivE');
+  const $T = body.querySelector('#ivTot');
+  const recalc = () => { const t = Number($A.value||0)+Number($E.value||0); $T.textContent = t; };
+  $A.oninput = recalc; $E.oninput = recalc;
+
+  body.querySelector('#ivSave').onclick = async () => {
+    const A = Math.max(0, Number($A.value||0));
+    const E = Math.max(0, Number($E.value||0));
+    const total = A + E;
+
+    if (!isToday(g.fechaInicio) && !state.is){
+      const ok = confirm('No es el día de inicio. ¿Confirmar de todas formas?');
+      if (!ok) return;
+    }
+    try{
+      const path = doc(db,'grupos',g.id);
+      await updateDoc(path, {
+        paxViajando: { A, E, total, by:(state.user.email||'').toLowerCase(), updatedAt: serverTimestamp() },
+        viaje: { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase() } }
+      });
+      g.paxViajando = { A, E, total };
+      g.viaje = { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: new Date(), by:(state.user.email||'').toLowerCase() } };
+      document.getElementById('modalBack').style.display='none';
+      await renderOneGroup(g);
+    }catch(e){
+      console.error(e);
+      alert('No fue posible guardar el inicio del viaje.');
+    }
+  };
+
+  document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
+  back.style.display = 'flex';
+}
+
+async function openTerminoViajeModal(g){
+  if (!g?.viaje?.inicio?.at && !state.is){
+    alert('Aún no se ha registrado el inicio del viaje.');
+    return;
+  }
+  const back  = document.getElementById('modalBack');
+  const title = document.getElementById('modalTitle');
+  const body  = document.getElementById('modalBody');
+
+  title.textContent = `TERMINAR VIAJE — ${dmy(g.fechaFin)}`;
+
+  body.innerHTML = `
+    <div class="meta">¿Deseas cerrar el viaje? Esto pedirá confirmación de administración.</div>
+    <label class="meta" style="display:flex;gap:.5rem;align-items:center"><input id="rvRend" type="checkbox"> RENDICIÓN HECHA</label>
+    <label class="meta" style="display:flex;gap:.5rem;align-items:center"><input id="rvBol"  type="checkbox"> BOLETA ENTREGADA</label>
+    <div class="rowflex" style="margin-top:.6rem">
+      <button id="tvSave" class="btn warn">FINALIZAR VIAJE</button>
+    </div>`;
+
+  body.querySelector('#tvSave').onclick = async () => {
+    const rend = !!body.querySelector('#rvRend').checked;
+    const bol  = !!body.querySelector('#rvBol').checked;
+    try{
+      const path = doc(db,'grupos',g.id);
+      await updateDoc(path, {
+        viaje: { ...(g.viaje||{}), estado:'FINALIZADO', fin:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase(), rendicionOk: rend, boletaOk: bol } }
+      });
+      g.viaje = { ...(g.viaje||{}), estado:'FINALIZADO', fin:{ at: new Date(), by:(state.user.email||'').toLowerCase(), rendicionOk: rend, boletaOk: bol } };
+      document.getElementById('modalBack').style.display='none';
+      await renderOneGroup(g);
+    }catch(e){
+      console.error(e);
+      alert('No fue posible finalizar el viaje.');
+    }
+  };
+
+  document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
+  back.style.display = 'flex';
+}
+
+// Reversión (solo STAFF)
+async function staffReopenInicio(g){
+  if (!state.is){ alert('Solo staff puede reabrir el inicio.'); return; }
+  const ok = confirm('¿Reabrir INICIO DE VIAJE? (se habilitará el botón de inicio para el coordinador)');
+  if(!ok) return;
+  try{
+    const path=doc(db,'grupos',g.id);
+    await updateDoc(path,{ 'viaje.inicio': deleteField(), 'viaje.estado': 'PENDIENTE' });
+    if (g.viaje){ delete g.viaje.inicio; g.viaje.estado='PENDIENTE'; }
+    await renderOneGroup(g);
+  }catch(e){ console.error(e); alert('No fue posible reabrir el inicio.'); }
+}
+async function staffReopenCierre(g){
+  if (!state.is){ alert('Solo staff puede reabrir el cierre.'); return; }
+  const ok = confirm('¿Reabrir CIERRE DE VIAJE? (volverá a estado EN_CURSO)');
+  if(!ok) return;
+  try{
+    const path=doc(db,'grupos',g.id);
+    await updateDoc(path,{ 'viaje.fin': deleteField(), 'viaje.estado': 'EN_CURSO' });
+    if (g.viaje){ delete g.viaje.fin; g.viaje.estado='EN_CURSO'; }
+    await renderOneGroup(g);
+  }catch(e){ console.error(e); alert('No fue posible reabrir el cierre.'); }
 }
 
 /* ====== SERVICIOS / VOUCHERS ====== */
@@ -1275,9 +1431,8 @@ async function openCreateAlertModal(){
 /** PANEL GLOBAL DE ALERTAS */
 async function renderGlobalAlerts(){
   const box = document.getElementById('alertsPanel');
-  if (!box) return; // existe en el HTML
+  if (!box) return;
 
-  // CARGAR TODAS LAS ALERTAS
   const all=[];
   try{
     const qs=await getDocs(collection(db,'alertas'));
@@ -1288,7 +1443,6 @@ async function renderGlobalAlerts(){
     return;
   }
 
-  // RESOLVER TARGET "PARA MÍ"
   const myCoordId = state.is
     ? (state.viewingCoordId || (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self'))
     : (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self');
@@ -1296,7 +1450,6 @@ async function renderGlobalAlerts(){
   const paraMi = all.filter(a => (a.audience!=='') && Array.isArray(a.forCoordIds) && a.forCoordIds.includes(myCoordId));
   const ops    = state.is ? all.filter(a => a.audience==='') : [];
 
-  // SUB-UI: LISTA CON TABS "NO LEÍDAS / LEÍDAS" + DETALLE DE LECTORES
   const renderList = (arr, scope)=>{
     const readerKey = (scope==='ops') ? `:${(state.user.email||'').toLowerCase()}` : `coord:${myCoordId}`;
     const isRead = (a)=>{
@@ -1367,17 +1520,14 @@ async function renderGlobalAlerts(){
     return { ui:wrap, unreadCount:unread.length, readCount:read.length };
   };
 
-  // PREPARAR CABECERA + CONTENEDOR
   const head=document.createElement('div'); head.className='alert-head';
   const area=document.createElement('div');
 
-  // RENDERIZAR LISTAS (Y CONTADORES)
   const mi = renderList(paraMi,'mi');
   const op = state.is ? renderList(ops,'ops') : { ui:null, unreadCount:0 };
 
   const totalUnread = (mi.unreadCount||0) + (op.unreadCount||0);
 
-  // TÍTULO + PASTILLAS + (BOTÓN CREAR ALERTA PARA STAFF)
   head.innerHTML = `
     <div class="alert-title-row">
       <h4 style="margin:.1rem 0 .0rem">ALERTAS ${totalUnread>0?`<span class="badge">${totalUnread}</span>`:''}</h4>
@@ -1390,7 +1540,6 @@ async function renderGlobalAlerts(){
     ` : '' }
   `;
 
-  // Insertar botón “CREAR ALERTA…” (solo staff)
   if (state.is){
     const createBtn = document.createElement('button');
     createBtn.id = 'btnNewAlertPanel';
@@ -1400,10 +1549,8 @@ async function renderGlobalAlerts(){
     head.appendChild(createBtn);
   }
 
-  // PINTAR (sin reinyectar el panel ni reordenar, para evitar parpadeo)
   box.innerHTML=''; box.appendChild(head); box.appendChild(area);
 
-  // LÓGICA DE CAMBIO DE ÁMBITO (SOLO STAFF)
   const showScope=(s)=>{
     if(!state.is){ area.innerHTML=''; area.appendChild(mi.ui); return; }
     const chipMi=head.querySelector('#chipMi');
@@ -1421,7 +1568,7 @@ async function renderGlobalAlerts(){
     head.querySelector('#chipOps').onclick = ()=>showScope('ops');
     showScope('mi');
   }else{
-    area.appendChild(mi.ui); // COORDINADOR: SOLO “PARA MÍ”
+    area.appendChild(mi.ui);
   }
 }
 
