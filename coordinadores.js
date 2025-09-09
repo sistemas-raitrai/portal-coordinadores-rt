@@ -551,7 +551,8 @@ async function renderResumen(g, pane){
 
   // ===== VUELOS =====
   try{
-    const vuelos = await loadVuelosInfo(g);
+    const vuelosRaw = await loadVuelosInfo(g);
+    const vuelos = vuelosRaw.map(normalizeVuelo);
     const flt = (!q) ? vuelos : vuelos.filter(v=>{
       const s=[v.numero,v.proveedor,v.origen,v.destino,toISO(v.fechaIda),toISO(v.fechaVuelta)].join(' ');
       return norm(s).includes(q);
@@ -602,14 +603,14 @@ async function ensureHotelesIndex(){
   const bySlug= new Map();
   const all   = [];
   const snap = await getDocs(collection(db,'hoteles'));
-  snap.forEach(d=>{
-    const x = d.data() || {};
-    theDoc = { id:d.id, ...x };
-    const s = norm(x.slug || x.nombre || d.id);
-    byId.set(String(d.id), theDoc);
-    if (s) bySlug.set(s, theDoc);
-    all.push(theDoc);
-  });
+   snap.forEach(d=>{
+     const x = d.data() || {};
+     const docu = { id:d.id, ...x };
+     const s = norm(x.slug || x.nombre || d.id);
+     byId.set(String(d.id), docu);
+     if (s) bySlug.set(s, docu);
+     all.push(docu);
+   });
   state.cache.hoteles = { loaded:true, byId, bySlug, all };
   D_HOTEL('ÍNDICE HOTELES CARGADO', { count: all.length });
   return state.cache.hoteles;
@@ -847,6 +848,22 @@ async function loadHotelInfo(g){
 
   D_HOTEL('OUT LOADHOTELINFO', out);
   return out;
+}
+function normalizeVuelo(v){
+  const get = (...keys)=>{
+    for (const k of keys){
+      const val = k.split('.').reduce((acc, part)=> (acc && acc[part]!==undefined)? acc[part] : undefined, v);
+      if (val!==undefined && val!==null && val!=='') return val;
+    }
+    return '';
+  };
+  const numero      = get('numero','nro','numVuelo','vuelo','flightNumber','codigo','code');
+  const proveedor   = get('proveedor','empresa','aerolinea','compania');
+  const origen      = get('origen','desde','from','salida.origen','salida.iata','origenIATA','origenSigla','origenCiudad');
+  const destino     = get('destino','hasta','to','llegada.destino','llegada.iata','destinoIATA','destinoSigla','destinoCiudad');
+  const fechaIda    = get('fechaIda','ida','salida.fecha','fechaSalida','fecha_ida','fecha');
+  const fechaVuelta = get('fechaVuelta','vuelta','regreso.fecha','fechaRegreso','fecha_vuelta');
+  return { numero, proveedor, origen, destino, fechaIda, fechaVuelta };
 }
 
 /* ====== VUELOS (BÚSQUEDA ROBUSTA POR DOCID Y NUM NEGOCIO) ====== */
