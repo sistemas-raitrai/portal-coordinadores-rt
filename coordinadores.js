@@ -1828,8 +1828,8 @@ async function staffResetInicio(grupo){
   if (!state.is){ alert('Solo el STAFF puede restablecer.'); return; }
 
   const ok = confirm(
-    'Esto borrará PAX VIAJANDO, reabrirá el INICIO (estado PENDIENTE), ' +
-    'eliminará TODA la BITÁCORA del itinerario y los GASTOS de este grupo. ¿Continuar?'
+    'Esto elminará toda la información que se ha ingresado para este grupo (Bitácora, Gastos, etc),' +
+    '¿Estás seguro de querer continuar?'
   );
   if (!ok) return;
 
