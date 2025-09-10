@@ -429,7 +429,7 @@ async function renderOneGroup(g, preferDate){
    
    // RESTABLECER (antes "Restablecer inicio")
    const btnR0 = header.querySelector('#btnResetInicio');
-   if (btnR0) btnR0.onclick = () => staffResetInicio(g);
+   if (btnR0) btnR0.onclick = async () => { await staffResetInicio(g); };
 
 
   const tabs=document.createElement('div');
@@ -488,6 +488,38 @@ async function renderOneGroup(g, preferDate){
 
     show(active);
   },180); };
+}
+
+async function reloadGroupAndRender(groupId){
+  try{
+    const snap = await getDoc(doc(db,'grupos', groupId));
+    if (!snap.exists()) { await renderOneGroup(null); return; }
+    const raw = { id: snap.id, ...snap.data() };
+
+    const g2 = {
+      ...raw,
+      fechaInicio: toISO(raw.fechaInicio||raw.inicio||raw.fecha_ini),
+      fechaFin:    toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
+      itinerario:  normalizeItinerario(raw.itinerario),
+      asistencias: raw.asistencias || {},
+      serviciosEstado: raw.serviciosEstado || {},
+      numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || snap.id),
+      identificador:  String(raw.identificador || raw.codigo || '')
+    };
+
+    // Refresca en state (por si cambias de viaje luego)
+    const idx = state.ordenados.findIndex(x => x && x.id === g2.id);
+    if (idx >= 0) {
+      state.ordenados[idx] = g2;
+      const j = state.grupos.findIndex(x => x && x.id === g2.id);
+      if (j >= 0) state.grupos[j] = g2;
+      state.idx = idx;
+    }
+    await renderOneGroup(g2);
+  }catch(e){
+    console.error('reloadGroupAndRender', e);
+    await renderOneGroup(state.ordenados[state.idx] || null);
+  }
 }
 
 /* ====== RESUMEN (HOTEL + VUELOS) ====== */
