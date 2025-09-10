@@ -374,7 +374,7 @@ async function renderOneGroup(g, preferDate){
              ${started ? `<button id="btnReabrirInicio"  class="btn sec">RESTABLECER INICIO</button>` : ``}
              ${finished? `<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>` : ``}
              <button id="btnTripReset" class="btn warn" title="Borra paxViajando e INICIO/FIN">RESTABLECER</button>` : ``}`
-    </div>;
+    </div>`;
   cont.appendChild(header);
 
   // Handlers viaje
