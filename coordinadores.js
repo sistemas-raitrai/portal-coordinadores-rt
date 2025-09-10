@@ -112,6 +112,27 @@ function enforceOrder(){
   });
 }
 
+function showFlash(msg, kind='ok'){
+  const colors = {
+    ok:   { bg:'#16a34a', fg:'#fff' },
+    warn: { bg:'#ea580c', fg:'#fff' },
+    err:  { bg:'#dc2626', fg:'#fff' },
+    info: { bg:'#64748b', fg:'#fff' }
+  };
+  const c = colors[kind] || colors.ok;
+  const n = document.createElement('div');
+  n.textContent = String(msg || '').toUpperCase();
+  n.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9999;padding:10px 12px;border-radius:10px;font-weight:700;letter-spacing:.5px;'+
+                    `background:${c.bg};color:${c.fg};box-shadow:0 10px 20px rgba(0,0,0,.15);opacity:0;transform:translateY(8px);`+
+                    'transition:opacity .2s ease, transform .2s ease';
+  document.body.appendChild(n);
+  requestAnimationFrame(()=>{ n.style.opacity='1'; n.style.transform='translateY(0)'; });
+  setTimeout(()=>{
+    n.style.opacity='0'; n.style.transform='translateY(6px)';
+    n.addEventListener('transitionend', ()=> n.remove(), { once:true });
+  }, 2200);
+}
+
 /* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
   if (!user){ location.href='index.html'; return; }
@@ -1802,7 +1823,7 @@ h3{margin:.2rem 0 .4rem}.meta{color:#333;font-size:14px}hr{border:0;border-top:1
 </head><body><h2>VOUCHERS</h2>${rows || '<div>SIN ACTIVIDADES.</div>'}</body></html>`;
 }
 
-// RESTABLECER (STAFF): deja el viaje en PENDIENTE, borra paxViajando, bitácora e ítems de gastos del grupo
+// RESTABLECER (STAFF): reset completo + mensaje “INICIO RESTABLECIDO”
 async function staffResetInicio(grupo){
   if (!state.is){ alert('Solo el STAFF puede restablecer.'); return; }
 
@@ -1813,9 +1834,8 @@ async function staffResetInicio(grupo){
   if (!ok) return;
 
   try{
+    // 1) Revertir INICIO/FIN y PAX en Firestore
     const ref = doc(db,'grupos',grupo.id);
-
-    // 1) Revertir INICIO/FIN y paxViajando
     await updateDoc(ref, {
       paxViajando: deleteField(),
       'viaje.inicio': deleteField(),
@@ -1827,7 +1847,7 @@ async function staffResetInicio(grupo){
     await purgeBitacoraForGroup(grupo);
     await purgeGastosForGroup(grupo.id);
 
-    // 3) Recargar el grupo desde Firestore (para no quedar con "started" en memoria)
+    // 3) Recargar el grupo desde Firestore (evita estado viejo en memoria)
     const fresh = await getDoc(ref);
     const raw = fresh.data() || {};
     const g2 = {
@@ -1842,8 +1862,13 @@ async function staffResetInicio(grupo){
       identificador: String(raw.identificador || raw.codigo || '')
     };
 
-    // 4) Re-render (debe aparecer otra vez el botón INICIO DE VIAJE)
+    // 4) Re-render: debe volver a mostrarse “INICIO DE VIAJE”
     await renderOneGroup(g2);
+
+    // 5) UX: subir al inicio y mostrar mensaje de éxito
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    showFlash('INICIO RESTABLECIDO', 'ok');
+
   }catch(e){
     console.error(e);
     alert('No se pudo restablecer el inicio del viaje.');
