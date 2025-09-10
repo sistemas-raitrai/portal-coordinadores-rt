@@ -344,38 +344,48 @@ async function renderOneGroup(g, preferDate){
   const started = !!viaje.inicio?.at;
   const finished = !!viaje.fin?.at;
 
-  const header=document.createElement('div'); header.className='group-card';
-  header.innerHTML=`<h3>${(name||'').toUpperCase()} · CÓDIGO: (${code})</h3>
-    <div class="grid-mini">
-      <div class="lab">DESTINO</div><div>${(g.destino||'—').toUpperCase()}</div>
-      <div class="lab">GRUPO</div><div>${(name||'').toUpperCase()}</div>
-      <div class="lab">PAX TOTAL</div>
-      <div>${fmtPaxPlan(paxPlan, g)}${real?` <span class="muted">(A:${A_real} · E:${E_real})</span>`:''}</div>
-      <div class="lab">PROGRAMA</div><div>${(g.programa||'—').toUpperCase()}</div>
-      <div class="lab">FECHAS</div><div>${rango}</div>
-    </div>
-
-    <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
-      <input id="searchTrips" type="text" placeholder="BUSCADOR EN RESUMEN, ITINERARIO Y GASTOS..." style="flex:1"/>
-    </div>
-
-    <div class="rowflex" style="margin-top:.4rem;gap:.5rem;align-items:center;flex-wrap:wrap">
-      ${(!started)
-          ? `<button id="btnInicioViaje" class="btn sec"${isStartDay?'':` title="No es el día de inicio. Se pedirá confirmación."`}>INICIO DE VIAJE</button>`
-          : `<div class="muted">VIAJE EN CURSO</div>`}
-      ${(started && !finished)
-          ? `<button id="btnTerminoViaje" class="btn warn">TERMINAR VIAJE</button>`
-          : ``}
-      ${(finished)
-          ? `<div class="muted">VIAJE FINALIZADO${viaje?.fin?.rendicionOk?` · RENDICIÓN HECHA`:''}${viaje?.fin?.boletaOk?` · BOLETA ENTREGADA`:''}</div>`
-          : ``}
-      ${state.is
-          ? `<div class="muted" style="opacity:.9">STAFF:</div>
-             ${started ? `<button id="btnReabrirInicio"  class="btn sec">RESTABLECER INICIO</button>` : ``}
-             ${finished? `<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>` : ``}
-             <button id="btnTripReset" class="btn warn" title="Borra paxViajando e INICIO/FIN">RESTABLECER</button>` : ``}`
-    </div>`;
-  cont.appendChild(header);
+   const header = document.createElement('div');
+   header.className = 'group-card';
+   
+   // piezas chicas para evitar backticks anidados
+   const statusBtns = [
+     (!started)
+       ? `<button id="btnInicioViaje" class="btn sec"${isStartDay ? '' : ' title="No es el día de inicio. Se pedirá confirmación."'}>INICIO DE VIAJE</button>`
+       : '',
+     (started && !finished)
+       ? `<button id="btnTerminoViaje" class="btn warn">TERMINAR VIAJE</button>`
+       : '',
+     (finished)
+       ? `<div class="muted">VIAJE FINALIZADO${viaje?.fin?.rendicionOk ? ' · RENDICIÓN HECHA' : ''}${viaje?.fin?.boletaOk ? ' · BOLETA ENTREGADA' : ''}</div>`
+       : ''
+   ].join('');
+   
+   const staffBtns = state.is
+     ? `<div class="muted" style="opacity:.9">STAFF:</div>
+        ${started ? '<button id="btnReabrirInicio" class="btn sec">RESTABLECER INICIO</button>' : ''}
+        ${finished ? '<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>' : ''}
+        <button id="btnTripReset" class="btn warn" title="Borra paxViajando e INICIO/FIN">RESTABLECER</button>`
+     : '';
+   
+   header.innerHTML = `
+     <h3>${(name||'').toUpperCase()} · CÓDIGO: (${code})</h3>
+     <div class="grid-mini">
+       <div class="lab">DESTINO</div><div>${(g.destino||'—').toUpperCase()}</div>
+       <div class="lab">GRUPO</div><div>${(name||'').toUpperCase()}</div>
+       <div class="lab">PAX TOTAL</div>
+       <div>${fmtPaxPlan(paxPlan, g)}${real ? ` <span class="muted">(A:${A_real} · E:${E_real})</span>` : ''}</div>
+       <div class="lab">PROGRAMA</div><div>${(g.programa||'—').toUpperCase()}</div>
+       <div class="lab">FECHAS</div><div>${rango}</div>
+     </div>
+   
+     <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
+       <input id="searchTrips" type="text" placeholder="BUSCADOR EN RESUMEN, ITINERARIO Y GASTOS..." style="flex:1"/>
+     </div>
+   
+     <div class="rowflex" style="margin-top:.4rem;gap:.5rem;align-items:center;flex-wrap:wrap">
+       ${statusBtns}${staffBtns}
+     </div>`;
+   cont.appendChild(header);
 
   // Handlers viaje
   const btnIV = header.querySelector('#btnInicioViaje');
