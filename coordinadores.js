@@ -371,8 +371,9 @@ async function renderOneGroup(g, preferDate){
           : ``}
       ${state.is
           ? `<div class="muted" style="opacity:.9">STAFF:</div>
-             ${started ? `<button id="btnReabrirInicio"  class="btn sec">REABRIR INICIO</button>` : ``}
-             ${finished? `<button id="btnReabrirCierre" class="btn sec">REABRIR CIERRE</button>` : ``}`
+             ${started ? `<button id="btnReabrirInicio"  class="btn sec">RESTABLECER INICIO</button>` : ``}
+             ${finished? `<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>` : ``}`
+             <button id="btnTripReset" class="btn warn" title="Borra paxViajando e INICIO/FIN">RESTABLECER</button>`
           : ``}
     </div>`;
   cont.appendChild(header);
@@ -386,6 +387,9 @@ async function renderOneGroup(g, preferDate){
   if (btnRX) btnRX.onclick = () => staffReopenInicio(g);
   const btnRY = header.querySelector('#btnReabrirCierre');
   if (btnRY) btnRY.onclick = () => staffReopenCierre(g);
+  const btnTR = header.querySelector('#btnTripReset');
+  if (btnTR) btnTR.onclick = () => resetInicioFinViaje(g);
+
 
   const tabs=document.createElement('div');
   tabs.innerHTML=`
