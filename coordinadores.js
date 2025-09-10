@@ -15,6 +15,12 @@ import {
 import { ref as sRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
+import { initializeFirestore } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
+
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
+  useFetchStreams: false
+});
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
@@ -31,6 +37,34 @@ const timeIdNowMs = () => {
   const d = new Date();
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,'0')}`;
 };
+
+/* ====== HISTORIAL VIAJE (utils) ====== */
+const HIST_ACTKEY = '__viaje__';
+const fmtChile = (date) =>
+  new Intl.DateTimeFormat('es-CL', {
+    timeZone: 'America/Santiago',
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit'
+  }).format(date).toUpperCase();
+
+async function appendViajeLog(grupoId, kind, text='', meta=null){
+  // Registro inmutable en subcolección viajeLog
+  await addDoc(collection(db,'grupos',grupoId,'viajeLog'),{
+    type: kind, text, meta,
+    by: (state.user.email||'').toLowerCase(),
+    byUid: state.user.uid,
+    ts: serverTimestamp()
+  });
+  // Copia visible en Bitácora bajo actividad especial __viaje__
+  const dateIso = todayISO();
+  const timeId  = timeIdNowMs();
+  await setDoc(doc(db,'grupos',grupoId,'bitacora',HIST_ACTKEY,dateIso,timeId),{
+    texto: (text || kind).toString().toUpperCase(),
+    byUid: state.user.uid,
+    byEmail: (state.user.email||'').toLowerCase(),
+    ts: serverTimestamp()
+  });
+}
 
 /* ====== UTILS PAX/VIAJE (NUEVOS) ====== */
 const todayISO = () => new Date().toISOString().slice(0,10);
@@ -414,6 +448,12 @@ async function renderOneGroup(g, preferDate){
        ${btnTerminarHtml}
        ${finHtml}
      </div>
+   
+     <!-- HISTORIAL DEL VIAJE -->
+     <div id="viajeHistoryBox" class="act" style="margin-top:.6rem">
+       <h4>HISTORIAL DEL VIAJE</h4>
+       <div class="muted">CARGANDO…</div>
+     </div>
    `;
    cont.appendChild(header);
    
@@ -430,6 +470,9 @@ async function renderOneGroup(g, preferDate){
    // RESTABLECER (antes "Restablecer inicio")
    const btnR0 = header.querySelector('#btnResetInicio');
    if (btnR0) btnR0.onclick = async () => { await staffResetInicio(g); };
+
+   const histBox = header.querySelector('#viajeHistoryBox');
+   renderViajeHistory(g, histBox);
 
 
   const tabs=document.createElement('div');
@@ -488,6 +531,35 @@ async function renderOneGroup(g, preferDate){
 
     show(active);
   },180); };
+}
+
+async function renderViajeHistory(g, box){
+  try{
+    const qs = await getDocs(query(
+      collection(db,'grupos',g.id,'viajeLog'),
+      orderBy('ts','desc'), limit(50)
+    ));
+    const head = '<h4>HISTORIAL DEL VIAJE</h4>';
+    if(!qs.size){ box.innerHTML = head + '<div class="muted">SIN REGISTROS.</div>'; return; }
+
+    const frag = document.createDocumentFragment();
+    const ttl  = document.createElement('h4'); ttl.textContent = 'HISTORIAL DEL VIAJE'; frag.appendChild(ttl);
+
+    qs.forEach(d=>{
+      const x = d.data()||{};
+      const quien  = (x.by || x.byEmail || x.byUid || '').toString().toUpperCase();
+      const cuando = x.ts?.seconds ? fmtChile(new Date(x.ts.seconds*1000)) : '';
+      const accion = (x.type||'').toString().replace(/_/g,' ').toUpperCase();
+      const txt    = (x.text||'').toString().toUpperCase();
+      const div = document.createElement('div'); div.className='meta';
+      div.textContent = `• ${accion}${txt?` — ${txt}`:''} — ${quien}${cuando?` · ${cuando}`:''}`;
+      frag.appendChild(div);
+    });
+    box.innerHTML=''; box.appendChild(frag);
+  }catch(e){
+    console.error(e);
+    box.innerHTML = '<h4>HISTORIAL DEL VIAJE</h4><div class="muted">NO SE PUDO CARGAR.</div>';
+  }
 }
 
 async function reloadGroupAndRender(groupId){
@@ -1247,6 +1319,7 @@ async function openInicioViajeModal(g){
         paxViajando: { A, E, total, by:(state.user.email||'').toLowerCase(), updatedAt: serverTimestamp() },
         viaje: { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase() } }
       });
+      await appendViajeLog(g.id, 'INICIO', `INICIO DE VIAJE — A:${A} · E:${E} · TOTAL:${total}`, { A, E, total });
       g.paxViajando = { A, E, total };
       g.viaje = { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: new Date(), by:(state.user.email||'').toLowerCase() } };
       document.getElementById('modalBack').style.display='none';
@@ -1288,6 +1361,7 @@ async function openTerminoViajeModal(g){
       await updateDoc(path, {
         viaje: { ...(g.viaje||{}), estado:'FINALIZADO', fin:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase(), rendicionOk: rend, boletaOk: bol } }
       });
+      await appendViajeLog(g.id, 'FIN', `FINALIZAR VIAJE${rend?' · RENDICIÓN OK':''}${bol?' · BOLETA OK':''}`, { rend, bol }); 
       g.viaje = { ...(g.viaje||{}), estado:'FINALIZADO', fin:{ at: new Date(), by:(state.user.email||'').toLowerCase(), rendicionOk: rend, boletaOk: bol } };
       document.getElementById('modalBack').style.display='none';
       await renderOneGroup(g);
@@ -1309,6 +1383,7 @@ async function staffReopenInicio(g){
   try{
     const path=doc(db,'grupos',g.id);
     await updateDoc(path,{ 'viaje.inicio': deleteField(), 'viaje.estado': 'PENDIENTE' });
+    await appendViajeLog(g.id, 'REABRIR_INICIO', 'SE REABRIÓ EL INICIO DEL VIAJE');
     if (g.viaje){ delete g.viaje.inicio; g.viaje.estado='PENDIENTE'; }
     await renderOneGroup(g);
   }catch(e){ console.error(e); alert('No fue posible reabrir el inicio.'); }
@@ -1320,6 +1395,7 @@ async function staffReopenCierre(g){
   try{
     const path=doc(db,'grupos',g.id);
     await updateDoc(path,{ 'viaje.fin': deleteField(), 'viaje.estado': 'EN_CURSO' });
+    await appendViajeLog(g.id, 'FIN', `FINALIZAR VIAJE${rend?' · RENDICIÓN OK':''}${bol?' · BOLETA OK':''}`, { rend, bol });
     if (g.viaje){ delete g.viaje.fin; g.viaje.estado='EN_CURSO'; }
     await renderOneGroup(g);
   }catch(e){ console.error(e); alert('No fue posible reabrir el cierre.'); }
