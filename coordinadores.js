@@ -375,7 +375,7 @@ async function renderOneGroup(g, preferDate){
    
    // Botón TERMINAR (si está en curso)
    const btnTerminarHtml = (started && !finished)
-     ? `<button id="btnTerminoViaje" class="btn warn">TERMINAR VIAJE</button>`
+     ? `<button id="btnTerminoViaje" class="btn warn" style="width:100%;">TERMINAR VIAJE</button>`
      : '';
    
    // Info finalizado + botón reabrir cierre (STAFF)
@@ -387,7 +387,7 @@ async function renderOneGroup(g, preferDate){
    
    header.innerHTML = `
      ${topInfo}
-     <div class="rowflex" style="margin-top:.4rem;gap:.5rem;align-items:center;flex-wrap:wrap;flex-direction:column">
+     <div class="rowflex" style="margin-top:.4rem;gap:.5rem;align-items:stretch;flex-wrap:wrap;flex-direction:column">
        ${btnInicioHtml}
        ${btnResetInicioHtml}
        ${btnTerminarHtml}
@@ -1813,23 +1813,37 @@ async function staffResetInicio(grupo){
   if (!ok) return;
 
   try{
-    // 1) Revertir inicio y paxViajando
     const ref = doc(db,'grupos',grupo.id);
+
+    // 1) Revertir INICIO/FIN y paxViajando
     await updateDoc(ref, {
       paxViajando: deleteField(),
       'viaje.inicio': deleteField(),
+      'viaje.fin': deleteField(),
       'viaje.estado': 'PENDIENTE'
     });
-    delete grupo.paxViajando;
-    if (grupo.viaje){ delete grupo.viaje.inicio; grupo.viaje.estado = 'PENDIENTE'; }
 
-    // 2) Borrar bitácora
+    // 2) Borrar bitácora y gastos
     await purgeBitacoraForGroup(grupo);
-
-    // 3) Borrar gastos del grupo (en todos los coordinadores)
     await purgeGastosForGroup(grupo.id);
 
-    await renderOneGroup(grupo);
+    // 3) Recargar el grupo desde Firestore (para no quedar con "started" en memoria)
+    const fresh = await getDoc(ref);
+    const raw = fresh.data() || {};
+    const g2 = {
+      id: grupo.id,
+      ...raw,
+      fechaInicio: toISO(raw.fechaInicio||raw.inicio||raw.fecha_ini),
+      fechaFin:    toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
+      itinerario:  normalizeItinerario(raw.itinerario),
+      asistencias: raw.asistencias || {},
+      serviciosEstado: raw.serviciosEstado || {},
+      numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || grupo.id),
+      identificador: String(raw.identificador || raw.codigo || '')
+    };
+
+    // 4) Re-render (debe aparecer otra vez el botón INICIO DE VIAJE)
+    await renderOneGroup(g2);
   }catch(e){
     console.error(e);
     alert('No se pudo restablecer el inicio del viaje.');
