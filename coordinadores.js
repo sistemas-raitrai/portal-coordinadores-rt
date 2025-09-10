@@ -1359,6 +1359,49 @@ async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
   }catch(e){ console.error(e); alert('NO FUE POSIBLE ACTUALIZAR EL ESTADO.'); }
 }
 
+/* ====== VIAJE: RESTABLECER (STAFF) ====== */
+async function resetInicioFinViaje(grupo){
+  if (!state.is){
+    alert('Solo el STAFF puede restablecer el inicio/fin de viaje.');
+    return;
+  }
+  if (!confirm('¿Restablecer INICIO/FIN DE VIAJE y borrar PAX VIAJANDO?')){
+    return;
+  }
+  try{
+    const ref = doc(db, 'grupos', grupo.id);
+
+    // Borra override y marcas de inicio/fin (cubrimos nombres posibles)
+    await updateDoc(ref, {
+      paxViajando: deleteField(),
+      trip: deleteField(),
+      viaje: deleteField(),
+      viajeInicioAt: deleteField(),
+      viajeFinAt: deleteField(),
+      viajeInicioBy: deleteField(),
+      viajeFinBy: deleteField(),
+    });
+
+    // Limpia en memoria/local
+    delete grupo.paxViajando;
+    delete grupo.trip;
+    delete grupo.viaje;
+    delete grupo.viajeInicioAt;
+    delete grupo.viajeFinAt;
+    delete grupo.viajeInicioBy;
+    delete grupo.viajeFinBy;
+    try{
+      localStorage.removeItem('rt__paxStart_'+grupo.id);
+    }catch(_){}
+
+    // Re-render para que desaparezca el “tachado”
+    await renderOneGroup(grupo);
+  }catch(e){
+    console.error(e);
+    alert('No se pudo restablecer el viaje.');
+  }
+}
+
 /* ====== ALERTAS ====== */
 
 /** AYUDA: OBTENER NOMBRE POR EMAIL (MAYÚSCULAS) */
