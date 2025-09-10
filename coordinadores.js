@@ -15,12 +15,6 @@ import {
 import { ref as sRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
-import { initializeFirestore } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
-
-export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
-  useFetchStreams: false
-});
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
