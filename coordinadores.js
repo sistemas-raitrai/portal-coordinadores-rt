@@ -10,7 +10,7 @@ import { onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
   collection, getDocs, getDoc, doc, updateDoc, addDoc, setDoc,
-  serverTimestamp, query, where, orderBy, limit, deleteField
+  serverTimestamp, query, where, orderBy, limit, deleteField, deleteDoc
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 import { ref as sRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
@@ -347,27 +347,7 @@ async function renderOneGroup(g, preferDate){
    const header = document.createElement('div');
    header.className = 'group-card';
    
-   // piezas chicas para evitar backticks anidados
-   const statusBtns = [
-     (!started)
-       ? `<button id="btnInicioViaje" class="btn sec"${isStartDay ? '' : ' title="No es el día de inicio. Se pedirá confirmación."'}>INICIO DE VIAJE</button>`
-       : '',
-     (started && !finished)
-       ? `<button id="btnTerminoViaje" class="btn warn">TERMINAR VIAJE</button>`
-       : '',
-     (finished)
-       ? `<div class="muted">VIAJE FINALIZADO${viaje?.fin?.rendicionOk ? ' · RENDICIÓN HECHA' : ''}${viaje?.fin?.boletaOk ? ' · BOLETA ENTREGADA' : ''}</div>`
-       : ''
-   ].join('');
-   
-   const staffBtns = state.is
-     ? `<div class="muted" style="opacity:.9">STAFF:</div>
-        ${started ? '<button id="btnReabrirInicio" class="btn sec">RESTABLECER INICIO</button>' : ''}
-        ${finished ? '<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>' : ''}
-        <button id="btnTripReset" class="btn warn" title="Borra paxViajando e INICIO/FIN">RESTABLECER</button>`
-     : '';
-   
-   header.innerHTML = `
+   const topInfo = `
      <h3>${(name||'').toUpperCase()} · CÓDIGO: (${code})</h3>
      <div class="grid-mini">
        <div class="lab">DESTINO</div><div>${(g.destino||'—').toUpperCase()}</div>
@@ -381,11 +361,55 @@ async function renderOneGroup(g, preferDate){
      <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
        <input id="searchTrips" type="text" placeholder="BUSCADOR EN RESUMEN, ITINERARIO Y GASTOS..." style="flex:1"/>
      </div>
+   `;
    
-     <div class="rowflex" style="margin-top:.4rem;gap:.5rem;align-items:center;flex-wrap:wrap">
-       ${statusBtns}${staffBtns}
-     </div>`;
+   // Botón INICIO (full width, verde)
+   const btnInicioHtml = (!started)
+     ? `<button id="btnInicioViaje" class="btn ok" style="width:100%;"${isStartDay ? '' : ' title="No es el día de inicio. Se pedirá confirmación."'}>INICIO DE VIAJE</button>`
+     : '';
+   
+   // Botón RESTABLECER (STAFF + viaje iniciado) – gris, full width, debajo del inicio
+   const btnResetInicioHtml = (state.is && started && !finished)
+     ? `<button id="btnResetInicio" class="btn" style="width:100%;background:#64748b;color:#fff;">RESTABLECER</button>`
+     : '';
+   
+   // Botón TERMINAR (si está en curso)
+   const btnTerminarHtml = (started && !finished)
+     ? `<button id="btnTerminoViaje" class="btn warn">TERMINAR VIAJE</button>`
+     : '';
+   
+   // Info finalizado + botón reabrir cierre (STAFF)
+   const finHtml = (finished)
+     ? `
+        <div class="muted">VIAJE FINALIZADO${viaje?.fin?.rendicionOk ? ' · RENDICIÓN HECHA' : ''}${viaje?.fin?.boletaOk ? ' · BOLETA ENTREGADA' : ''}</div>
+        ${state.is ? `<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>` : ''}`
+     : '';
+   
+   header.innerHTML = `
+     ${topInfo}
+     <div class="rowflex" style="margin-top:.4rem;gap:.5rem;align-items:center;flex-wrap:wrap;flex-direction:column">
+       ${btnInicioHtml}
+       ${btnResetInicioHtml}
+       ${btnTerminarHtml}
+       ${finHtml}
+     </div>
+   `;
    cont.appendChild(header);
+   
+   // Handlers
+   const btnIV = header.querySelector('#btnInicioViaje');
+   if (btnIV) btnIV.onclick = () => openInicioViajeModal(g);
+   
+   const btnTV = header.querySelector('#btnTerminoViaje');
+   if (btnTV) btnTV.onclick = () => openTerminoViajeModal(g);
+   
+   const btnRY = header.querySelector('#btnReabrirCierre');
+   if (btnRY) btnRY.onclick = () => staffReopenCierre(g);
+   
+   // ⚠️ Nuevo handler: RESTABLECER (antes “Restablecer inicio”)
+   const btnR0 = header.querySelector('#btnResetInicio');
+   if (btnR0) btnR0.onclick = () => staffResetInicio(g);
+   
 
   // Handlers viaje
   const btnIV = header.querySelector('#btnInicioViaje');
@@ -1790,3 +1814,74 @@ async function buildPrintableVouchers(list){
 h3{margin:.2rem 0 .4rem}.meta{color:#333;font-size:14px}hr{border:0;border-top:1px dashed #999;margin:.4rem 0}</style>
 </head><body><h2>VOUCHERS</h2>${rows || '<div>SIN ACTIVIDADES.</div>'}</body></html>`;
 }
+
+// RESTABLECER (STAFF): deja el viaje en PENDIENTE, borra paxViajando, bitácora e ítems de gastos del grupo
+async function staffResetInicio(grupo){
+  if (!state.is){ alert('Solo el STAFF puede restablecer.'); return; }
+
+  const ok = confirm(
+    'Esto borrará PAX VIAJANDO, reabrirá el INICIO (estado PENDIENTE), ' +
+    'eliminará TODA la BITÁCORA del itinerario y los GASTOS de este grupo. ¿Continuar?'
+  );
+  if (!ok) return;
+
+  try{
+    // 1) Revertir inicio y paxViajando
+    const ref = doc(db,'grupos',grupo.id);
+    await updateDoc(ref, {
+      paxViajando: deleteField(),
+      'viaje.inicio': deleteField(),
+      'viaje.estado': 'PENDIENTE'
+    });
+    delete grupo.paxViajando;
+    if (grupo.viaje){ delete grupo.viaje.inicio; grupo.viaje.estado = 'PENDIENTE'; }
+
+    // 2) Borrar bitácora
+    await purgeBitacoraForGroup(grupo);
+
+    // 3) Borrar gastos del grupo (en todos los coordinadores)
+    await purgeGastosForGroup(grupo.id);
+
+    await renderOneGroup(grupo);
+  }catch(e){
+    console.error(e);
+    alert('No se pudo restablecer el inicio del viaje.');
+  }
+}
+
+// Elimina todas las notas de bitácora del rango del viaje, para cada actividad del itinerario
+async function purgeBitacoraForGroup(grupo){
+  try{
+    const fechas = rangoFechas(grupo.fechaInicio, grupo.fechaFin);
+    const map = grupo.itinerario || {};
+    for (const fecha of fechas){
+      const acts = Array.isArray(map[fecha]) ? map[fecha] : [];
+      for (const act of acts){
+        const actKey = slug(act.actividad || 'actividad');
+        try{
+          const coll = collection(db,'grupos',grupo.id,'bitacora',actKey,fecha);
+          const qs = await getDocs(coll);
+          const dels = [];
+          qs.forEach(d => dels.push(deleteDoc(d.ref)));
+          if (dels.length) await Promise.all(dels);
+        }catch(err){ console.warn('purgeBitacora error', fecha, actKey, err); }
+      }
+    }
+  }catch(e){ console.error('purgeBitacoraForGroup', e); }
+}
+
+// Elimina todos los gastos que apunten a este grupo en todos los coordinadores
+async function purgeGastosForGroup(grupoId){
+  try{
+    const coords = state.coordinadores || [];
+    for (const c of coords){
+      try{
+        const qs = await getDocs(collection(db,'coordinadores',c.id,'gastos'));
+        const dels = [];
+        qs.forEach(d => { const x = d.data() || {}; if (x.grupoId === grupoId) dels.push(deleteDoc(d.ref)); });
+        if (dels.length) await Promise.all(dels);
+      }catch(err){ console.warn('purgeGastos coord', c.id, err); }
+    }
+  }catch(e){ console.error('purgeGastosForGroup', e); }
+}
+
