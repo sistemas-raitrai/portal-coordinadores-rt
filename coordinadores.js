@@ -362,8 +362,8 @@ async function renderOneGroup(g, preferDate){
   const isStartDay = isToday(g.fechaInicio);
   const viaje = g.viaje || {};
   const viajeEstado = viaje.estado || (viaje.fin?.at ? 'FINALIZADO' : (viaje.inicio?.at ? 'EN_CURSO' : 'PENDIENTE'));
-  const started = !!viaje.inicio?.at;
-  const finished = !!viaje.fin?.at;
+  const started  = (viajeEstado === 'EN_CURSO') || !!viaje.inicio?.at;
+  const finished = (viajeEstado === 'FINALIZADO') || !!viaje.fin?.at;
 
    const header = document.createElement('div');
    header.className = 'group-card';
@@ -1823,7 +1823,7 @@ h3{margin:.2rem 0 .4rem}.meta{color:#333;font-size:14px}hr{border:0;border-top:1
 </head><body><h2>VOUCHERS</h2>${rows || '<div>SIN ACTIVIDADES.</div>'}</body></html>`;
 }
 
-// RESTABLECER (STAFF): reset completo + mensaje “INICIO RESTABLECIDO”
+// RESTABLECER (STAFF): reset completo + re-render inmediato + flash
 async function staffResetInicio(grupo){
   if (!state.is){ alert('Solo el STAFF puede restablecer.'); return; }
 
@@ -1834,46 +1834,61 @@ async function staffResetInicio(grupo){
   if (!ok) return;
 
   try{
-    // 1) Revertir INICIO/FIN y PAX en Firestore
+    // 1) Revertir en Firestore (incluye campos legacy por si existen)
     const ref = doc(db,'grupos',grupo.id);
     await updateDoc(ref, {
       paxViajando: deleteField(),
       'viaje.inicio': deleteField(),
       'viaje.fin': deleteField(),
-      'viaje.estado': 'PENDIENTE'
+      'viaje.estado': 'PENDIENTE',
+      // legacy
+      viajeInicioAt: deleteField(),
+      viajeFinAt: deleteField(),
+      viajeInicioBy: deleteField(),
+      viajeFinBy: deleteField(),
+      trip: deleteField()
     });
 
-    // 2) Borrar bitácora y gastos
+    // 2) Purga bitácora y gastos
     await purgeBitacoraForGroup(grupo);
     await purgeGastosForGroup(grupo.id);
 
-    // 3) Recargar el grupo desde Firestore (evita estado viejo en memoria)
-    const fresh = await getDoc(ref);
-    const raw = fresh.data() || {};
-    const g2 = {
-      id: grupo.id,
-      ...raw,
-      fechaInicio: toISO(raw.fechaInicio||raw.inicio||raw.fecha_ini),
-      fechaFin:    toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
-      itinerario:  normalizeItinerario(raw.itinerario),
-      asistencias: raw.asistencias || {},
-      serviciosEstado: raw.serviciosEstado || {},
-      numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || grupo.id),
-      identificador: String(raw.identificador || raw.codigo || '')
+    // 3) Actualiza el OBJETO EN MEMORIA (evita tener que recargar)
+    delete grupo.paxViajando;
+    if (grupo.viaje) {
+      delete grupo.viaje.inicio;
+      delete grupo.viaje.fin;
+      grupo.viaje.estado = 'PENDIENTE';
+    } else {
+      grupo.viaje = { estado:'PENDIENTE' };
+    }
+    delete grupo.viajeInicioAt; delete grupo.viajeFinAt;
+    delete grupo.viajeInicioBy; delete grupo.viajeFinBy;
+    delete grupo.trip;
+
+    // 4) Reemplaza la referencia en los arrays de estado (state.grupos / state.ordenados)
+    const replaceIn = (arr)=>{
+      if (!Array.isArray(arr)) return;
+      const i = arr.findIndex(x => x && x.id === grupo.id);
+      if (i >= 0) arr[i] = grupo;
     };
+    replaceIn(state.grupos);
+    replaceIn(state.ordenados);
 
-    // 4) Re-render: debe volver a mostrarse “INICIO DE VIAJE”
-    await renderOneGroup(g2);
+    // 5) Re-render inmediato (debe verse el botón INICIO DE VIAJE)
+    await renderOneGroup(grupo);
 
-    // 5) UX: subir al inicio y mostrar mensaje de éxito
+    // 6) UX
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    showFlash('INICIO RESTABLECIDO', 'ok');
+    if (typeof showFlash === 'function') showFlash('INICIO RESTABLECIDO', 'ok');
+    setTimeout(()=> document.getElementById('btnInicioViaje')?.focus?.(), 80);
 
   }catch(e){
     console.error(e);
     alert('No se pudo restablecer el inicio del viaje.');
   }
 }
+
 
 // Elimina todas las notas de bitácora del rango del viaje, para cada actividad del itinerario
 async function purgeBitacoraForGroup(grupo){
