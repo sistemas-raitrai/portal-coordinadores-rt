@@ -396,7 +396,7 @@ async function renderOneGroup(g, preferDate){
    `;
    cont.appendChild(header);
    
-   // Handlers
+   // Handlers (únicos)
    const btnIV = header.querySelector('#btnInicioViaje');
    if (btnIV) btnIV.onclick = () => openInicioViajeModal(g);
    
@@ -406,22 +406,9 @@ async function renderOneGroup(g, preferDate){
    const btnRY = header.querySelector('#btnReabrirCierre');
    if (btnRY) btnRY.onclick = () => staffReopenCierre(g);
    
-   // ⚠️ Nuevo handler: RESTABLECER (antes “Restablecer inicio”)
+   // RESTABLECER (antes "Restablecer inicio")
    const btnR0 = header.querySelector('#btnResetInicio');
    if (btnR0) btnR0.onclick = () => staffResetInicio(g);
-   
-
-  // Handlers viaje
-  const btnIV = header.querySelector('#btnInicioViaje');
-  if (btnIV) btnIV.onclick = () => openInicioViajeModal(g);
-  const btnTV = header.querySelector('#btnTerminoViaje');
-  if (btnTV) btnTV.onclick = () => openTerminoViajeModal(g);
-  const btnRX = header.querySelector('#btnReabrirInicio');
-  if (btnRX) btnRX.onclick = () => staffReopenInicio(g);
-  const btnRY = header.querySelector('#btnReabrirCierre');
-  if (btnRY) btnRY.onclick = () => staffReopenCierre(g);
-  const btnTR = header.querySelector('#btnTripReset');
-  if (btnTR) btnTR.onclick = () => resetInicioFinViaje(g);
 
 
   const tabs=document.createElement('div');
