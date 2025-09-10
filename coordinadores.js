@@ -1855,18 +1855,14 @@ h3{margin:.2rem 0 .4rem}.meta{color:#333;font-size:14px}hr{border:0;border-top:1
 </head><body><h2>VOUCHERS</h2>${rows || '<div>SIN ACTIVIDADES.</div>'}</body></html>`;
 }
 
-// RESTABLECER (STAFF): reset completo + re-render inmediato + flash
+// RESTABLECER (STAFF): reset instantáneo en UI y purgas en background
 async function staffResetInicio(grupo){
   if (!state.is){ alert('Solo el STAFF puede restablecer.'); return; }
-
-  const ok = confirm(
-    'Esto elminará toda la información que se ha ingresado para este grupo (Bitácora, Gastos, etc),' +
-    '¿Estás seguro de querer continuar?'
-  );
-  if (!ok) return;
+  const ok = confirm('Esto eliminará Bitácora y Gastos del grupo. ¿Continuar?');
+  if(!ok) return;
 
   try{
-    // 1) Revertir en Firestore (incluye campos legacy por si existen)
+    // 1) Persistir flags mínimos (limpia inicio/fin y deja estado PENDIENTE)
     const ref = doc(db,'grupos',grupo.id);
     await updateDoc(ref, {
       paxViajando: deleteField(),
@@ -1881,13 +1877,9 @@ async function staffResetInicio(grupo){
       trip: deleteField()
     });
 
-    // 2) Purga bitácora y gastos
-    await purgeBitacoraForGroup(grupo);
-    await purgeGastosForGroup(grupo.id);
-
-    // 3) Actualiza el OBJETO EN MEMORIA (evita tener que recargar)
+    // 2) Actualizar objeto en memoria (para que started = false ya mismo)
     delete grupo.paxViajando;
-    if (grupo.viaje) {
+    if (grupo.viaje){
       delete grupo.viaje.inicio;
       delete grupo.viaje.fin;
       grupo.viaje.estado = 'PENDIENTE';
@@ -1898,7 +1890,7 @@ async function staffResetInicio(grupo){
     delete grupo.viajeInicioBy; delete grupo.viajeFinBy;
     delete grupo.trip;
 
-    // 4) Reemplaza la referencia en los arrays de estado (state.grupos / state.ordenados)
+    // 3) Reemplazar en los arrays de estado (por seguridad)
     const replaceIn = (arr)=>{
       if (!Array.isArray(arr)) return;
       const i = arr.findIndex(x => x && x.id === grupo.id);
@@ -1907,20 +1899,21 @@ async function staffResetInicio(grupo){
     replaceIn(state.grupos);
     replaceIn(state.ordenados);
 
-    // 5) Re-render inmediato (debe verse el botón INICIO DE VIAJE)
+    // 4) Re-render INMEDIATO → aparece el botón verde
     await renderOneGroup(grupo);
-
-    // 6) UX
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (typeof showFlash === 'function') showFlash('INICIO RESTABLECIDO', 'ok');
     setTimeout(()=> document.getElementById('btnInicioViaje')?.focus?.(), 80);
+
+    // 5) Purgas SIN bloquear la UI
+    purgeBitacoraForGroup(grupo).catch(e=>console.warn('purgeBitacora', e));
+    purgeGastosForGroup(grupo.id).catch(e=>console.warn('purgeGastos', e));
 
   }catch(e){
     console.error(e);
     alert('No se pudo restablecer el inicio del viaje.');
   }
 }
-
 
 // Elimina todas las notas de bitácora del rango del viaje, para cada actividad del itinerario
 async function purgeBitacoraForGroup(grupo){
