@@ -372,9 +372,8 @@ async function renderOneGroup(g, preferDate){
       ${state.is
           ? `<div class="muted" style="opacity:.9">STAFF:</div>
              ${started ? `<button id="btnReabrirInicio"  class="btn sec">RESTABLECER INICIO</button>` : ``}
-             ${finished? `<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>` : ``}`
-             <button id="btnTripReset" class="btn warn" title="Borra paxViajando e INICIO/FIN">RESTABLECER</button>`
-          : ``}
+             ${finished? `<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>` : ``}
+             <button id="btnTripReset" class="btn warn" title="Borra paxViajando e INICIO/FIN">RESTABLECER</button>` : ``}`
     </div>`;
   cont.appendChild(header);
 
