@@ -298,7 +298,15 @@ async function loadGruposForCoordinador(coord, user){
 /* ====== NORMALIZADOR DE ITINERARIO ====== */
 function normalizeItinerario(raw){
   if (!raw) return {};
-  if (Array.isArray(raw)){ const map={}; for(const item of raw){ const f=toISO(item && item.fecha); if(!f) continue; (map[f] ||= []).push({...item}); } return map; }
+  if (Array.isArray(raw)){
+    const map = {};
+    for (const item of raw){
+      const f = toISO(item && item.fecha);
+      if (!f) continue;
+      (map[f] ||= []).push({ ...item });
+    }
+    return map;
+  }
   return raw;
 }
 
@@ -1210,6 +1218,11 @@ function countItinHits(g, qNorm){
 
 function renderItinerario(g, pane, preferDate){
   pane.innerHTML='';
+  const map = g?.itinerario || {};
+  if (!map || typeof map !== 'object' || Object.keys(map).length === 0){
+    pane.innerHTML = '<div class="muted">SIN ITINERARIO CARGADO.</div>';
+    return 0;
+  }
   const qNorm = norm(state.groupQ||'');
   const fechas=rangoFechas(g.fechaInicio,g.fechaFin);
   if(!fechas.length){ pane.innerHTML='<div class="muted">FECHAS NO DEFINIDAS.</div>'; return 0; }
