@@ -295,9 +295,11 @@ async function loadGruposForCoordinador(coord, user){
   await renderOneGroup(state.ordenados[state.idx], qsF);
 }
 
-/* ====== NORMALIZADOR DE ITINERARIO ====== */
+/* ====== NORMALIZADOR DE ITINERARIO (multiesquema) ====== */
 function normalizeItinerario(raw){
   if (!raw) return {};
+
+  // A) Array plano de actividades con .fecha
   if (Array.isArray(raw)){
     const map = {};
     for (const item of raw){
@@ -307,7 +309,73 @@ function normalizeItinerario(raw){
     }
     return map;
   }
-  return raw;
+
+  // B) Objeto { 'YYYY-MM-DD': [...] } (ya OK)
+  // C) Objeto { 'YYYY-MM-DD': { items | actividades | acts: [...] } }
+  // D) Objeto { 'YYYY-MM-DD': { <timeId>: actividad, ... } }
+  if (raw && typeof raw === 'object'){
+    const out = {};
+    for (const [k,v] of Object.entries(raw)){
+      const f = toISO(k);
+      if (!f) continue;
+      let arr = [];
+      if (Array.isArray(v)) arr = v;
+      else if (v && typeof v === 'object'){
+        if (Array.isArray(v.items)) arr = v.items;
+        else if (Array.isArray(v.actividades)) arr = v.actividades;
+        else if (Array.isArray(v.acts)) arr = v.acts;
+        else {
+          // Mapa { timeId: actividad }
+          const vals = Object.values(v).filter(x => x && typeof x === 'object');
+          // Si parecen actividades (tienen al menos "actividad" u "horaInicio"), úsalo:
+          if (vals.some(x => x.actividad || x.horaInicio || x.horaFin)) arr = vals;
+        }
+      }
+      if (arr.length) out[f] = arr.slice();
+    }
+    return out;
+  }
+
+  return {};
+}
+
+/* ====== ITINERARIO: carga desde subcolección (compat) ====== */
+async function loadItinerarioFromSubcollections(grupoId){
+  const map = {};
+  try{
+    const coll = collection(db, 'grupos', grupoId, 'itinerario');
+    const ds   = await getDocs(coll);
+    for (const d of ds.docs){
+      const iso = toISO(d.id);
+      if (!iso) continue;
+      const x = d.data() || {};
+
+      // Prioriza arrays directos
+      let items = null;
+      if (Array.isArray(x.items))        items = x.items;
+      else if (Array.isArray(x.actividades)) items = x.actividades;
+      else if (Array.isArray(x.acts))    items = x.acts;
+
+      // Si no hay arrays directos, intenta subcolección "items"
+      if (!items){
+        try{
+          const sub = await getDocs(collection(db,'grupos',grupoId,'itinerario',d.id,'items'));
+          const arr = [];
+          sub.forEach(i => arr.push({ id:i.id, ...(i.data()||{}) }));
+          if (arr.length) items = arr;
+        }catch(_){}
+      }
+
+      // Si tampoco, convierte objeto {timeId:{...}}
+      if (!items && x && typeof x === 'object'){
+        const vals = Object.values(x).filter(z => z && typeof z === 'object');
+        if (vals.some(z => z.actividad || z.horaInicio || z.horaFin)) items = vals;
+      }
+
+      if (Array.isArray(items) && items.length) map[iso] = items;
+    }
+  }catch(e){ console.warn('loadItinerarioFromSubcollections', e); }
+  return map;
 }
 
 /* ====== STATS ====== */
