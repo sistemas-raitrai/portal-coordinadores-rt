@@ -291,8 +291,13 @@ async function loadGruposForCoordinador(coord, user){
     const last=localStorage.getItem('rt_last_group');
     if(last){ const i=state.ordenados.findIndex(x=> x.id===last || x.numeroNegocio===last); if(i>=0) idx=i; }
   }
-  state.idx=Math.max(0,Math.min(idx,state.ordenados.length-1));
-  await renderOneGroup(state.ordenados[state.idx], qsF);
+  state.idx = Math.max(0, Math.min(idx, state.ordenados.length - 1));
+
+  // AÑADIDO: garantizar itinerario antes de renderizar
+  const target = state.ordenados[state.idx];
+  await ensureItinerarioLoaded(target);
+
+  await renderOneGroup(target, qsF);
 }
 
 /* ====== NORMALIZADOR DE ITINERARIO (multiesquema) ====== */
@@ -376,6 +381,18 @@ async function loadItinerarioFromSubcollections(grupoId){
     }
   }catch(e){ console.warn('loadItinerarioFromSubcollections', e); }
   return map;
+}
+
+// Garantiza que el grupo tenga itinerario (si no viene en el doc, lo carga desde la subcolección)
+async function ensureItinerarioLoaded(grupo){
+  try{
+    if (grupo && grupo.itinerario && Object.keys(grupo.itinerario).length) return grupo;
+    const map = await loadItinerarioFromSubcollections(grupo.id);
+    if (map && Object.keys(map).length){
+      grupo.itinerario = map;
+    }
+  }catch(_){}
+  return grupo;
 }
 
 /* ====== STATS ====== */
@@ -649,6 +666,9 @@ async function reloadGroupAndRender(groupId){
       identificador:  String(raw.identificador || raw.codigo || '')
     };
 
+    // 👇 AÑADIR: si el campo 'itinerario' viene vacío, carga desde la subcolección
+    await ensureItinerarioLoaded(g2);
+
     // Refresca en state (por si cambias de viaje luego)
     const idx = state.ordenados.findIndex(x => x && x.id === g2.id);
     if (idx >= 0) {
@@ -657,6 +677,7 @@ async function reloadGroupAndRender(groupId){
       if (j >= 0) state.grupos[j] = g2;
       state.idx = idx;
     }
+
     await renderOneGroup(g2);
   }catch(e){
     console.error('reloadGroupAndRender', e);
