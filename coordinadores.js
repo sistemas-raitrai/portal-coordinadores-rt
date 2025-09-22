@@ -773,12 +773,6 @@ async function renderResumen(g, pane){
           }
         }
 
-        // (opcional) info de reserva si existe
-        const reservaTxt = v.reservaFechaLimite ? dmy(toISO(v.reservaFechaLimite)) : '';
-        if (v.reservaEstado || reservaTxt){
-          extra += `<div class="meta"><strong>RESERVA:</strong> ${(v.reservaEstado||'PENDIENTE').toString().toUpperCase()}${reservaTxt?(' · LÍMITE: '+reservaTxt):''}</div>`;
-        }
-
         block.innerHTML = `
           <div class="meta"><strong>N° / SERVICIO:</strong> ${numero || '—'}</div>
           <div class="meta"><strong>EMPRESA:</strong> ${empresa || '—'}</div>
