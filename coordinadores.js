@@ -1283,30 +1283,36 @@ async function renderActs(grupo, fechaISO, cont){
     const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
 
     const div=document.createElement('div'); div.className='act';
-    div.innerHTML=`
-      <h4>${(actName||'').toUpperCase()} ${estado?`· <span class="muted">${String(estado).toUpperCase()}</span>`:''}</h4>
-      <div class="meta">
-        {(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')}
-        · PLAN: ${fmtPaxPlan(plan, grupo)} PAX
-      </div>
-      <div class="rowflex" style="margin:.35rem 0">
-        <input type="number" min="0" inputmode="numeric" placeholder="N° ASISTENCIA" value="${paxFinalInit}"/>
-        <textarea placeholder="COMENTARIOS"></textarea>
-        <button class="btn ok btnSave">GUARDAR</button>
-        ${tipo!=='NOAPLICA'?`<button class="btn sec btnVch">FINALIZAR…</button>`:''}
-        <button class="btn sec btnActInfo">DETALLE/COMENTARIOS…</button>
-      </div>
-      <div class="bitacora" style="margin-top:.4rem">
-        <div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>
-        <div class="bitItems" style="display:grid;gap:.35rem"></div>
-      </div>`;
+    const estadoHtml = estado ? ('· <span class="muted">' + String(estado).toUpperCase() + '</span>') : '';
+    const botonesVoucher = (tipo !== 'NOAPLICA') ? '<button class="btn sec btnVch">FINALIZAR…</button>' : '';
    
-   // NUEVO: handler del modal de actividad
-   const btnAI = div.querySelector('.btnActInfo');
-   if (btnAI) btnAI.onclick = async () => {
-     await openActividadModal(grupo, fechaISO, act, servicio, tipo);
-   };
-
+    div.innerHTML =
+      '<h4>' + (actName || '').toUpperCase() + ' ' + estadoHtml + '</h4>' +
+      '<div class="meta">' +
+        (act.horaInicio || '--:--') + '–' + (act.horaFin || '--:--') +
+        ' · PLAN: ' + fmtPaxPlan(plan, grupo) + ' PAX' +
+      '</div>' +
+      '<div class="rowflex" style="margin:.35rem 0">' +
+        '<input type="number" min="0" inputmode="numeric" placeholder="N° ASISTENCIA" value="' + paxFinalInit + '"/>' +
+        '<textarea placeholder="COMENTARIOS"></textarea>' +
+        '<button class="btn ok btnSave">GUARDAR</button>' +
+        botonesVoucher +
+        '<button class="btn sec btnActInfo">DETALLE/COMENTARIOS…</button>' +
+      '</div>' +
+      '<div class="bitacora" style="margin-top:.4rem">' +
+        '<div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>' +
+        '<div class="bitItems" style="display:grid;gap:.35rem"></div>' +
+      '</div>';
+   
+    // NUEVO: handler del modal de actividad (no rompe si falla)
+    const btnAI = div.querySelector('.btnActInfo');
+    if (btnAI) btnAI.onclick = async () => {
+      try {
+        await openActividadModal(grupo, fechaISO, act, servicio, tipo);
+      } catch(e) {
+        console.error('openActividadModal error', e);
+      }
+    };
 
     // BITÁCORA
     const itemsWrap=div.querySelector('.bitItems'); await loadBitacora(grupo.id,fechaISO,actKey,itemsWrap);
