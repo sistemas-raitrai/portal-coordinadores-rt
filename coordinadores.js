@@ -10,7 +10,7 @@ import { onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
   collection, getDocs, getDoc, doc, updateDoc, addDoc, setDoc,
-  serverTimestamp, query, where, orderBy, limit, deleteField, deleteDoc
+  serverTimestamp, query, where, orderBy, limit, deleteField, deleteDoc, startAfter
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 import { ref as sRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
@@ -1286,7 +1286,7 @@ async function renderActs(grupo, fechaISO, cont){
     div.innerHTML=`
       <h4>${(actName||'').toUpperCase()} ${estado?`· <span class="muted">${String(estado).toUpperCase()}</span>`:''}</h4>
       <div class="meta">
-        ${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')}
+        {(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')}
         · PLAN: ${fmtPaxPlan(plan, grupo)} PAX
       </div>
       <div class="rowflex" style="margin:.35rem 0">
@@ -1294,12 +1294,19 @@ async function renderActs(grupo, fechaISO, cont){
         <textarea placeholder="COMENTARIOS"></textarea>
         <button class="btn ok btnSave">GUARDAR</button>
         ${tipo!=='NOAPLICA'?`<button class="btn sec btnVch">FINALIZAR…</button>`:''}
+        <button class="btn sec btnActInfo">DETALLE/COMENTARIOS…</button>
       </div>
       <div class="bitacora" style="margin-top:.4rem">
         <div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>
         <div class="bitItems" style="display:grid;gap:.35rem"></div>
       </div>`;
-    cont.appendChild(div);
+   
+   // NUEVO: handler del modal de actividad
+   const btnAI = div.querySelector('.btnActInfo');
+   if (btnAI) btnAI.onclick = async () => {
+     await openActividadModal(grupo, fechaISO, act, servicio, tipo);
+   };
+
 
     // BITÁCORA
     const itemsWrap=div.querySelector('.bitItems'); await loadBitacora(grupo.id,fechaISO,actKey,itemsWrap);
