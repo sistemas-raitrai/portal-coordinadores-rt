@@ -1601,6 +1601,202 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
   back.style.display='flex';
 }
+
+/* ====== ACTIVIDAD: DETALLE + FORO DE COMENTARIOS (con Proveedor por destino) ====== */
+function foroColl(grupoId, actKey, fechaISO){
+  return collection(db, 'grupos', grupoId, 'foroActividades', actKey, fechaISO);
+}
+
+function formatCL(dt){
+  try{
+    return new Intl.DateTimeFormat('es-CL',{
+      timeZone:'America/Santiago',
+      year:'numeric',month:'2-digit',day:'2-digit',
+      hour:'2-digit',minute:'2-digit'
+    }).format(dt).toUpperCase();
+  }catch(_){ return dt.toLocaleString('es-CL').toUpperCase(); }
+}
+
+// Busca proveedor en la ruta por DESTINO (según la actividad/servicio)
+async function fetchProveedorByDestino(destino, proveedorName){
+  if (!destino || !proveedorName) return null;
+  try{
+    const qs = await getDocs(collection(db,'Proveedores', String(destino).toUpperCase(), 'Listado'));
+    let hit = null;
+    qs.forEach(d=>{
+      const x = d.data()||{};
+      const nom = (x.proveedor || d.id || '').toString();
+      if (norm(nom) === norm(proveedorName)) hit = { id:d.id, ...x };
+    });
+    return hit;
+  }catch(_){ return null; }
+}
+
+async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='NOAPLICA'){
+  const back  = document.getElementById('modalBack');
+  const title = document.getElementById('modalTitle');
+  const body  = document.getElementById('modalBody');
+
+  const actName = (act?.actividad || 'ACTIVIDAD').toString();
+  const actKey  = slug(actName);
+  const destino = (g?.destino || '').toString().toUpperCase();
+
+  // Servicio (para indicaciones/voucher) ya lo traes con findServicio(destino, actName).
+  // Aquí sólo nos aseguramos de tener indicaciones/voucher priorizando Servicios/{destino}/Listado.
+  let indicaciones = '';
+  let voucherLabel = (tipoVoucher || 'NOAPLICA').toString().toUpperCase();
+
+  try{
+    // si ya vino "servicio" desde findServicio úsalo tal cual:
+    if (servicio){
+      indicaciones = String(
+        servicio.indicaciones || servicio.instrucciones || act?.indicaciones || act?.instrucciones || ''
+      ).trim();
+      const vRaw = (servicio.voucher || voucherLabel || '').toString();
+      voucherLabel = /electron/i.test(vRaw) ? 'ELECTRONICO' : (/fisic/i.test(vRaw) ? 'FISICO' : 'NOAPLICA');
+    }
+  }catch(_){}
+
+  // Proveedor por DESTINO (Proveedores/{destino}/Listado)
+  let proveedorDoc = null;
+  try{
+    const provNom = (servicio?.proveedor || act?.proveedor || '').toString();
+    proveedorDoc = await fetchProveedorByDestino(destino, provNom);
+  }catch(_){}
+
+  const nombreProv  = (proveedorDoc?.proveedor || act?.proveedor || '—').toString().toUpperCase();
+  const contactoNom = (proveedorDoc?.contacto  || '').toString().toUpperCase();
+  const contactoTel = (proveedorDoc?.telefono  || '').toString().toUpperCase();
+  const contactoMail= (proveedorDoc?.correo    || '').toString().toUpperCase();
+
+  title.textContent = `DETALLE — ${actName.toUpperCase()} — ${dmy(fechaISO)}`;
+  body.innerHTML = `
+    <div class="card">
+      <div class="meta"><strong>PROVEEDOR:</strong> ${nombreProv}</div>
+      ${contactoNom ? `<div class="meta"><strong>CONTACTO:</strong> ${contactoNom}</div>` : ''}
+      ${contactoTel ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoTel}</div>` : ''}
+      ${contactoMail? `<div class="meta"><strong>CORREO:</strong> ${contactoMail}</div>` : ''}
+      <div class="meta"><strong>VOUCHER:</strong> ${voucherLabel}</div>
+      <div class="meta"><strong>HORARIO:</strong> ${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')}</div>
+    </div>
+    <div class="act">
+      <h4>INDICACIONES</h4>
+      ${indicaciones ? `<div class="meta" style="white-space:pre-wrap">${indicaciones.toUpperCase()}</div>` : '<div class="muted">SIN INDICACIONES.</div>'}
+    </div>
+
+    <!-- FORO -->
+    <div class="act" id="foroBox">
+      <h4>COMENTARIOS DE LA ACTIVIDAD</h4>
+      <div class="rowflex" style="margin:.35rem 0">
+        <textarea id="foroText" placeholder="ESCRIBE UN COMENTARIO (SE PUBLICA CON TU CORREO)"></textarea>
+        <button id="foroSend" class="btn ok">PUBLICAR</button>
+      </div>
+      <div class="muted">Los comentarios del STAFF aparecen primero.</div>
+      <div id="foroList" style="display:grid;gap:.4rem;margin-top:.5rem"></div>
+      <div class="rowflex" style="justify-content:center;margin-top:.4rem">
+        <button id="foroMore" class="btn sec" style="display:none">CARGAR MÁS</button>
+      </div>
+    </div>
+  `;
+
+  // ===== Paginación (STAFF arriba, 10 por página, botón "CARGAR MÁS") =====
+  const paging = { cursor:null, exhausted:false, loading:false, pageSize:10, items:[] };
+
+  const renderForo = ()=>{
+    const wrap = body.querySelector('#foroList');
+    wrap.innerHTML = '';
+
+    const staff = paging.items.filter(x=>x.isStaff).sort((a,b)=> b.tsMs - a.tsMs);
+    const resto = paging.items.filter(x=>!x.isStaff).sort((a,b)=> b.tsMs - a.tsMs);
+    const ordered = [...staff, ...resto];
+
+    if(!ordered.length){
+      wrap.innerHTML = '<div class="muted">AÚN NO HAY COMENTARIOS.</div>';
+      body.querySelector('#foroMore').style.display = paging.exhausted ? 'none' : 'none';
+      return;
+    }
+    ordered.forEach(x=>{
+      const div = document.createElement('div');
+      div.className='card';
+      div.innerHTML = `
+        <div class="meta" style="display:flex;gap:.5rem;align-items:center">
+          ${x.isStaff?'<span class="badge" style="background:#1d4ed8;color:#fff">STAFF</span>':''}
+          <strong>${(x.byEmail||'').toUpperCase()}</strong> · ${formatCL(new Date(x.tsMs||Date.now()))}
+        </div>
+        <div style="margin-top:.25rem;white-space:pre-wrap">${(x.texto||'').toString().toUpperCase()}</div>
+      `;
+      wrap.appendChild(div);
+    });
+
+    const moreBtn = body.querySelector('#foroMore');
+    moreBtn.style.display = paging.exhausted ? 'none' : '';
+  };
+
+  const loadPage = async ()=>{
+    if (paging.loading || paging.exhausted) return;
+    paging.loading = true;
+    try{
+      let qy = query(foroColl(g.id, actKey, fechaISO), orderBy('ts','desc'), limit(paging.pageSize + 1));
+      if (paging.cursor){
+        qy = query(foroColl(g.id, actKey, fechaISO), orderBy('ts','desc'), startAfter(paging.cursor), limit(paging.pageSize + 1));
+      }
+      const snap = await getDocs(qy);
+      const docs = snap.docs;
+
+      if (docs.length > paging.pageSize){
+        paging.cursor = docs[paging.pageSize - 1];
+      }else{
+        paging.cursor = docs[docs.length - 1] || paging.cursor;
+        paging.exhausted = true;
+      }
+
+      const add = docs.slice(0, paging.pageSize).map(d=>{
+        const x = d.data() || {};
+        const tsMs = x.ts?.seconds ? x.ts.seconds*1000 : Date.now();
+        return { id:d.id, texto:String(x.texto||''), byEmail:String(x.byEmail||x.by||'').toLowerCase(), isStaff:!!x.isStaff, tsMs };
+      });
+
+      const seen = new Set(paging.items.map(z=>z.id));
+      add.forEach(z=>{ if(!seen.has(z.id)) paging.items.push(z); });
+
+      renderForo();
+    }catch(e){
+      console.error('FORO loadPage', e);
+      alert('NO SE PUDO CARGAR COMENTARIOS.');
+    }finally{
+      paging.loading = false;
+    }
+  };
+
+  body.querySelector('#foroMore').onclick = loadPage;
+
+  body.querySelector('#foroSend').onclick = async ()=>{
+    const ta = body.querySelector('#foroText');
+    const texto = (ta.value||'').trim();
+    if(!texto){ alert('ESCRIBE UN COMENTARIO.'); return; }
+    try{
+      await addDoc(foroColl(g.id, actKey, fechaISO),{
+        texto,
+        byUid: state.user.uid,
+        byEmail: (state.user.email||'').toLowerCase(),
+        isStaff: !!state.is,
+        ts: serverTimestamp()
+      });
+      ta.value='';
+      // refrescar desde el inicio para mantener orden STAFF/fecha
+      paging.cursor = null; paging.exhausted = false; paging.items = [];
+      await loadPage();
+    }catch(e){
+      console.error('FORO send', e);
+      alert('NO SE PUDO PUBLICAR.');
+    }
+  };
+
+  document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
+  back.style.display='flex';
+  await loadPage();
+}
+
 async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
   try{
     const key=slug(act.actividad||'');
