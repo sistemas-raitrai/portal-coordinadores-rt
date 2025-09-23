@@ -301,42 +301,56 @@ async function loadGruposForCoordinador(coord, user){
 }
 
 /* ====== NORMALIZADOR DE ITINERARIO (multiesquema) ====== */
+/* ====== NORMALIZADOR DE ITINERARIO (multiesquema, robusto) ====== */
 function normalizeItinerario(raw){
   if (!raw) return {};
 
-  // A) Array plano de actividades con .fecha
+  // A) Array plano de actividades con .fecha → agrupar por fecha
   if (Array.isArray(raw)){
     const map = {};
     for (const item of raw){
       const f = toISO(item && item.fecha);
-      if (!f) continue;
+      if (!f || !item || typeof item !== 'object') continue;
       (map[f] ||= []).push({ ...item });
     }
     return map;
   }
 
-  // B) Objeto { 'YYYY-MM-DD': [...] } (ya OK)
+  // B) Objeto { 'YYYY-MM-DD': [...] }  (OK)
   // C) Objeto { 'YYYY-MM-DD': { items | actividades | acts: [...] } }
-  // D) Objeto { 'YYYY-MM-DD': { <timeId>: actividad, ... } }
+  // D) Objeto { 'YYYY-MM-DD': { '0':act, '1':act, ... } }  ← NUEVO
+  // E) Objeto { 'YYYY-MM-DD': { <timeId>: actividad } }
   if (raw && typeof raw === 'object'){
     const out = {};
     for (const [k,v] of Object.entries(raw)){
       const f = toISO(k);
       if (!f) continue;
+
       let arr = [];
-      if (Array.isArray(v)) arr = v;
-      else if (v && typeof v === 'object'){
-        if (Array.isArray(v.items)) arr = v.items;
+      if (Array.isArray(v)){
+        arr = v;
+      } else if (v && typeof v === 'object'){
+        if (Array.isArray(v.items))        arr = v.items;
         else if (Array.isArray(v.actividades)) arr = v.actividades;
-        else if (Array.isArray(v.acts)) arr = v.acts;
+        else if (Array.isArray(v.acts))    arr = v.acts;
         else {
-          // Mapa { timeId: actividad }
-          const vals = Object.values(v).filter(x => x && typeof x === 'object');
-          // Si parecen actividades (tienen al menos "actividad" u "horaInicio"), úsalo:
-          if (vals.some(x => x.actividad || x.horaInicio || x.horaFin)) arr = vals;
+          const keys = Object.keys(v);
+
+          // D) objeto indexado tipo {"0":{...},"1":{...}} → ordénalo y pásalo a array
+          if (keys.length && keys.every(x => /^\d+$/.test(x))){
+            arr = keys.sort((a,b)=>Number(a)-Number(b)).map(i => v[i]).filter(x => x && typeof x==='object');
+          } else {
+            // E) mapa { timeId: actividad } si parecen actividades
+            const vals = Object.values(v).filter(x => x && typeof x==='object');
+            if (vals.some(x => x.actividad || x.horaInicio || x.horaFin)) arr = vals;
+          }
         }
       }
-      if (arr.length) out[f] = arr.slice();
+
+      if (Array.isArray(arr) && arr.length){
+        // Sanitiza: sólo objetos
+        out[f] = arr.filter(x => x && typeof x==='object').map(x => ({ ...x }));
+      }
     }
     return out;
   }
@@ -1363,10 +1377,15 @@ async function renderActs(grupo, fechaISO, cont){
   } catch (e) { D_HOTEL('ERROR BANNER ALOJAMIENTO/ÚLTIMO DÍA', e); }
 
   const q = norm(state.groupQ||'');
-  let acts=(grupo.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
+  // Obtener actividades del día tolerando objeto indexado
+  let acts = (grupo.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
+  if (!Array.isArray(acts)) {
+    acts = Object.values(acts || {}).filter(x => x && typeof x === 'object');
+  }
 
-  // Orden por hora de inicio (temprano → tarde)
-  acts = acts.slice().sort((a,b)=> timeVal(a.horaInicio) - timeVal(b.horaInicio));
+// Orden por hora de inicio (temprano → tarde)
+acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
+
 
   if(q) acts = acts.filter(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(q));
   if (!acts.length){ cont.innerHTML='<div class="muted">SIN ACTIVIDADES PARA ESTE DÍA.</div>'; return; }
@@ -1380,8 +1399,14 @@ async function renderActs(grupo, fechaISO, cont){
     const actName=act.actividad||'ACTIVIDAD';
     const actKey=slug(actName);
 
-    const servicio = await findServicio(grupo.destino, actName);
+    let servicio = null;
+    try {
+      servicio = await findServicio(grupo.destino, actName);
+    } catch (e) {
+      console.warn('findServicio falló', { destino: grupo.destino, act: actName, e });
+    }
     const tipoRaw = (servicio?.voucher || 'No Aplica').toString();
+
     const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
 
     const div=document.createElement('div'); div.className='act';
