@@ -18,9 +18,24 @@ import { ref as sRef, uploadBytes, getDownloadURL }
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
-const toISO=(x)=>{ if(!x) return ''; if (typeof x==='string'){ if(/^\d{4}-\d{2}-\d{2}$/.test(x)) return x; const d=new Date(x); return isNaN(d)?'':d.toISOString().slice(0,10); }
-  if (x && typeof x==='object' && 'seconds' in x) return new Date(x.seconds*1000).toISOString().slice(0,10);
-  if (x instanceof Date) return x.toISOString().slice(0,10); return ''; };
+const toISO = (x) => {
+  if (!x) return '';
+  if (typeof x === 'string') {
+    const t = x.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;              // YYYY-MM-DD
+    if (/^\d{2}-\d{2}-\d{4}$/.test(t)) {                      // DD-MM-AAAA
+      const [dd, mm, yy] = t.split('-');
+      return `${yy}-${mm}-${dd}`;
+    }
+    const d = new Date(t);
+    return isNaN(d) ? '' : d.toISOString().slice(0, 10);
+  }
+  if (x && typeof x === 'object' && 'seconds' in x)
+    return new Date(x.seconds * 1000).toISOString().slice(0, 10);
+  if (x instanceof Date) return x.toISOString().slice(0, 10);
+  return '';
+};
+
 const dmy=(iso)=>{ const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(iso||''); return m?`${m[3]}-${m[2]}-${m[1]}`:''; };
 const ymdFromDMY=(s)=>{ const t=(s||'').trim(); if(/^\d{2}-\d{2}-\d{4}$/.test(t)){ const [dd,mm,yy]=t.split('-'); return `${yy}-${mm}-${dd}`;} return ''; };
 const daysInclusive=(ini,fin)=>{ const a=toISO(ini), b=toISO(fin); if(!a||!b) return 0; return Math.max(1,Math.round((new Date(b)-new Date(a))/86400000)+1); };
