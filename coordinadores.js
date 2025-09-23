@@ -1373,7 +1373,8 @@ function renderItinerario(g, pane, preferDate){
 
 async function renderActs(grupo, fechaISO, cont){
   cont.innerHTML='';
-  // Banner superior: Alojamiento del día + aviso último día
+
+  // Banner superior: Alojamiento del día + aviso último día (igual que antes)
   try {
     const top = document.createElement('div');
     top.className = 'act';
@@ -1398,36 +1399,30 @@ async function renderActs(grupo, fechaISO, cont){
     acts = Object.values(acts || {}).filter(x => x && typeof x === 'object');
   }
 
-// Orden por hora de inicio (temprano → tarde)
-acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
-
+  // Orden por hora de inicio (temprano → tarde)
+  acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
 
   if(q) acts = acts.filter(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(q));
   if (!acts.length){ cont.innerHTML='<div class="muted">SIN ACTIVIDADES PARA ESTE DÍA.</div>'; return; }
 
-  for(const act of acts){
-    const plan=calcPlan(act,grupo);
-    const saved=getSavedAsistencia(grupo,fechaISO,act.actividad);
-    const estado=(grupo.serviciosEstado?.[fechaISO]?.[slug(act.actividad||'')]?.estado)||'';
+  // ===== Render inmediato, cargas asíncronas después =====
+  for (const act of acts){
+    const plan  = calcPlan(act, grupo);
+    const saved = getSavedAsistencia(grupo, fechaISO, act.actividad);
+    const estado = (grupo.serviciosEstado?.[fechaISO]?.[slug(act.actividad||'')]?.estado) || '';
 
-    const paxFinalInit=(saved?.paxFinal ?? '');
-    const actName=act.actividad||'ACTIVIDAD';
-    const actKey=slug(actName);
+    const paxFinalInit = (saved?.paxFinal ?? '');
+    const actName = act.actividad || 'ACTIVIDAD';
+    const actKey  = slug(actName);
 
-    let servicio = null;
-    try {
-      servicio = await findServicio(grupo.destino, actName);
-    } catch (e) {
-      console.warn('findServicio falló', { destino: grupo.destino, act: actName, e });
-    }
-    const tipoRaw = (servicio?.voucher || 'No Aplica').toString();
+    const div = document.createElement('div');
+    div.className = 'act';
 
-    const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
-
-    const div=document.createElement('div'); div.className='act';
     const estadoHtml = estado ? ('· <span class="muted">' + String(estado).toUpperCase() + '</span>') : '';
-    const botonesVoucher = (tipo !== 'NOAPLICA') ? '<button class="btn sec btnVch">FINALIZAR…</button>' : '';
-   
+
+    // Botón de voucher: placeholder que reemplazamos cuando llegue el servicio
+    const vchPlaceholder = '<span class="btnVchWrap"></span>';
+
     div.innerHTML =
       '<h4>' + (actName || '').toUpperCase() + ' ' + estadoHtml + '</h4>' +
       '<div class="meta">' +
@@ -1438,51 +1433,55 @@ acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio)
         '<input type="number" min="0" inputmode="numeric" placeholder="N° ASISTENCIA" value="' + paxFinalInit + '"/>' +
         '<textarea placeholder="COMENTARIOS"></textarea>' +
         '<button class="btn ok btnSave">GUARDAR</button>' +
-        botonesVoucher +
+        vchPlaceholder +
         '<button class="btn sec btnActInfo">DETALLE/COMENTARIOS…</button>' +
       '</div>' +
       '<div class="bitacora" style="margin-top:.4rem">' +
         '<div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>' +
-        '<div class="bitItems" style="display:grid;gap:.35rem"></div>' +
+        '<div class="bitItems" style="display:grid;gap:.35rem"><div class="muted">CARGANDO…</div></div>' +
       '</div>';
-   
-    // NUEVO: handler del modal de actividad (no rompe si falla)
+
+    cont.appendChild(div);
+
+    // — Detalle/Comentarios (servicio se resuelve dentro del modal si es necesario)
     const btnAI = div.querySelector('.btnActInfo');
     if (btnAI) btnAI.onclick = async () => {
       try {
+        const servicio = await findServicio(grupo.destino, actName).catch(()=>null);
+        const tipoRaw  = (servicio?.voucher || 'No Aplica').toString();
+        const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
         await openActividadModal(grupo, fechaISO, act, servicio, tipo);
       } catch(e) {
         console.error('openActividadModal error', e);
       }
     };
 
-    // BITÁCORA
-    const itemsWrap=div.querySelector('.bitItems'); await loadBitacora(grupo.id,fechaISO,actKey,itemsWrap);
-
-    // GUARDAR ASISTENCIA + NOTA
-    div.querySelector('.btnSave').onclick=async ()=>{
-      const btn=div.querySelector('.btnSave'); btn.disabled=true;
+    // — Guardar asistencia/nota (igual que antes)
+    div.querySelector('.btnSave').onclick = async ()=>{
+      const btn = div.querySelector('.btnSave'); btn.disabled = true;
       try{
-        const pax=Number(div.querySelector('input').value||0);
-        const nota=String(div.querySelector('textarea').value||'').trim();
-        const refGrupo=doc(db,'grupos',grupo.id);
-        const payload={}; payload[`asistencias.${fechaISO}.${actKey}`]={
+        const pax  = Number(div.querySelector('input').value || 0);
+        const nota = String(div.querySelector('textarea').value || '').trim();
+        const refGrupo = doc(db,'grupos',grupo.id);
+        const payload = {};
+        payload[`asistencias.${fechaISO}.${actKey}`] = {
           paxFinal:pax, notas:nota, byUid:auth.currentUser.uid,
           byEmail:String(auth.currentUser.email||'').toLowerCase(), updatedAt:serverTimestamp()
         };
-        await updateDoc(refGrupo,payload);
-        setSavedAsistenciaLocal(grupo,fechaISO,actName,{paxFinal:pax,notas:nota});
-        if(nota){
-           const timeId = timeIdNowMs();
-           const ref = doc(db,'grupos',grupo.id,'bitacora',actKey,fechaISO,timeId);
-           await setDoc(ref, {
-             texto: nota,
-             byUid: auth.currentUser.uid,
-             byEmail: (auth.currentUser.email||'').toLowerCase(),
-             ts: serverTimestamp()
-           });
+        await updateDoc(refGrupo, payload);
+        setSavedAsistenciaLocal(grupo, fechaISO, actName, { paxFinal:pax, notas:nota });
 
-          // ALERTA PARA  (OPERACIONES)
+        if(nota){
+          const timeId = timeIdNowMs();
+          const ref = doc(db,'grupos',grupo.id,'bitacora',actKey,fechaISO,timeId);
+          await setDoc(ref, {
+            texto: nota,
+            byUid: auth.currentUser.uid,
+            byEmail: (auth.currentUser.email||'').toLowerCase(),
+            ts: serverTimestamp()
+          });
+
+          // Alerta para Operaciones
           await addDoc(collection(db,'alertas'),{
             audience:'',
             mensaje: `NOTA EN ${actName.toUpperCase()}: ${nota.toUpperCase()}`,
@@ -1500,19 +1499,49 @@ acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio)
             }
           });
 
-          await loadBitacora(grupo.id,fechaISO,actKey,itemsWrap);
+          await loadBitacora(grupo.id, fechaISO, actKey, div.querySelector('.bitItems'));
           div.querySelector('textarea').value='';
           await renderGlobalAlerts();
         }
+
         btn.textContent='GUARDADO'; setTimeout(()=>{ btn.textContent='GUARDAR'; btn.disabled=false; },900);
       }catch(e){ console.error(e); btn.disabled=false; alert('NO SE PUDO GUARDAR.'); }
     };
 
-    if(tipo!=='NOAPLICA'){
-      div.querySelector('.btnVch').onclick = async ()=>{ await openVoucherModal(grupo,fechaISO,act,servicio,tipo); };
-    }
+    // ===== CARGAS EN SEGUNDO PLANO =====
+
+    // (1) Bitácora asíncrona (reemplaza el “CARGANDO…” cuando llega)
+    loadBitacora(grupo.id, fechaISO, actKey, div.querySelector('.bitItems'))
+      .catch(e => {
+        console.error(e);
+        div.querySelector('.bitItems').innerHTML = '<div class="muted">NO SE PUDO CARGAR LA BITÁCORA.</div>';
+      });
+
+    // (2) Servicio / botón de voucher asíncrono
+    (async () => {
+      try {
+        const servicio = await findServicio(grupo.destino, actName);
+        const tipoRaw  = (servicio?.voucher || 'No Aplica').toString();
+        const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
+
+        if (tipo !== 'NOAPLICA') {
+          const wrap = div.querySelector('.btnVchWrap');
+          if (wrap) {
+            const btn = document.createElement('button');
+            btn.className = 'btn sec';
+            btn.textContent = 'FINALIZAR…';
+            btn.onclick = async () => { await openVoucherModal(grupo, fechaISO, act, servicio, tipo); };
+            wrap.replaceWith(btn);
+          }
+        }
+      } catch (e) {
+        // Si falla la búsqueda del servicio, simplemente no mostramos botón
+        console.warn('findServicio falló', { destino: grupo.destino, act: actName, e });
+      }
+    })();
   }
 }
+
 async function loadBitacora(grupoId, fechaISO, actKey, wrap){
   wrap.innerHTML='<div class="muted">CARGANDO…</div>';
   try{
