@@ -2559,11 +2559,69 @@ async function renderGastos(g, pane){
 function toNumber(n){ return Number(n||0); }
 function fmtCL(n){ return toNumber(n).toLocaleString('es-CL'); }
 
-async function sumCLPByMoneda(montos, tasas){
-  const CLP = toNumber(montos.CLP||0);
-  const USD = toNumber(montos.USD||0) * toNumber(tasas.USD||950);
-  const BRL = toNumber(montos.BRL||0) * toNumber(tasas.BRL||170);
-  const ARS = toNumber(montos.ARS||0) * toNumber(tasas.ARS||1.2);
+/* ===== TASAS DESDE FIRESTORE: Config/Finanzas (USD como pivote) ===== */
+async function loadTasasFinanzas(){
+  if (state.cache.tasas && state.cache.tasas.__from==='Config/Finanzas') return state.cache.tasas;
+  try{
+    const snap = await getDoc(doc(db,'Config','Finanzas'));
+    if (snap.exists()){
+      const x = snap.data() || {};
+      const perUSD = {
+        USD: 1,
+        CLP: Number(x.tcUSD || 945),   // CLP por USD
+        BRL: Number(x.tcBRL || 5.5),   // BRL por USD
+        ARS: Number(x.tcARS || 1370),  // ARS por USD
+      };
+      state.cache.tasas = { __from:'Config/Finanzas', perUSD };
+      return state.cache.tasas;
+    }
+  }catch(_){}
+  const perUSD = { USD:1, CLP:945, BRL:5.5, ARS:1370 };
+  state.cache.tasas = { __from:'fallback', perUSD };
+  return state.cache.tasas;
+}
+
+/* Conversión genérica usando USD como pivote */
+async function convertirMoneda(monto, from='USD', to='CLP'){
+  const { perUSD } = await loadTasasFinanzas();
+  const f = String(from||'').toUpperCase();
+  const t = String(to||'').toUpperCase();
+  const val = Number(monto||0);
+  if (!val || !perUSD[f] || !perUSD[t]) return 0;
+  if (f === t) return val;
+  return val * (perUSD[t] / perUSD[f]);
+}
+
+/* Atajos: de USD a otras */
+const usdAPesosChilenos = (montoUSD) => convertirMoneda(montoUSD, 'USD', 'CLP');
+const usdAReal          = (montoUSD) => convertirMoneda(montoUSD, 'USD', 'BRL');
+const usdAPesosArg      = (montoUSD) => convertirMoneda(montoUSD, 'USD', 'ARS');
+
+// Suma todo a CLP usando USD como pivote y tasas de Config/Finanzas
+async function sumCLPByMoneda(montos, tasasOpt){
+  // Si te pasaron tasas (legacy), respétalas; si no, carga desde Config/Finanzas.
+  let perUSD;
+  if (tasasOpt && (tasasOpt.USD || tasasOpt.CLP || tasasOpt.BRL || tasasOpt.ARS)){
+    // Permite ambos formatos: perUSD o campos tc*
+    if (tasasOpt.perUSD){
+      perUSD = { ...tasasOpt.perUSD, USD:1 };
+    } else {
+      perUSD = {
+        USD: 1,
+        CLP: Number(tasasOpt.tcUSD || tasasOpt.CLP || 945),
+        BRL: Number(tasasOpt.tcBRL || tasasOpt.BRL || 5.5),
+        ARS: Number(tasasOpt.tcARS || tasasOpt.ARS || 1370),
+      };
+    }
+  } else {
+    ({ perUSD } = await loadTasasFinanzas());
+  }
+
+  const toCLP = (amount, code) => Number(amount||0) * (perUSD.CLP / perUSD[String(code||'').toUpperCase()]);
+  const CLP = Number(montos.CLP||0);
+  const USD = toCLP(montos.USD, 'USD'); // USD→CLP
+  const BRL = toCLP(montos.BRL, 'BRL'); // BRL→CLP vía USD
+  const ARS = toCLP(montos.ARS, 'ARS'); // ARS→CLP vía USD
   return { CLP, USD, BRL, ARS, CLPconv: CLP + USD + BRL + ARS };
 }
 
