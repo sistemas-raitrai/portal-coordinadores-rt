@@ -213,9 +213,6 @@ onAuthStateChanged(auth, async (user) => {
    const legacyNewAlert = document.getElementById('btnNewAlert');
    if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
-  const legacyNewAlert = document.getElementById('btnNewAlert');
-  if (legacyNewAlert) legacyNewAlert.style.display = 'none';
-
   // PANEL ALERTAS
   await renderGlobalAlerts();
 
