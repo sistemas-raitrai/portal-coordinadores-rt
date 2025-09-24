@@ -204,9 +204,15 @@ onAuthStateChanged(auth, async (user) => {
     await loadGruposForCoordinador(mine, user);
   }
 
-  // BOTONES SOLO PARA  (en NAV solo queda imprimir; crear alerta va en Alertas)
-  const btnPrint = document.getElementById('btnPrintVch');
-  if (btnPrint) btnPrint.style.display = state.is ? '' : 'none';
+   // BOTONES SOLO PARA STAFF (en NAV solo queda imprimir; crear alerta va en Alertas)
+   const btnPrint = document.getElementById('btnPrintVch');
+   if (btnPrint){
+     btnPrint.style.display = state.is ? '' : 'none';
+     if (state.is) btnPrint.textContent = 'IMPRIMIR DESPACHO';
+   }
+   const legacyNewAlert = document.getElementById('btnNewAlert');
+   if (legacyNewAlert) legacyNewAlert.style.display = 'none';
+
   const legacyNewAlert = document.getElementById('btnNewAlert');
   if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
@@ -500,10 +506,18 @@ function renderNavBar(){
   sel.onchange=async ()=>{ const v=sel.value||''; if(v==='all'){ state.filter={type:'all',value:null}; renderStatsFiltered(); sel.value=`trip:${state.idx}`; }
     else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; await renderOneGroup(state.ordenados[state.idx]); } };
 
-  if(state.is){
-    p.querySelector('#btnPrintVch').onclick = openPrintVouchersModal;
-    // (botón crear alerta se mueve al panel de alertas)
-  }
+   if (state.is){
+     const btn = p.querySelector('#btnPrintVch');
+     if (btn){
+       btn.textContent = 'IMPRIMIR DESPACHO';
+       // btn.onclick = openPrintVouchersModal; // ← LEGACY: comentado a pedido
+       btn.onclick = async () => {
+         const g = state.ordenados[state.idx];
+         await openPrintDespacho(g);
+       };
+     }
+     // (el botón “crear alerta” ya se maneja en el panel de alertas)
+   }
 }
 
 /* ====== VISTA GRUPO ====== */
@@ -1987,6 +2001,182 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   }
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
   back.style.display='flex';
+}
+
+/* ====== IMPRESIÓN DE DESPACHO (PDF por print) ====== */
+
+// Reúne una línea por actividad del itinerario con contacto de proveedor
+async function collectItinLines(grupo){
+  const out = [];
+  const fechas = rangoFechas(grupo.fechaInicio, grupo.fechaFin);
+  for (const f of fechas){
+    // tolerar objeto indexado
+    let acts = (grupo.itinerario && grupo.itinerario[f]) ? grupo.itinerario[f] : [];
+    if (!Array.isArray(acts)) acts = Object.values(acts||{}).filter(x => x && typeof x === 'object');
+
+    // ordenar por hora
+    acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
+
+    for (const a of acts){
+      try{
+        const actName = (a?.actividad || '').toString();
+        const servicio = await findServicio(grupo.destino, actName).catch(()=>null);
+        const provNom  = (servicio?.proveedor || a?.proveedor || '').toString();
+        let provDoc    = null;
+        if (provNom) provDoc = await fetchProveedorByDestino((grupo.destino||'').toString().toUpperCase(), provNom).catch(()=>null);
+
+        const telefono = (provDoc?.telefono || '').toString().toUpperCase();
+        const correo   = (provDoc?.correo   || '').toString().toUpperCase();
+        const contacto = (provDoc?.contacto || '').toString().toUpperCase();
+        const provTxt  = (provDoc?.proveedor || provNom || '—').toString().toUpperCase();
+        const estado   = (grupo?.serviciosEstado?.[f]?.[slug(actName)]?.estado || '').toString().toUpperCase();
+
+        out.push({
+          fechaISO: f,
+          hora: a?.horaInicio || '--:--',
+          actividad: actName.toUpperCase(),
+          proveedor: provTxt,
+          contacto: [contacto, telefono, correo].filter(Boolean).join(' · '),
+          estado
+        });
+      }catch(_){}
+    }
+  }
+  return out;
+}
+
+async function openPrintDespacho(g){
+  if (!g){ alert('No hay viaje activo.'); return; }
+
+  // ==== DATOS BASE ====
+  const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
+  const paxPlan = paxOf(g);
+  const paxReal = paxRealOf(g);
+  const { A: A_real, E: E_real } = paxBreakdown(g);
+  const fechasTxt = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
+
+  // Itinerario (líneas)
+  const itin = await collectItinLines(g);
+
+  // Finanzas: SOLO ABONOS (usa tu función existente loadAbonos)
+  let abonos = [];
+  try { abonos = await loadAbonos(g.id); } catch(_){}
+  const abonosRows = [];
+  for (const a of (abonos||[])){
+    const fecha  = dmy(toISO(a.fecha||''));                 // fecha abono
+    const moneda = (a.moneda||'').toString().toUpperCase();  // CLP/USD/BRL/ARS
+    const valor  = Number(a.valor||0);
+    let clpEq    = 0;
+    try { clpEq = await convertirMoneda(valor, moneda, 'CLP'); } catch(_){ clpEq = 0; }
+    abonosRows.push({ fecha, asunto:(a.asunto||'').toString().toUpperCase(), moneda, valor, clp: clpEq });
+  }
+  const totalCLP = Math.round(abonosRows.reduce((s,x)=> s + Number(x.clp||0), 0));
+
+  // ==== HTML IMPRESIÓN ====
+  const css = `
+  <style>
+    @page { size: A4; margin: 14mm; }
+    body { font-family: system-ui, Arial, sans-serif; font-size: 12px; color:#0a0a0a; }
+    .head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+    .logo { height: 40px; object-fit:contain; }
+    h1 { font-size: 18px; margin: 0 0 6px; }
+    h2 { font-size: 14px; margin: 12px 0 6px; border-bottom:1px solid #ddd; padding-bottom:4px; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:6px 16px; }
+    .muted { color:#555; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:4px 6px; border-bottom:1px solid #eee; vertical-align:top; }
+    th { text-align:left; font-size:11px; color:#444; }
+    .t-tight td { padding:3px 4px; }
+    .right { text-align:right; }
+    .badge { font-weight:700; }
+    .small { font-size:11px; }
+    .cut { page-break-inside: avoid; }
+    .footer { margin-top:8px; font-size:10px; color:#666; }
+  </style>`;
+
+  const infoGeneral = `
+    <div class="head">
+      <div>
+        <h1>DESPACHO DE VIAJE</h1>
+        <div class="small muted">GENERADO: ${new Date().toLocaleString('es-CL').toUpperCase()}</div>
+      </div>
+      <img src="RaitraiLogo.png" class="logo" alt="RAITRAI"/>
+    </div>
+
+    <div class="grid2">
+      <div><strong>GRUPO:</strong> ${(g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase()}</div>
+      <div><strong>CÓDIGO:</strong> ${code.toUpperCase()}</div>
+      <div><strong>DESTINO:</strong> ${(g.destino||'—').toString().toUpperCase()}</div>
+      <div><strong>PROGRAMA:</strong> ${(g.programa||'—').toString().toUpperCase()}</div>
+      <div><strong>FECHAS:</strong> ${fechasTxt}</div>
+      <div><strong>PAX:</strong> PLAN ${paxPlan} ${paxReal?` · REAL ${paxReal} (A:${A_real} · E:${E_real})`:''}</div>
+    </div>
+  `;
+
+  const resumen = `
+    <h2>RESUMEN</h2>
+    <div class="small">VIAJE: ${fechasTxt} · DESTINO: ${(g.destino||'—').toString().toUpperCase()} · PROGRAMA: ${(g.programa||'—').toString().toUpperCase()}</div>
+  `;
+
+  const itinRows = itin.map(x => `
+    <tr>
+      <td>${dmy(x.fechaISO)}</td>
+      <td>${(x.hora||'--:--')}</td>
+      <td>${x.actividad}</td>
+      <td>${x.proveedor}</td>
+      <td>${x.contacto||'—'}</td>
+      <td>${x.estado||''}</td>
+    </tr>`).join('');
+
+  const itinerario = `
+    <h2>ITINERARIO</h2>
+    <table class="t-tight">
+      <thead>
+        <tr><th>FECHA</th><th>HORA</th><th>ACTIVIDAD</th><th>PROVEEDOR</th><th>CONTACTO</th><th>ESTADO</th></tr>
+      </thead>
+      <tbody>${itinRows || '<tr><td colspan="6" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
+    </table>
+  `;
+
+  const finRows = abonosRows.map(r => `
+    <tr>
+      <td>${r.fecha||'—'}</td>
+      <td>${r.asunto||'—'}</td>
+      <td class="right">${(r.valor||0).toLocaleString('es-CL')}</td>
+      <td>${r.moneda||''}</td>
+      <td class="right">${Math.round(r.clp||0).toLocaleString('es-CL')}</td>
+    </tr>`).join('');
+
+  const finanzas = `
+    <h2>FINANZAS — ABONOS</h2>
+    <table class="t-tight">
+      <thead>
+        <tr><th>FECHA</th><th>ASUNTO</th><th class="right">MONTO</th><th>MONEDA</th><th class="right">EQUIV. CLP</th></tr>
+      </thead>
+      <tbody>${finRows || '<tr><td colspan="5" class="muted">SIN ABONOS REGISTRADOS.</td></tr>'}</tbody>
+      <tfoot>
+        <tr><th colspan="4" class="right">TOTAL CLP</th><th class="right">${totalCLP.toLocaleString('es-CL')}</th></tr>
+      </tfoot>
+    </table>
+  `;
+
+  const html = `
+    <!doctype html><html><head><meta charset="utf-8">${css}</head>
+    <body>
+      ${infoGeneral}
+      ${resumen}
+      <div class="cut">${itinerario}</div>
+      <div class="cut">${finanzas}</div>
+      <div class="footer">RAITRAI — Despacho de Viaje. Para PDF usa “Guardar como PDF”.</div>
+      <script>window.addEventListener('load',()=>{ window.print(); setTimeout(()=>window.close(), 600); });</script>
+    </body></html>
+  `;
+
+  const w = window.open('', '_blank', 'noopener');
+  if (!w){ alert('No se pudo abrir la ventana de impresión (popup bloqueado).'); return; }
+  w.document.open('text/html');
+  w.document.write(html);
+  w.document.close();
 }
 
 function formatCL(dt){
