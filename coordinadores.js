@@ -48,7 +48,7 @@ const timeIdNowMs = () => {
 };
 
 /* ====== HISTORIAL VIAJE (utils) ====== */
-const HIST_ACTKEY = '__viaje__';
+const HIST_ACTKEY = '_viaje_'; // o 'viaje_hist', cualquier cosa que NO sea __...__
 const fmtChile = (date) =>
   new Intl.DateTimeFormat('es-CL', {
     timeZone: 'America/Santiago',
@@ -2488,11 +2488,16 @@ async function staffResetInicio(grupo){
     });
 
     // Log inmutable del restablecimiento (quedará en HISTORIAL DEL VIAJE)
-    await appendViajeLog(
-      grupo.id,
-      'RESTABLECER_INICIO',
-      'SE RESTABLECIERON INICIO/FIN Y PAX VIAJANDO (LIMPIEZA)'
-    );
+   // Log inmutable (si falla, NO bloquea el flujo)
+   try {
+     await appendViajeLog(
+       grupo.id,
+       'RESTABLECER_INICIO',
+       'SE RESTABLECIERON INICIO/FIN Y PAX VIAJANDO (LIMPIEZA)'
+     );
+   } catch (e) {
+     console.warn('appendViajeLog falló (no bloquea):', e?.code || e);
+   }
 
     // 2) Actualizar objeto en memoria (para que started = false ya mismo)
     delete grupo.paxViajando;
