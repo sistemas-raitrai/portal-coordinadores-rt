@@ -2567,31 +2567,47 @@ async function sumCLPByMoneda(montos, tasas){
   return { CLP, USD, BRL, ARS, CLPconv: CLP + USD + BRL + ARS };
 }
 
-// -------- ABONOS CRUD (grupos/{gid}/finanzas/abonos) ----------
+// -------- ABONOS CRUD  (grupos/{gid}/finanzas_abonos) ----------
 async function loadAbonos(gid){
-  const qs = await getDocs(collection(db,'grupos',gid,'finanzas','abonos'));
+  // ojo: aquí debe usarse gid (parámetro), no g.id
+  const qs = await getDocs(collection(db,'grupos', gid, 'finanzas_abonos'));
   const list = [];
   qs.forEach(d => list.push({ id:d.id, ...(d.data()||{}) }));
   list.sort((a,b)=> String(b.fecha||'').localeCompare(String(a.fecha||'')));
   return list;
 }
+
 async function saveAbono(gid, abono){
   if (abono.id){
-    const ref = doc(db,'grupos',gid,'finanzas','abonos',abono.id);
+    // update existente
+    const ref = doc(db,'grupos', gid, 'finanzas_abonos', abono.id);
     const { id, ...rest } = abono;
-    await setDoc(ref, { ...rest, updatedAt: serverTimestamp(), updatedBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() } }, { merge:true });
+    await setDoc(
+      ref,
+      { 
+        ...rest,
+        updatedAt: serverTimestamp(),
+        updatedBy: { uid: state.user.uid, email: (state.user.email||'').toLowerCase() }
+      },
+      { merge:true }
+    );
     return abono.id;
-  }else{
-    const ref = await addDoc(collection(db,'grupos',gid,'finanzas','abonos'), {
-      ...abono,
-      createdAt: serverTimestamp(),
-      createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() }
-    });
+  } else {
+    // crear nuevo
+    const ref = await addDoc(
+      collection(db,'grupos', gid, 'finanzas_abonos'),
+      {
+        ...abono,
+        createdAt: serverTimestamp(),
+        createdBy: { uid: state.user.uid, email: (state.user.email||'').toLowerCase() }
+      }
+    );
     return ref.id;
   }
 }
+
 async function deleteAbono(gid, abonoId){
-  await deleteDoc(doc(db,'grupos',gid,'finanzas','abonos',abonoId));
+  await deleteDoc(doc(db,'grupos', gid, 'finanzas_abonos', abonoId));
 }
 
 // -------- Sugerencias (CONAF / CERO GRADOS) ----------
