@@ -137,6 +137,18 @@ const state = {
   }
 };
 
+// ——— GASTOS: resolver coordinador activo evitando "__ALL__"
+function getActiveCoordIdForGastos(){
+  // Si el selector tiene un coordinador concreto, úsalo
+  if (state.viewingCoordId && state.viewingCoordId !== '__ALL__') return state.viewingCoordId;
+
+  // Si no, usa mi propio coordinador (por email) o 'self'
+  const me = state.coordinadores.find(
+    c => (c.email||'').toLowerCase() === (state.user.email||'').toLowerCase()
+  );
+  return me?.id || 'self';
+}
+
 // ====== HELPERS UI ======
 function ensurePanel(id, html=''){
   let p=document.getElementById(id);
@@ -2310,7 +2322,17 @@ async function renderGastos(g, pane){
   pane.appendChild(form);
 
   const listBox=document.createElement('div'); listBox.className='act';
-  listBox.innerHTML='<h4>GASTOS DEL GRUPO</h4><div class="muted">CARGANDO…</div>'; pane.appendChild(listBox);
+  listBox.innerHTML='<h4>GASTOS DEL GRUPO</h4><div class="muted">CARGANDO…</div>';
+  pane.appendChild(listBox);
+
+  // ⛔️ Si el STAFF está en "TODOS", no consultamos subcolecciones inválidas
+  if (state.is && state.viewingCoordId === '__ALL__'){
+    form.style.display = 'none';
+    listBox.innerHTML = '<h4>GASTOS DEL GRUPO</h4><div class="muted">SELECCIONA UN COORDINADOR EN EL SELECTOR PARA VER/REGISTRAR GASTOS.</div>';
+    return 0;
+  }
+
+  const coordId = getActiveCoordIdForGastos();
 
   form.querySelector('#spSave').onclick=async ()=>{
     const btn=form.querySelector('#spSave');
@@ -2332,7 +2354,7 @@ async function renderGastos(g, pane){
         await uploadBytes(r, file, { contentType: file.type || 'image/jpeg' });
         imgUrl  = await getDownloadURL(r); imgPath = path;
       }
-      const coordId = state.viewingCoordId || (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self');
+
       await addDoc(collection(db,'coordinadores',coordId,'gastos'),{
         asunto, moneda, valor, imgUrl, imgPath,
         grupoId:g.id, numeroNegocio:g.numeroNegocio, identificador:g.identificador||null,
@@ -2342,28 +2364,33 @@ async function renderGastos(g, pane){
         createdAt: serverTimestamp()
       });
       form.querySelector('#spAsunto').value=''; form.querySelector('#spValor').value=''; form.querySelector('#spImg').value='';
-      await loadGastosList(g,listBox);
+      await loadGastosList(g, listBox, coordId);
     }catch(e){ console.error(e); alert('NO FUE POSIBLE GUARDAR EL GASTO.'); }finally{ btn.disabled=false; }
   };
-  const hits = await loadGastosList(g,listBox);
+
+  const hits = await loadGastosList(g, listBox, coordId);
   return hits;
 }
+
 async function getTasas(){
   if(state.cache.tasas) return state.cache.tasas;
   try{ const d=await getDoc(doc(db,'config','tasas')); if(d.exists()){ state.cache.tasas=d.data()||{}; return state.cache.tasas; } }catch(_){}
   state.cache.tasas={ USD:950, BRL:170, ARS:1.2 }; return state.cache.tasas;
 }
-async function loadGastosList(g, box){
-  const coordId = state.viewingCoordId || (state.coordinadores.find(c=> (c.email||'').toLowerCase()===(state.user.email||'').toLowerCase())?.id || 'self');
+async function loadGastosList(g, box, coordId){
   const qs=await getDocs(query(collection(db,'coordinadores',coordId,'gastos'), orderBy('createdAt','desc')));
   let list=[]; qs.forEach(d=>{ const x=d.data()||{}; if(x.grupoId===g.id) list.push({id:d.id,...x}); });
+
   const q = norm(state.groupQ||''); let hits=0;
   if(q){ const before=list.length; list = list.filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(q)); hits = list.length; }
+
   const tasas=await getTasas();
   const tot={ CLP:0, USD:0, BRL:0, ARS:0, CLPconv:0 };
+
   const table=document.createElement('table'); table.className='table';
   table.innerHTML='<thead><tr><th>ASUNTO</th><th>AUTOR</th><th>MONEDA</th><th>VALOR</th><th>COMPROBANTE</th></tr></thead><tbody></tbody>';
   const tb=table.querySelector('tbody');
+
   list.forEach(x=>{
      const tr=document.createElement('tr');
      tr.innerHTML = `
@@ -2379,12 +2406,15 @@ async function loadGastosList(g, box){
      if(x.moneda==='USD') tot.USD+=Number(x.valor||0);
      if(x.moneda==='BRL') tot.BRL+=Number(x.valor||0);
      if(x.moneda==='ARS') tot.ARS+=Number(x.valor||0);
- });
+  });
+
   tot.CLPconv = tot.CLP + (tot.USD*(tasas.USD||0)) + (tot.BRL*(tasas.BRL||0)) + (tot.ARS*(tasas.ARS||0));
   box.innerHTML='<h4>GASTOS DEL GRUPO</h4>'; box.appendChild(table);
+
   const totDiv=document.createElement('div'); totDiv.className='totline';
   totDiv.textContent=`TOTAL CLP: ${tot.CLP.toLocaleString('es-CL')} · USD: ${tot.USD.toLocaleString('es-CL')} · BRL: ${tot.BRL.toLocaleString('es-CL')} · ARS: ${tot.ARS.toLocaleString('es-CL')} · EQUIV. CLP: ${Math.round(tot.CLPconv).toLocaleString('es-CL')}`;
   box.appendChild(totDiv);
+
   return hits;
 }
 
