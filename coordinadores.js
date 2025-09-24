@@ -463,7 +463,6 @@ function renderStats(list){
       <div class="meta-line meta">
         <span class="item nowrap">N° VIAJES: <strong>${n}</strong></span>
         <span class="item nowrap">DÍAS EN VIAJE: <strong>${totalDias}</strong></span>
-        <span class="item nowrap">TOTAL PAX: <strong>${paxTot}</strong></span>
         <span class="item">RANGO DE FECHAS: <strong>${minIni?dmy(minIni):'—'} — ${maxFin?dmy(maxFin):'—'}</strong></span>
         <span class="item">DESTINOS: <strong>${destinos.length?destinos.join(' · '):'—'}</strong></span>
       </div>
