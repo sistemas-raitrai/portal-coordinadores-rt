@@ -1587,31 +1587,51 @@ async function openInicioViajeModal(g){
   const recalc = () => { const t = Number($A.value||0)+Number($E.value||0); $T.textContent = t; };
   $A.oninput = recalc; $E.oninput = recalc;
 
-  body.querySelector('#ivSave').onclick = async () => {
-    const A = Math.max(0, Number($A.value||0));
-    const E = Math.max(0, Number($E.value||0));
-    const total = A + E;
+   // === REEMPLAZA DESDE AQUÍ ===
+   body.querySelector('#ivSave').onclick = async () => {
+     const A = Math.max(0, Number($A.value||0));
+     const E = Math.max(0, Number($E.value||0));
+     const total = A + E;
+   
+     // Si no es el día de inicio y NO es STAFF, pedimos confirmación
+     if (!isToday(g.fechaInicio) && !state.is){
+       const ok = confirm('No es el día de inicio. ¿Confirmar de todas formas?');
+       if (!ok) return;
+     }
+   
+     const path = doc(db,'grupos',g.id);
+   
+     // 1) Guardado principal (si falla, aborta)
+     try {
+       await updateDoc(path, {
+         paxViajando: { A, E, total, by:(state.user.email||'').toLowerCase(), updatedAt: serverTimestamp() },
+         viaje: { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase() } }
+       });
+     } catch (e) {
+       console.error('INICIO: updateDoc FAILED', e?.code, e);
+       alert('No fue posible guardar el inicio del viaje. ' + (e?.code || ''));
+       return; // aborta si falló el guardado principal
+     }
+   
+     // 2) Log inmutable (si falla, no bloquea)
+     try {
+       await appendViajeLog(g.id, 'INICIO', `INICIO DE VIAJE — A:${A} · E:${E} · TOTAL:${total}`, { A, E, total });
+     } catch (e) {
+       console.warn('appendViajeLog falló (no bloquea):', e?.code, e);
+     }
+   
+     // 3) Refresco local + re-render (si falla, no bloquea)
+     try {
+       g.paxViajando = { A, E, total };
+       g.viaje = { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at:new Date(), by:(state.user.email||'').toLowerCase() } };
+       document.getElementById('modalBack').style.display='none';
+       await renderOneGroup(g);
+     } catch (e) {
+       console.warn('renderOneGroup después de inicio falló (no bloquea):', e?.code, e);
+     }
+   };
+   // === HASTA AQUÍ ===
 
-    if (!isToday(g.fechaInicio) && !state.is){
-      const ok = confirm('No es el día de inicio. ¿Confirmar de todas formas?');
-      if (!ok) return;
-    }
-    try{
-      const path = doc(db,'grupos',g.id);
-      await updateDoc(path, {
-        paxViajando: { A, E, total, by:(state.user.email||'').toLowerCase(), updatedAt: serverTimestamp() },
-        viaje: { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase() } }
-      });
-      await appendViajeLog(g.id, 'INICIO', `INICIO DE VIAJE — A:${A} · E:${E} · TOTAL:${total}`, { A, E, total });
-      g.paxViajando = { A, E, total };
-      g.viaje = { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: new Date(), by:(state.user.email||'').toLowerCase() } };
-      document.getElementById('modalBack').style.display='none';
-      await renderOneGroup(g);
-    }catch(e){
-      console.error(e);
-      alert('No fue posible guardar el inicio del viaje.');
-    }
-  };
 
   document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
   back.style.display = 'flex';
