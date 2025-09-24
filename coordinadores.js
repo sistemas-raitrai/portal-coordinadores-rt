@@ -2578,26 +2578,31 @@ async function loadAbonos(gid){
 }
 
 async function saveAbono(gid, abono){
-  if (abono.id){
+  // separa la id y limpia undefined del resto de campos
+  const { id, ...raw } = abono || {};
+  const data = Object.fromEntries(
+    Object.entries(raw).filter(([k, v]) => v !== undefined)
+  );
+
+  if (id){
     // update existente
-    const ref = doc(db,'grupos', gid, 'finanzas_abonos', abono.id);
-    const { id, ...rest } = abono;
+    const ref = doc(db,'grupos', gid, 'finanzas_abonos', id);
     await setDoc(
       ref,
-      { 
-        ...rest,
+      {
+        ...data,
         updatedAt: serverTimestamp(),
         updatedBy: { uid: state.user.uid, email: (state.user.email||'').toLowerCase() }
       },
       { merge:true }
     );
-    return abono.id;
+    return id;
   } else {
-    // crear nuevo
+    // crear nuevo (sin 'id' dentro del documento)
     const ref = await addDoc(
       collection(db,'grupos', gid, 'finanzas_abonos'),
       {
-        ...abono,
+        ...data,
         createdAt: serverTimestamp(),
         createdBy: { uid: state.user.uid, email: (state.user.email||'').toLowerCase() }
       }
