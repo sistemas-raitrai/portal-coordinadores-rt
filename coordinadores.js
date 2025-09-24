@@ -1735,6 +1735,161 @@ async function findServicio(destino, nombre){
   }
   return null;
 }
+/* ====== HILOS GLOBALES (A/B/C) + CHEQ OUT ====== */
+
+// A: actividad con proveedor  → DEST:{dest} | PROV:{proveedorId} | SRV:{servicioId}
+// B: actividad sin proveedor  → DEST:{dest} | PROV:GENERAL      | ACT:{actKey}
+// C: comidas de hotel         → HOTEL:{hotelId} | MEAL:{DESAYUNO|ALMUERZO|CENA}
+
+function isMealAct(name=''){
+  const s = String(name||'').toUpperCase();
+  if (/\bDESA(Y|LL)UNO\b|^DESA/i.test(s))  return 'DESAYUNO';
+  if (/\bALMUERZO\b|^ALM/i.test(s))       return 'ALMUERZO';
+  if (/\bCENA\b|^CEN/i.test(s))           return 'CENA';
+  return null;
+}
+
+function isCheckoutAct(name=''){
+  const s = String(name||'').toUpperCase();
+  // acepta variaciones: CHEQ OUT, CHECK OUT, CHECK-OUT, CHECKOUT
+  return /\bCHE?CK[-\s]?OUT\b|\bCHEQ\s?OUT\b/.test(s);
+}
+
+function threadKeyForGeneral(destino, actName){
+  const dest = (destino||'').toString().toUpperCase().trim();
+  const actKey = slug(actName||'');
+  return `DEST:${dest}|PROV:GENERAL|ACT:${actKey}`;
+}
+
+function threadKeyForProv(destino, proveedorId, servicioId){
+  const dest = (destino||'').toString().toUpperCase().trim();
+  return `DEST:${dest}|PROV:${String(proveedorId).toUpperCase()}|SRV:${String(servicioId).toUpperCase()}`;
+}
+
+function threadKeyForHotelMeal(hotelId, meal){
+  return `HOTEL:${String(hotelId).toUpperCase()}|MEAL:${String(meal).toUpperCase()}`;
+}
+
+// Colección única para hilos globales
+function threadColl(threadKey){
+  return collection(db, 'threads', threadKey, 'msgs');
+}
+
+// Proveedor por DESTINO (coincide con tu fetchProveedorByDestino, pero local a este bloque)
+async function findProveedorDocByDestino(destino, proveedorName){
+  if(!destino || !proveedorName) return null;
+  try{
+    const qs = await getDocs(collection(db,'Proveedores', String(destino).toUpperCase(), 'Listado'));
+    let hit=null;
+    qs.forEach(d=>{
+      const x=d.data()||{};
+      const nom=(x.proveedor || x.nombre || d.id || '').toString();
+      if (norm(nom)===norm(proveedorName)) hit={ id:d.id, ...x };
+    });
+    return hit;
+  }catch(_){ return null; }
+}
+
+/* ====== Lógica de hotel por día con CHEQ OUT ====== */
+
+// Devuelve las actividades del día como array (tolera objeto indexado)
+function getDayActsArray(grupo, fechaISO){
+  let acts = (grupo?.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
+  if (!Array.isArray(acts)) acts = Object.values(acts || {}).filter(x => x && typeof x === 'object');
+  // Orden por hora
+  return acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
+}
+
+// Encuentra el hotel "vigente" para ese día (checkIn <= día < checkOut)
+// y, si hay cambio de hotel el MISMO día, detecta el "siguiente del mismo día".
+function hotelContextForDay(hoteles, fechaISO){
+  const f = String(fechaISO||'');
+  let current = null, nextSameDay = null;
+
+  for (const h of hoteles || []){
+    const ci = toISO(h.checkIn), co = toISO(h.checkOut);
+    if (ci && co && (f >= ci) && (f < co)) current = h;
+  }
+  // Si hay una asignación con checkIn EXACTO ese día, podría ser el nuevo hotel del mismo día
+  for (const h of hoteles || []){
+    const ci = toISO(h.checkIn);
+    if (ci && ci === f){
+      // sólo considera nextSameDay si NO es el mismo objeto que current
+      if (!current || current.id !== h.id) nextSameDay = h;
+    }
+  }
+  return { current, nextSameDay };
+}
+
+// ¿El ACT ocurre después del CHEQ OUT del día?
+function isAfterCheckout(act, dayActs){
+  // Busca el primer CHEQ OUT con hora válida
+  const co = dayActs.find(a => isCheckoutAct(a?.actividad) && timeVal(a?.horaInicio) < 1e9);
+  if (!co) return false;
+  const actT = timeVal(act?.horaInicio);
+  const coT  = timeVal(co?.horaInicio);
+  return (actT < 1e9) && (coT < 1e9) && (actT >= coT);
+}
+
+// Para comidas, decide HOTEL correcto considerando CHEQ OUT y posible cambio en el mismo día
+function pickHotelForMeal(grupo, fechaISO, act, hoteles){
+  const { current, nextSameDay } = hotelContextForDay(hoteles, fechaISO);
+  const meal = isMealAct(act?.actividad||'');
+  if (!meal) return null;
+
+  // DESAYUNO: se asume siempre en el hotel "current"
+  if (meal === 'DESAYUNO') return current || nextSameDay || null;
+
+  // ALMUERZO/CENA: si hubo CHEQ OUT antes de la hora de esta comida y existe nextSameDay → usar nextSameDay
+  const dayActs = getDayActsArray(grupo, fechaISO);
+  if (isAfterCheckout(act, dayActs) && nextSameDay) return nextSameDay;
+
+  // Si no, se mantiene el hotel vigente
+  return current || nextSameDay || null;
+}
+
+/* ====== Resolver ThreadKey global (A/B/C) ====== */
+async function resolveThreadKey(grupo, fechaISO, act, servicioHint=null){
+  const actName = (act?.actividad || '').toString();
+  const destino = (grupo?.destino || '').toString().toUpperCase().trim();
+  const meal = isMealAct(actName);
+
+  // (C) Comida de hotel → elegir hotel correcto según CHEQ OUT
+  if (meal){
+    const hoteles = await loadHotelesInfo(grupo) || [];
+    const h = pickHotelForMeal(grupo, fechaISO, act, hoteles);
+    if (h && (h.hotel?.id || h.hotelId || h.id)){
+      const hId = h.hotel?.id || h.hotelId || h.id;
+      return { key: threadKeyForHotelMeal(hId, meal), scope:'C' };
+    }
+    // si no hay hotel identificable, cae a GENERAL (B)
+  }
+
+  // Intento (A) proveedor + servicio
+  let servicio = servicioHint;
+  if (!servicio){
+    try{ servicio = await findServicio(destino, actName); }catch(_){/* ignore */}
+  }
+  const servicioId = servicio?.id || null;
+
+  // Proveedor (prioriza servicio.proveedor o act.proveedor)
+  const proveedorName = (servicio?.proveedor || act?.proveedor || '').toString().trim();
+  let proveedorId = null;
+  if (proveedorName){
+    try{
+      const provDoc = await findProveedorDocByDestino(destino, proveedorName);
+      if (provDoc?.id) proveedorId = provDoc.id;
+    }catch(_){}
+  }
+
+  if (servicioId && proveedorId){
+    return { key: threadKeyForProv(destino, proveedorId, servicioId), scope:'A' };
+  }
+
+  // (B) GENERAL
+  return { key: threadKeyForGeneral(destino, actName), scope:'B' };
+}
+
 function renderVoucherHTMLSync(g, fechaISO, act, proveedorDoc=null, compact=false){
   const paxPlan=calcPlan(act,g); const asis=getSavedAsistencia(g,fechaISO,act.actividad); const paxAsist=asis?.paxFinal??'';
   const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
@@ -1810,11 +1965,6 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   back.style.display='flex';
 }
 
-/* ====== ACTIVIDAD: DETALLE + FORO DE COMENTARIOS (con Proveedor por destino) ====== */
-function foroColl(grupoId, actKey, fechaISO){
-  return collection(db, 'grupos', grupoId, 'foroActividades', actKey, fechaISO);
-}
-
 function formatCL(dt){
   try{
     return new Intl.DateTimeFormat('es-CL',{
@@ -1848,6 +1998,12 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
   const actName = (act?.actividad || 'ACTIVIDAD').toString();
   const actKey  = slug(actName);
   const destino = (g?.destino || '').toString().toUpperCase();
+  // === NUEVO: resolver hilo global (A/B/C) considerando CHEQ OUT
+  let thread = { key:'', scope:'B' };
+  try{
+    thread = await resolveThreadKey(g, fechaISO, act, servicio);
+  }catch(_){}
+
 
   // Servicio (para indicaciones/voucher) ya lo traes con findServicio(destino, actName).
   // Aquí sólo nos aseguramos de tener indicaciones/voucher priorizando Servicios/{destino}/Listado.
@@ -1878,6 +2034,12 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
   const contactoMail= (proveedorDoc?.correo    || '').toString().toUpperCase();
 
   title.textContent = `DETALLE — ${actName.toUpperCase()} — ${dmy(fechaISO)}`;
+  const scopeBadge = (thread.scope==='A'?'PROVEEDOR':
+                     thread.scope==='C'?'HOTEL/COMIDA':'GENERAL');
+  const scopeLine = `<div class="meta"><strong>HILO:</strong> ${scopeBadge} · ${thread.key}</div>`;
+  body.innerHTML = scopeLine + body.innerHTML;
+
+   
   body.innerHTML = `
     <div class="card">
       <div class="meta"><strong>PROVEEDOR:</strong> ${nombreProv}</div>
@@ -1943,11 +2105,10 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
   const loadPage = async ()=>{
     if (paging.loading || paging.exhausted) return;
     paging.loading = true;
-    try{
-      let qy = query(foroColl(g.id, actKey, fechaISO), orderBy('ts','desc'), limit(paging.pageSize + 1));
-      if (paging.cursor){
-        qy = query(foroColl(g.id, actKey, fechaISO), orderBy('ts','desc'), startAfter(paging.cursor), limit(paging.pageSize + 1));
-      }
+    let qy = query(threadColl(thread.key), orderBy('ts','desc'), limit(paging.pageSize + 1));
+    if (paging.cursor){
+      qy = query(threadColl(thread.key), orderBy('ts','desc'), startAfter(paging.cursor), limit(paging.pageSize + 1));
+    }
       const snap = await getDocs(qy);
       const docs = snap.docs;
 
@@ -1983,13 +2144,13 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
     const texto = (ta.value||'').trim();
     if(!texto){ alert('ESCRIBE UN COMENTARIO.'); return; }
     try{
-      await addDoc(foroColl(g.id, actKey, fechaISO),{
-        texto,
-        byUid: state.user.uid,
-        byEmail: (state.user.email||'').toLowerCase(),
-        isStaff: !!state.is,
-        ts: serverTimestamp()
-      });
+        await addDoc(threadColl(thread.key),{
+          texto,
+          byUid: state.user.uid,
+          byEmail: (state.user.email||'').toLowerCase(),
+          isStaff: !!state.is,
+          ts: serverTimestamp()
+        });
       ta.value='';
       // refrescar desde el inicio para mantener orden STAFF/fecha
       paging.cursor = null; paging.exhausted = false; paging.items = [];
