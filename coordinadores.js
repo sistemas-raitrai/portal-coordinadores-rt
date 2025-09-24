@@ -2726,7 +2726,6 @@ async function renderFinanzas(g, pane){
     <h4>ABONOS ${state.is?'<span class="muted">(STAFF PUEDE EDITAR)</span>':''}</h4>
     ${state.is ? `
       <div class="rowflex" style="margin:.4rem 0">
-        <button id="btnSugAbonos" class="btn sec">SUGERIR ABONOS (CONAF / CERO GRADOS)</button>
         <button id="btnNewAbono"  class="btn ok">NUEVO ABONO</button>
       </div>` : ''}
     <div id="abonosList" style="display:grid;gap:.4rem"></div>
