@@ -601,42 +601,45 @@ async function renderOneGroup(g, preferDate){
    const histBox = header.querySelector('#viajeHistoryBox');
    renderViajeHistory(g, histBox);
 
-
   const tabs=document.createElement('div');
   tabs.innerHTML=`
     <div style="display:flex;gap:.5rem;margin:.6rem 0">
       <button id="tabResumen" class="btn sec">RESUMEN</button>
       <button id="tabItin"    class="btn sec">ITINERARIO</button>
-      <button id="tabGastos"  class="btn sec">GASTOS</button>
+      <button id="tabFin"     class="btn sec">FINANZAS</button>
     </div>
     <div id="paneResumen"></div>
     <div id="paneItin" style="display:none"></div>
-    <div id="paneGastos" style="display:none"></div>`;
+    <div id="paneFin"  style="display:none"></div>`;
   cont.appendChild(tabs);
 
   const paneResumen=tabs.querySelector('#paneResumen');
   const paneItin=tabs.querySelector('#paneItin');
-  const paneGastos=tabs.querySelector('#paneGastos');
+  const paneFin=tabs.querySelector('#paneFin');
   const btnResumen=tabs.querySelector('#tabResumen');
   const btnItin=tabs.querySelector('#tabItin');
-  const btnGastos=tabs.querySelector('#tabGastos');
+  const btnFin=tabs.querySelector('#tabFin');
 
   const setTabLabel=(btn, base, n)=>{
     const q=(state.groupQ||'').trim();
     btn.textContent = (q && n>0) ? `${base} (${n})` : base;
   };
-  const show = (w)=>{ paneResumen.style.display=w==='resumen'?'':'none'; paneItin.style.display=w==='itin'?'':'none'; paneGastos.style.display=w==='gastos'?'':'none'; };
+  const show = (w)=>{ 
+    paneResumen.style.display=w==='resumen'?'':'none';
+    paneItin.style.display   =w==='itin'   ?'':'none';
+    paneFin.style.display    =w==='fin'    ?'':'none';
+  };
   btnResumen.onclick=()=>show('resumen');
   btnItin.onclick   =()=>show('itin');
-  btnGastos.onclick =()=>show('gastos');
+  btnFin.onclick    =()=>show('fin');
 
-  // Render y contadores de búsqueda por pestaña
+  // Render y contadores
   const resumenHits = await renderResumen(g, paneResumen);
   const itinHits    = renderItinerario(g, paneItin, preferDate);
-  const gastosHits  = await renderGastos(g, paneGastos);
+  const finHits     = await renderFinanzas(g, paneFin);   // 👈 NUEVO
   setTabLabel(btnResumen, 'RESUMEN', resumenHits);
   setTabLabel(btnItin,    'ITINERARIO', itinHits);
-  setTabLabel(btnGastos,  'GASTOS', gastosHits);
+  setTabLabel(btnFin,     'FINANZAS', finHits);
 
   show('resumen');
 
@@ -1648,7 +1651,28 @@ async function openInicioViajeModal(g){
   back.style.display = 'flex';
 }
 
+async function ensureFinanzasSummary(groupId){
+  try{
+    const d = await getDoc(doc(db,'grupos',groupId,'finanzas','summary'));
+    return d.exists()? (d.data()||{}) : null;
+  }catch(_){ return null; }
+}
+
 async function openTerminoViajeModal(g){
+  // BLOQUEO: exige cierre financiero antes de permitir finalizar viaje
+  const finSum = await ensureFinanzasSummary(g.id);
+  if (!finSum || finSum.closed !== true){
+    alert('Debes cerrar FINANZAS (transferencia y boleta) antes de terminar el viaje.');
+    // abrir pestaña FINANZAS si existe
+    const paneFin = document.getElementById('paneFin');
+    if (paneFin){ 
+      document.getElementById('paneResumen')?.style && (document.getElementById('paneResumen').style.display='none');
+      document.getElementById('paneItin')?.style && (document.getElementById('paneItin').style.display='none');
+      paneFin.style.display='';
+    }
+    return;
+  }
+   
   if (!g?.viaje?.inicio?.at && !state.is){
     alert('Aún no se ha registrado el inicio del viaje.');
     return;
@@ -2528,6 +2552,380 @@ async function renderGastos(g, pane){
 
   const hits = await loadGastosList(g, listBox, coordId);
   return hits;
+}
+
+/* ===================== FINANZAS ===================== */
+
+function toNumber(n){ return Number(n||0); }
+function fmtCL(n){ return toNumber(n).toLocaleString('es-CL'); }
+
+async function sumCLPByMoneda(montos, tasas){
+  const CLP = toNumber(montos.CLP||0);
+  const USD = toNumber(montos.USD||0) * toNumber(tasas.USD||950);
+  const BRL = toNumber(montos.BRL||0) * toNumber(tasas.BRL||170);
+  const ARS = toNumber(montos.ARS||0) * toNumber(tasas.ARS||1.2);
+  return { CLP, USD, BRL, ARS, CLPconv: CLP + USD + BRL + ARS };
+}
+
+// -------- ABONOS CRUD (grupos/{gid}/finanzas/abonos) ----------
+async function loadAbonos(gid){
+  const qs = await getDocs(collection(db,'grupos',gid,'finanzas','abonos'));
+  const list = [];
+  qs.forEach(d => list.push({ id:d.id, ...(d.data()||{}) }));
+  list.sort((a,b)=> String(b.fecha||'').localeCompare(String(a.fecha||'')));
+  return list;
+}
+async function saveAbono(gid, abono){
+  if (abono.id){
+    const ref = doc(db,'grupos',gid,'finanzas','abonos',abono.id);
+    const { id, ...rest } = abono;
+    await setDoc(ref, { ...rest, updatedAt: serverTimestamp(), updatedBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() } }, { merge:true });
+    return abono.id;
+  }else{
+    const ref = await addDoc(collection(db,'grupos',gid,'finanzas','abonos'), {
+      ...abono,
+      createdAt: serverTimestamp(),
+      createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() }
+    });
+    return ref.id;
+  }
+}
+async function deleteAbono(gid, abonoId){
+  await deleteDoc(doc(db,'grupos',gid,'finanzas','abonos',abonoId));
+}
+
+// -------- Sugerencias (CONAF / CERO GRADOS) ----------
+function precioUnitarioFromServicio(svc){
+  const cands = [ svc?.precioPax, svc?.precio, svc?.tarifa, svc?.tarifaPax, svc?.valorPax,
+                  (svc?.precios && svc.precios.pax), (svc?.valores && svc.valores.pax) ];
+  for (const c of cands){
+    const n = Number(c);
+    if (!isNaN(n) && n>0) return n;
+  }
+  return 0;
+}
+function isProveedorWhitelisted(name=''){
+  const s = String(name||'').trim().toUpperCase();
+  return (s.includes('CONAF') || s.includes('CERO GRADOS') || s.includes('CERO-GRADOS') || s.includes('CERO_GRADOS'));
+}
+async function suggestAbonosFromItin(grupo){
+  const destino = (grupo?.destino||'').toString().toUpperCase();
+  const paxPlan = Number(grupo?.cantidadgrupo || 0);
+  if (!paxPlan) return [];
+
+  const it = grupo?.itinerario || {};
+  const out = [];
+
+  for (const [fechaISO, arr] of Object.entries(it)){
+    const acts = Array.isArray(arr) ? arr : Object.values(arr||{});
+    for (const a of acts){
+      const actName = (a?.actividad||'').toString();
+      if (!actName) continue;
+
+      const svc = await findServicio(destino, actName).catch(()=>null);
+      const proveedor = (svc?.proveedor || a?.proveedor || '').toString();
+      if (!isProveedorWhitelisted(proveedor)) continue;
+
+      const unit = precioUnitarioFromServicio(svc);
+      if (!unit) continue;
+
+      const totalSug = unit * paxPlan;
+      out.push({
+        asunto: `ABONO ${proveedor} — ${actName.toUpperCase()} ${dmy(fechaISO)}`,
+        comentarios: `Sugerido por sistema: ${paxPlan} PAX × ${unit.toLocaleString('es-CL')} CLP`,
+        moneda: 'CLP',
+        valor: totalSug,
+        fecha: fechaISO,
+        medio: 'CTA CTE',
+        autoCalc: true,
+        provWhitelistHit: proveedor.toUpperCase(),
+        refActs: [{ fechaISO, actividad: actName, paxUsado: paxPlan, precioUnitario: unit, totalSug }]
+      });
+    }
+  }
+  return out;
+}
+
+// -------- Totales de gastos (reusa colec. coordinadores/{id}/gastos) ----------
+async function sumGastosPorMonedaDelGrupo(g, qNorm=''){
+  const coordId = getActiveCoordIdForGastos();
+  const qs=await getDocs(query(collection(db,'coordinadores',coordId,'gastos'), orderBy('createdAt','desc')));
+  const list=[]; qs.forEach(d=>{ const x=d.data()||{}; if(x.grupoId===g.id) list.push({id:d.id,...x}); });
+
+  if(qNorm){
+    return list
+      .filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(qNorm))
+      .reduce((acc,x)=>{ const m=String(x.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(x.valor||0); return acc; },{});
+  }
+  return list.reduce((acc,x)=>{ const m=String(x.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(x.valor||0); return acc; },{});
+}
+
+// -------- Summary / Cierre finanzas ----------
+async function updateFinanzasSummary(gid, patch){
+  await setDoc(doc(db,'grupos',gid,'finanzas','summary'), { ...patch, updatedAt: serverTimestamp(), updatedBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() } }, { merge:true });
+}
+async function closeFinanzas(g){
+  await updateFinanzasSummary(g.id, { closed:true, closedAt: serverTimestamp(), closedBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() } });
+  await updateDoc(doc(db,'grupos',g.id), {
+    'viaje.fin.rendicionOk': true,
+    'viaje.fin.boletaOk': true
+  });
+  showFlash('FINANZAS CERRADAS', 'ok');
+}
+
+// -------- Vista FINANZAS ----------
+async function renderFinanzas(g, pane){
+  pane.innerHTML='<div class="muted">CARGANDO…</div>';
+  const qNorm = norm(state.groupQ||'');
+  const tasas = await getTasas();
+
+  const abonos = await loadAbonos(g.id);
+  const totAb = abonos.reduce((acc,a)=>{ const m=String(a.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(a.valor||0); return acc; },{CLP:0,USD:0,BRL:0,ARS:0});
+  const totGa = await sumGastosPorMonedaDelGrupo(g, qNorm);
+
+  const abCLP = await sumCLPByMoneda(totAb, tasas);
+  const gaCLP = await sumCLPByMoneda(totGa, tasas);
+  const saldoCLP = abCLP.CLPconv - gaCLP.CLPconv;
+
+  const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML=''; pane.appendChild(wrap);
+
+  // RESUMEN
+  const resum=document.createElement('div'); resum.className='act';
+  resum.innerHTML = `
+    <h4>RESUMEN FINANZAS</h4>
+    <div class="grid-mini">
+      <div class="lab">ABONOS</div>
+      <div>CLP ${fmtCL(totAb.CLP||0)} · USD ${fmtCL(totAb.USD||0)} · BRL ${fmtCL(totAb.BRL||0)} · ARS ${fmtCL(totAb.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(abCLP.CLPconv)}</strong></div>
+      <div class="lab">GASTOS</div>
+      <div>CLP ${fmtCL(totGa.CLP||0)} · USD ${fmtCL(totGa.USD||0)} · BRL ${fmtCL(totGa.BRL||0)} · ARS ${fmtCL(totGa.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(gaCLP.CLPconv)}</strong></div>
+      <div class="lab">SALDO</div>
+      <div><strong>${saldoCLP>=0?'A FAVOR COORD.':'A FAVOR EMPRESA'}: CLP ${fmtCL(saldoCLP)}</strong></div>
+    </div>
+  `;
+  wrap.appendChild(resum);
+
+  // ABONOS (STAFF edita)
+  const boxAb=document.createElement('div'); boxAb.className='act';
+  boxAb.innerHTML = `
+    <h4>ABONOS ${state.is?'<span class="muted">(STAFF PUEDE EDITAR)</span>':''}</h4>
+    ${state.is ? `
+      <div class="rowflex" style="margin:.4rem 0">
+        <button id="btnSugAbonos" class="btn sec">SUGERIR ABONOS (CONAF / CERO GRADOS)</button>
+        <button id="btnNewAbono"  class="btn ok">NUEVO ABONO</button>
+      </div>` : ''}
+    <div id="abonosList" style="display:grid;gap:.4rem"></div>
+  `;
+  wrap.appendChild(boxAb);
+
+  const renderAbonosList = (items)=>{
+    const cont = boxAb.querySelector('#abonosList');
+    cont.innerHTML = '';
+    if (!items.length){ cont.innerHTML = '<div class="muted">SIN ABONOS.</div>'; return; }
+    items.forEach(a=>{
+      const card=document.createElement('div'); card.className='card';
+      card.innerHTML = `
+        <div class="meta"><strong>${(a.asunto||'ABONO').toString().toUpperCase()}</strong></div>
+        <div class="meta">FECHA: ${dmy(a.fecha||'')}</div>
+        <div class="meta">MONEDA/VALOR: ${(a.moneda||'CLP').toUpperCase()} ${fmtCL(a.valor||0)}</div>
+        <div class="meta">MEDIO: ${(a.medio||'').toString().toUpperCase()}</div>
+        ${a.comentarios?`<div class="meta" style="white-space:pre-wrap">${(a.comentarios||'').toString().toUpperCase()}</div>`:''}
+        ${a.autoCalc?`<div class="badge" style="background:#334155;color:#fff">SUGERIDO</div>`:''}
+        ${state.is?`
+          <div class="rowflex" style="margin-top:.4rem;gap:.4rem;flex-wrap:wrap">
+            <button class="btn sec btnEdit">EDITAR</button>
+            <button class="btn warn btnDel">ELIMINAR</button>
+          </div>`:''}
+      `;
+      if (state.is){
+        card.querySelector('.btnEdit').onclick = async ()=>{
+          await openAbonoEditor(g, a, (updated)=>{ Object.assign(a,updated); renderAbonosList(items); });
+        };
+        card.querySelector('.btnDel').onclick = async ()=>{
+          if (!confirm('¿Eliminar abono?')) return;
+          await deleteAbono(g.id, a.id);
+          const i = items.findIndex(x=>x.id===a.id);
+          if (i>=0) items.splice(i,1);
+          renderAbonosList(items);
+          await renderFinanzas(g, pane);
+        };
+      }
+      cont.appendChild(card);
+    });
+  };
+
+  if (state.is){
+    boxAb.querySelector('#btnNewAbono').onclick = async ()=>{
+      await openAbonoEditor(g, null, async (saved)=>{
+        abonos.unshift(saved);
+        renderAbonosList(abonos);
+        await renderFinanzas(g, pane);
+      });
+    };
+    boxAb.querySelector('#btnSugAbonos').onclick = async ()=>{
+      const sugeridos = await suggestAbonosFromItin(g);
+      if (!sugeridos.length){ alert('No hay actividades CONAF/CERO GRADOS con precio detectado.'); return; }
+      const ok = confirm(`Se crearán ${sugeridos.length} abonos sugeridos. ¿Continuar?`);
+      if (!ok) return;
+      for (const a of sugeridos){
+        const id = await saveAbono(g.id, a);
+        abonos.unshift({id, ...a});
+      }
+      renderAbonosList(abonos);
+      await renderFinanzas(g, pane);
+      showFlash('ABONOS SUGERIDOS CREADOS', 'ok');
+    };
+  }
+  renderAbonosList(abonos);
+
+  // GASTOS (reutiliza tu función existente)
+  const paneGastos=document.createElement('div');
+  const ghits = await renderGastos(g, paneGastos);
+  wrap.appendChild(paneGastos);
+
+  // CIERRE FINANCIERO
+  const cierre=document.createElement('div'); cierre.className='act';
+  cierre.innerHTML=`
+    <h4>CIERRE FINANCIERO</h4>
+    <div class="card">
+      <div class="meta"><strong>DATOS DE TRANSFERENCIA</strong></div>
+      <div class="meta">CUENTA CORRIENTE N° 03398-07 · BANCO DE CHILE</div>
+      <div class="meta">TURISMO RAITRAI LIMITADA · RUT 78.384.230-0</div>
+      <div class="meta">aleoperaciones@raitrai.cl</div>
+    </div>
+    <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem">
+      <label class="meta" style="display:flex;gap:.4rem;align-items:center">
+        <input id="chTransf" type="checkbox"/> TRANSFERENCIA REALIZADA
+      </label>
+      <input id="upComp" type="file" accept="image/*,application/pdf"/>
+      <button id="btnUpComp" class="btn sec">SUBIR COMPROBANTE</button>
+    </div>
+    <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
+      <a href="https://www.sii.cl" target="_blank" class="btn sec">IR A SII.CL</a>
+      <input id="upBoleta" type="file" accept="image/*,application/pdf"/>
+      <button id="btnUpBoleta" class="btn sec">SUBIR BOLETA</button>
+    </div>
+    <div class="rowflex" style="margin-top:.6rem">
+      <button id="btnCloseFin" class="btn ok" disabled>CERRAR FINANZAS</button>
+    </div>
+  `;
+  wrap.appendChild(cierre);
+
+  const sumPrev = await ensureFinanzasSummary(g.id) || {};
+  const ch = cierre.querySelector('#chTransf');
+  if (sumPrev?.transfer?.done) ch.checked = true;
+
+  const checkReady = ()=>{
+    const transfOk = !!ch.checked;
+    const boletaOk = !!sumPrev?.boleta?.uploaded;
+    cierre.querySelector('#btnCloseFin').disabled = !(transfOk && boletaOk);
+  };
+  checkReady();
+
+  cierre.querySelector('#btnUpComp').onclick = async ()=>{
+    const file = cierre.querySelector('#upComp').files[0]||null;
+    if (!file){ alert('Selecciona el comprobante.'); return; }
+    if (file.size > 15*1024*1024){ alert('Archivo supera 15MB.'); return; }
+    const safe = file.name.replace(/[^a-z0-9.\-_]/gi,'_');
+    const path = `finanzas/${g.id}/comprobantes/${Date.now()}_${safe}`;
+    const r = sRef(storage, path);
+    await uploadBytes(r, file, { contentType: file.type || 'application/octet-stream' });
+    const url = await getDownloadURL(r);
+    await updateFinanzasSummary(g.id, { transfer:{ done:true, fecha: todayISO(), medio:'TRANSFERENCIA', comprobanteUrl:url } });
+    sumPrev.transfer = { done:true, fecha: todayISO(), medio:'TRANSFERENCIA', comprobanteUrl:url };
+    ch.checked = true;
+    checkReady();
+    showFlash('COMPROBANTE SUBIDO', 'ok');
+  };
+
+  cierre.querySelector('#btnUpBoleta').onclick = async ()=>{
+    const file = cierre.querySelector('#upBoleta').files[0]||null;
+    if (!file){ alert('Selecciona la boleta (imagen o PDF).'); return; }
+    if (file.size > 15*1024*1024){ alert('Archivo supera 15MB.'); return; }
+    const safe = file.name.replace(/[^a-z0-9.\-_]/gi,'_');
+    const path = `finanzas/${g.id}/boletas/${Date.now()}_${safe}`;
+    const r = sRef(storage, path);
+    await uploadBytes(r, file, { contentType: file.type || 'application/pdf' });
+    const url = await getDownloadURL(r);
+    await updateFinanzasSummary(g.id, { boleta:{ uploaded:true, url, filename:safe } });
+    sumPrev.boleta = { uploaded:true, url, filename:safe };
+    checkReady();
+    showFlash('BOLETA SUBIDA', 'ok');
+  };
+
+  cierre.querySelector('#btnCloseFin').onclick = async ()=>{
+    if (!ch.checked){ alert('Marca transferencia realizada / sube comprobante.'); return; }
+    if (!sumPrev?.boleta?.uploaded){ alert('Debes subir boleta para cerrar.'); return; }
+    await closeFinanzas(g);
+    await renderFinanzas(g, pane);
+  };
+
+  await updateFinanzasSummary(g.id, {
+    totals:{
+      abonos: totAb, gastos: totGa,
+      tasas: tasas, abonosCLP: abCLP.CLPconv, gastosCLP: gaCLP.CLPconv, saldoCLP
+    }
+  });
+
+  const hitsAb = qNorm ? abonos.filter(a => norm([a.asunto,a.comentarios,a.medio,String(a.valor||0)].join(' ')).includes(qNorm)).length : 0;
+  return hitsAb + (ghits||0);
+}
+
+// -------- Modal editor de ABONO (STAFF) ----------
+async function openAbonoEditor(g, abono, onSaved){
+  const isEdit = !!abono;
+  const back  = document.getElementById('modalBack');
+  const title = document.getElementById('modalTitle');
+  const body  = document.getElementById('modalBody');
+
+  title.textContent = (isEdit?'EDITAR ABONO':'NUEVO ABONO');
+
+  const seed = abono || {
+    asunto:'', comentarios:'', moneda:'CLP', valor:'', fecha: todayISO(), medio:'CTA CTE', autoCalc:false, provWhitelistHit:null, refActs:[]
+  };
+
+  body.innerHTML = `
+    <div class="rowflex" style="gap:.5rem;flex-wrap:wrap">
+      <input id="abAsunto" type="text" placeholder="ASUNTO" value="${(seed.asunto||'')}"/>
+      <select id="abMon">
+        <option value="CLP"${seed.moneda==='CLP'?' selected':''}>CLP</option>
+        <option value="USD"${seed.moneda==='USD'?' selected':''}>USD</option>
+        <option value="BRL"${seed.moneda==='BRL'?' selected':''}>BRL</option>
+        <option value="ARS"${seed.moneda==='ARS'?' selected':''}>ARS</option>
+      </select>
+      <input id="abVal" type="number" min="0" inputmode="numeric" placeholder="VALOR" value="${seed.valor||''}"/>
+      <input id="abFec" type="date" value="${toISO(seed.fecha)||todayISO()}"/>
+      <input id="abMed" type="text" placeholder="MEDIO (CTA CTE / EFECTIVO / ...)" value="${(seed.medio||'')}"/>
+    </div>
+    <div class="rowflex" style="margin-top:.5rem">
+      <textarea id="abCom" placeholder="COMENTARIOS" style="width:100%">${seed.comentarios||''}</textarea>
+    </div>
+    <div class="rowflex" style="margin-top:.6rem">
+      <button id="abSave" class="btn ok">${isEdit?'GUARDAR':'CREAR'}</button>
+    </div>
+  `;
+
+  body.querySelector('#abSave').onclick = async ()=>{
+    const data = {
+      id: seed.id,
+      asunto: (body.querySelector('#abAsunto').value||'').trim(),
+      comentarios: (body.querySelector('#abCom').value||'').trim(),
+      moneda: (body.querySelector('#abMon').value||'CLP').toUpperCase(),
+      valor: Number(body.querySelector('#abVal').value||0),
+      fecha: toISO(body.querySelector('#abFec').value||todayISO()),
+      medio: (body.querySelector('#abMed').value||'').trim() || 'CTA CTE',
+      autoCalc: !!seed.autoCalc,
+      provWhitelistHit: seed.provWhitelistHit || null,
+      refActs: Array.isArray(seed.refActs)? seed.refActs : []
+    };
+    if (!data.asunto || !data.valor){ alert('ASUNTO y VALOR son obligatorios.'); return; }
+    const id = await saveAbono(g.id, data);
+    const saved = { id: id || data.id, ...data };
+    document.getElementById('modalBack').style.display='none';
+    onSaved && onSaved(saved);
+  };
+
+  document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
+  back.style.display='flex';
 }
 
 async function getTasas(){
