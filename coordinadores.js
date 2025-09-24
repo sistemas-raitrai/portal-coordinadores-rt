@@ -2037,37 +2037,33 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
   const scopeBadge = (thread.scope==='A'?'PROVEEDOR':
                      thread.scope==='C'?'HOTEL/COMIDA':'GENERAL');
   const scopeLine = `<div class="meta"><strong>HILO:</strong> ${scopeBadge} · ${thread.key}</div>`;
-  body.innerHTML = scopeLine + body.innerHTML;
-
-   
-  body.innerHTML = `
-    <div class="card">
-      <div class="meta"><strong>PROVEEDOR:</strong> ${nombreProv}</div>
-      ${contactoNom ? `<div class="meta"><strong>CONTACTO:</strong> ${contactoNom}</div>` : ''}
-      ${contactoTel ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoTel}</div>` : ''}
-      ${contactoMail? `<div class="meta"><strong>CORREO:</strong> ${contactoMail}</div>` : ''}
-      <div class="meta"><strong>VOUCHER:</strong> ${voucherLabel}</div>
-      <div class="meta"><strong>HORARIO:</strong> ${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')}</div>
-    </div>
-    <div class="act">
-      <h4>INDICACIONES</h4>
-      ${indicaciones ? `<div class="meta" style="white-space:pre-wrap">${indicaciones.toUpperCase()}</div>` : '<div class="muted">SIN INDICACIONES.</div>'}
-    </div>
-
-    <!-- FORO -->
-    <div class="act" id="foroBox">
-      <h4>COMENTARIOS DE LA ACTIVIDAD</h4>
-      <div class="rowflex" style="margin:.35rem 0">
-        <textarea id="foroText" placeholder="ESCRIBE UN COMENTARIO (SE PUBLICA CON TU CORREO)"></textarea>
-        <button id="foroSend" class="btn ok">PUBLICAR</button>
-      </div>
-      <div class="muted">Los comentarios del STAFF aparecen primero.</div>
-      <div id="foroList" style="display:grid;gap:.4rem;margin-top:.5rem"></div>
-      <div class="rowflex" style="justify-content:center;margin-top:.4rem">
-        <button id="foroMore" class="btn sec" style="display:none">CARGAR MÁS</button>
-      </div>
-    </div>
-  `;
+   body.innerHTML = `
+     ${scopeLine}
+     <div class="card">
+       <div class="meta"><strong>PROVEEDOR:</strong> ${nombreProv}</div>
+       ${contactoNom ? `<div class="meta"><strong>CONTACTO:</strong> ${contactoNom}</div>` : ''}
+       ${contactoTel ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoTel}</div>` : ''}
+       ${contactoMail? `<div class="meta"><strong>CORREO:</strong> ${contactoMail}</div>` : ''}
+       <div class="meta"><strong>VOUCHER:</strong> ${voucherLabel}</div>
+       <div class="meta"><strong>HORARIO:</strong> ${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')}</div>
+     </div>
+     <div class="act">
+       <h4>INDICACIONES</h4>
+       ${indicaciones ? `<div class="meta" style="white-space:pre-wrap">${indicaciones.toUpperCase()}</div>` : '<div class="muted">SIN INDICACIONES.</div>'}
+     </div>
+     <div class="act" id="foroBox">
+       <h4>COMENTARIOS DE LA ACTIVIDAD</h4>
+       <div class="rowflex" style="margin:.35rem 0">
+         <textarea id="foroText" placeholder="ESCRIBE UN COMENTARIO (SE PUBLICA CON TU CORREO)"></textarea>
+         <button id="foroSend" class="btn ok">PUBLICAR</button>
+       </div>
+       <div class="muted">Los comentarios del STAFF aparecen primero.</div>
+       <div id="foroList" style="display:grid;gap:.4rem;margin-top:.5rem"></div>
+       <div class="rowflex" style="justify-content:center;margin-top:.4rem">
+         <button id="foroMore" class="btn sec" style="display:none">CARGAR MÁS</button>
+       </div>
+     </div>
+   `;
 
   // ===== Paginación (STAFF arriba, 10 por página, botón "CARGAR MÁS") =====
   const paging = { cursor:null, exhausted:false, loading:false, pageSize:10, items:[] };
@@ -2102,40 +2098,42 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
     moreBtn.style.display = paging.exhausted ? 'none' : '';
   };
 
-  const loadPage = async ()=>{
-    if (paging.loading || paging.exhausted) return;
-    paging.loading = true;
-    let qy = query(threadColl(thread.key), orderBy('ts','desc'), limit(paging.pageSize + 1));
-    if (paging.cursor){
-      qy = query(threadColl(thread.key), orderBy('ts','desc'), startAfter(paging.cursor), limit(paging.pageSize + 1));
-    }
-      const snap = await getDocs(qy);
-      const docs = snap.docs;
+   const loadPage = async ()=>{
+     if (paging.loading || paging.exhausted) return;
+     paging.loading = true;
+     try{
+       let qy = query(threadColl(thread.key), orderBy('ts','desc'), limit(paging.pageSize + 1));
+       if (paging.cursor){
+         qy = query(threadColl(thread.key), orderBy('ts','desc'), startAfter(paging.cursor), limit(paging.pageSize + 1));
+       }
+       const snap = await getDocs(qy);
+       const docs = snap.docs;
+   
+       if (docs.length > paging.pageSize){
+         paging.cursor = docs[paging.pageSize - 1];
+       }else{
+         paging.cursor = docs[docs.length - 1] || paging.cursor;
+         paging.exhausted = true;
+       }
+   
+       const add = docs.slice(0, paging.pageSize).map(d=>{
+         const x = d.data() || {};
+         const tsMs = x.ts?.seconds ? x.ts.seconds*1000 : Date.now();
+         return { id:d.id, texto:String(x.texto||''), byEmail:String(x.byEmail||x.by||'').toLowerCase(), isStaff:!!x.isStaff, tsMs };
+       });
+   
+       const seen = new Set(paging.items.map(z=>z.id));
+       add.forEach(z=>{ if(!seen.has(z.id)) paging.items.push(z); });
+   
+       renderForo();
+     }catch(e){
+       console.error('FORO loadPage', e);
+       alert('NO SE PUDO CARGAR COMENTARIOS.');
+     }finally{
+       paging.loading = false;
+     }
+   };
 
-      if (docs.length > paging.pageSize){
-        paging.cursor = docs[paging.pageSize - 1];
-      }else{
-        paging.cursor = docs[docs.length - 1] || paging.cursor;
-        paging.exhausted = true;
-      }
-
-      const add = docs.slice(0, paging.pageSize).map(d=>{
-        const x = d.data() || {};
-        const tsMs = x.ts?.seconds ? x.ts.seconds*1000 : Date.now();
-        return { id:d.id, texto:String(x.texto||''), byEmail:String(x.byEmail||x.by||'').toLowerCase(), isStaff:!!x.isStaff, tsMs };
-      });
-
-      const seen = new Set(paging.items.map(z=>z.id));
-      add.forEach(z=>{ if(!seen.has(z.id)) paging.items.push(z); });
-
-      renderForo();
-    }catch(e){
-      console.error('FORO loadPage', e);
-      alert('NO SE PUDO CARGAR COMENTARIOS.');
-    }finally{
-      paging.loading = false;
-    }
-  };
 
   body.querySelector('#foroMore').onclick = loadPage;
 
