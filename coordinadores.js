@@ -2488,6 +2488,13 @@ async function staffResetInicio(grupo){
       trip: deleteField()
     });
 
+    // Log inmutable del restablecimiento (quedará en HISTORIAL DEL VIAJE)
+    await appendViajeLog(
+      grupo.id,
+      'RESTABLECER_INICIO',
+      'SE RESTABLECIERON INICIO/FIN Y PAX VIAJANDO (LIMPIEZA)'
+    );
+
     // 2) Actualizar objeto en memoria (para que started = false ya mismo)
     delete grupo.paxViajando;
     if (grupo.viaje){
