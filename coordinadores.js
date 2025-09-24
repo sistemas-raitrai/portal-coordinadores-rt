@@ -2694,7 +2694,6 @@ async function closeFinanzas(g){
   showFlash('FINANZAS CERRADAS', 'ok');
 }
 
-// -------- Vista FINANZAS ----------
 async function renderFinanzas(g, pane){
   pane.innerHTML='<div class="muted">CARGANDO…</div>';
   const qNorm = norm(state.groupQ||'');
@@ -2757,10 +2756,12 @@ async function renderFinanzas(g, pane){
           </div>`:''}
       `;
       if (state.is){
-        card.querySelector('.btnEdit').onclick = async ()=>{
+        const bE = card.querySelector('.btnEdit');
+        if (bE) bE.onclick = async ()=>{
           await openAbonoEditor(g, a, (updated)=>{ Object.assign(a,updated); renderAbonosList(items); });
         };
-        card.querySelector('.btnDel').onclick = async ()=>{
+        const bD = card.querySelector('.btnDel');
+        if (bD) bD.onclick = async ()=>{
           if (!confirm('¿Eliminar abono?')) return;
           await deleteAbono(g.id, a.id);
           const i = items.findIndex(x=>x.id===a.id);
@@ -2774,30 +2775,18 @@ async function renderFinanzas(g, pane){
   };
 
   if (state.is){
-    boxAb.querySelector('#btnNewAbono').onclick = async ()=>{
+    const btnNew = boxAb.querySelector('#btnNewAbono');
+    if (btnNew) btnNew.onclick = async ()=>{
       await openAbonoEditor(g, null, async (saved)=>{
         abonos.unshift(saved);
         renderAbonosList(abonos);
         await renderFinanzas(g, pane);
       });
     };
-    boxAb.querySelector('#btnSugAbonos').onclick = async ()=>{
-      const sugeridos = await suggestAbonosFromItin(g);
-      if (!sugeridos.length){ alert('No hay actividades CONAF/CERO GRADOS con precio detectado.'); return; }
-      const ok = confirm(`Se crearán ${sugeridos.length} abonos sugeridos. ¿Continuar?`);
-      if (!ok) return;
-      for (const a of sugeridos){
-        const id = await saveAbono(g.id, a);
-        abonos.unshift({id, ...a});
-      }
-      renderAbonosList(abonos);
-      await renderFinanzas(g, pane);
-      showFlash('ABONOS SUGERIDOS CREADOS', 'ok');
-    };
   }
   renderAbonosList(abonos);
 
-  // GASTOS (reutiliza tu función existente)
+  // GASTOS
   const paneGastos=document.createElement('div');
   const ghits = await renderGastos(g, paneGastos);
   wrap.appendChild(paneGastos);
@@ -2832,16 +2821,18 @@ async function renderFinanzas(g, pane){
 
   const sumPrev = await ensureFinanzasSummary(g.id) || {};
   const ch = cierre.querySelector('#chTransf');
-  if (sumPrev?.transfer?.done) ch.checked = true;
+  if (sumPrev?.transfer?.done && ch) ch.checked = true;
 
   const checkReady = ()=>{
-    const transfOk = !!ch.checked;
+    const transfOk = !!(ch && ch.checked);
     const boletaOk = !!sumPrev?.boleta?.uploaded;
-    cierre.querySelector('#btnCloseFin').disabled = !(transfOk && boletaOk);
+    const btn = cierre.querySelector('#btnCloseFin');
+    if (btn) btn.disabled = !(transfOk && boletaOk);
   };
   checkReady();
 
-  cierre.querySelector('#btnUpComp').onclick = async ()=>{
+  const upCompBtn = cierre.querySelector('#btnUpComp');
+  if (upCompBtn) upCompBtn.onclick = async ()=>{
     const file = cierre.querySelector('#upComp').files[0]||null;
     if (!file){ alert('Selecciona el comprobante.'); return; }
     if (file.size > 15*1024*1024){ alert('Archivo supera 15MB.'); return; }
@@ -2852,12 +2843,13 @@ async function renderFinanzas(g, pane){
     const url = await getDownloadURL(r);
     await updateFinanzasSummary(g.id, { transfer:{ done:true, fecha: todayISO(), medio:'TRANSFERENCIA', comprobanteUrl:url } });
     sumPrev.transfer = { done:true, fecha: todayISO(), medio:'TRANSFERENCIA', comprobanteUrl:url };
-    ch.checked = true;
+    if (ch) ch.checked = true;
     checkReady();
     showFlash('COMPROBANTE SUBIDO', 'ok');
   };
 
-  cierre.querySelector('#btnUpBoleta').onclick = async ()=>{
+  const upBolBtn = cierre.querySelector('#btnUpBoleta');
+  if (upBolBtn) upBolBtn.onclick = async ()=>{
     const file = cierre.querySelector('#upBoleta').files[0]||null;
     if (!file){ alert('Selecciona la boleta (imagen o PDF).'); return; }
     if (file.size > 15*1024*1024){ alert('Archivo supera 15MB.'); return; }
@@ -2872,8 +2864,9 @@ async function renderFinanzas(g, pane){
     showFlash('BOLETA SUBIDA', 'ok');
   };
 
-  cierre.querySelector('#btnCloseFin').onclick = async ()=>{
-    if (!ch.checked){ alert('Marca transferencia realizada / sube comprobante.'); return; }
+  const closeBtn = cierre.querySelector('#btnCloseFin');
+  if (closeBtn) closeBtn.onclick = async ()=>{
+    if (!(ch && ch.checked)){ alert('Marca transferencia realizada / sube comprobante.'); return; }
     if (!sumPrev?.boleta?.uploaded){ alert('Debes subir boleta para cerrar.'); return; }
     await closeFinanzas(g);
     await renderFinanzas(g, pane);
