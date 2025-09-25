@@ -1543,12 +1543,10 @@ async function renderActs(grupo, fechaISO, cont){
     // Botón de voucher: placeholder que reemplazamos cuando llegue el servicio
     const vchPlaceholder = '<span class="btnVchWrap"></span>';
 
-    div.innerHTML =
-      '<h4>' + (actName || '').toUpperCase() + ' ' + estadoHtml + '</h4>' +
-      '<div class="meta">' +
-        (act.horaInicio || '--:--') + '–' + (act.horaFin || '--:--') +
-        ' · PLAN: ' + fmtPaxPlan(plan, grupo) + ' PAX' +
-      '</div>' +
+      div.innerHTML =
+        '<h4>' + (actName || '').toUpperCase() + ' ' + estadoHtml + '</h4>' +
+        '<div class="meta">' +
+
       '<div class="rowflex" style="margin:.35rem 0">' +
         '<input type="number" min="0" inputmode="numeric" placeholder="N° ASISTENCIA" value="' + paxFinalInit + '"/>' +
         '<textarea placeholder="COMENTARIOS"></textarea>' +
