@@ -582,26 +582,21 @@ function renderNavBar(){
     else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; await renderOneGroup(state.ordenados[state.idx]); } };
 
    console.log('[PRINT] state.is?', state.is);
-
    if (state.is){
-     // ⚠️ Toma el botón por ID global para evitar problemas si no está dentro de #navPanel
      const btn = document.getElementById('btnPrintVch');
      if (btn){
        btn.textContent = 'IMPRIMIR DESPACHO';
-         btn.onclick = async () => {
-           try {
-             ensurePrintDOM();
-             const g = state.ordenados[state.idx];
-             await preparePrintForGroup(g);     // refresca encabezado + cuerpo
-             // pequeño respiro para layout antes de imprimir
-             setTimeout(() => { window.print(); }, 50);
-           } catch (e) {
-             console.error('[PRINT] error antes de imprimir', e);
-             window.print();
-           }
-         };
+       btn.onclick = async () => {
+         try{
+           const g = state.ordenados[state.idx];
+           await preparePrintForGroup(g);   // deja listo #print-block (rápido)
+           window.print();                  // imprime SOLO #print-block (CSS de arriba)
+         }catch(e){
+           console.error('[PRINT] error', e);
+           alert('No se pudo preparar el despacho para imprimir.');
+         }
+       };
      }
-     // (el botón “crear alerta” ya se maneja en el panel de alertas)
    }
 }
 
@@ -2106,49 +2101,61 @@ function formatDateReadable(isoStr){
 }
 
 /* Construye el texto “simple y elegante” del despacho */
+/* Construye el despacho en estilo “Word”: títulos, líneas, hora en columna */
 function buildPrintTextDespacho(grupo, itinLines){
   const code = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
   const paxPlan = paxOf(grupo);
   const paxReal = paxRealOf(grupo);
   const { A: A_real, E: E_real } = paxBreakdown(grupo);
+
+  // Encabezado
   const header = [
-    `DESPACHO DE VIAJE`,
+    'DESPACHO DE VIAJE',
     `GRUPO: ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()}  ·  CÓDIGO: ${code}`,
     `DESTINO: ${(grupo.destino||'—').toString().toUpperCase()}  ·  PROGRAMA: ${(grupo.programa||'—').toString().toUpperCase()}`,
     `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}`,
-    `PAX: PLAN ${paxPlan}${paxReal?` · REAL ${paxReal} (A:${A_real} · E:${E_real})`:''}`,
-    ''.padEnd(50,'─'),
+    `PAX PLAN: ${paxPlan}${paxReal?`  ·  REAL: ${paxReal} (A:${A_real} · E:${E_real})`:''}`,
+    ''.padEnd(60,'─'),
     ''
   ].join('\n');
 
-  // agrupa por fecha
+  // Agrupar por fecha
   const byDate = new Map();
   for (const x of (itinLines||[])){
     if(!byDate.has(x.fechaISO)) byDate.set(x.fechaISO, []);
     byDate.get(x.fechaISO).push(x);
   }
-
-  // ordena fechas
   const fechas = Array.from(byDate.keys()).sort();
 
+  // Helper formato “DÍA X – JUEVES 25/09”
+  const formatDateReadable = (iso) => {
+    if(!iso) return '—';
+    const [yyyy, mm, dd] = iso.split('-').map(Number);
+    const d = new Date(yyyy, (mm||1)-1, dd||1);
+    const wd = d.toLocaleDateString('es-CL', { weekday: 'long' });
+    const name = wd.charAt(0).toUpperCase() + wd.slice(1);
+    const ddp = String(dd||'').padStart(2,'0');
+    const mmp = String(mm||'').padStart(2,'0');
+    return `${name.toUpperCase()} ${ddp}/${mmp}`;
+  };
+
+  // Cuerpo: hora en columna fija (5), texto a la derecha
   let out = header;
-  fechas.forEach((f, idx) => {
-    out += `Día ${idx+1} – ${formatDateReadable(f)}\n`;
-    const arr = byDate.get(f) || [];
-    if(!arr.length){
-      out += '— Sin actividades —\n\n';
-      return;
-    }
-    // orden por hora
-    arr.sort((a,b)=>(a.hora||'').localeCompare(b.hora||''));
+  fechas.forEach((f, i) => {
+    out += `DÍA ${i+1} – ${formatDateReadable(f)}\n`;
+
+    const arr = (byDate.get(f) || []).slice().sort((a,b)=>(a.hora||'').localeCompare(b.hora||''));
+    if(!arr.length){ out += '— SIN ACTIVIDADES —\n\n'; return; }
+
     arr.forEach(a=>{
-      const hora = a.hora || '--:--';
-      const act  = (a.actividad||'').toString().toUpperCase();
-      const prov = (a.proveedor||'').toString().toUpperCase();
-      const cont = a.contacto || '';
-      const est  = (a.estado||'').toString().toUpperCase();
-      out += `${hora}  ${act}${prov?` · ${prov}`:''}${cont?` · ${cont}`:''}${est?` · ${est}`:''}\n`;
+      const hora = (a.hora||'--:--').padStart(5,' ');
+      let linea  = `${hora}  ${a.actividad}`;
+      if (a.proveedor) linea += ` · ${a.proveedor}`;
+      if (a.contacto)  linea += ` · ${a.contacto}`;
+      if (a.estado)    linea += ` · ${a.estado}`;
+      out += `${linea}\n`;
     });
+
     out += '\n';
   });
 
@@ -2163,7 +2170,7 @@ async function preparePrintForGroup(grupo){
     if (!grupo) return;
 
     // 1) Texto corrido (cuerpo)
-    const lines = await collectItinLines(grupo).catch(()=>[]);
+    const lines = await collectItinLinesFast(grupo).catch(()=>[]);
     const text  = buildPrintTextDespacho(grupo, lines);
     const pre   = document.getElementById('print-block');
     if (pre) pre.textContent = text || '';
@@ -2231,6 +2238,36 @@ async function collectItinLines(grupo){
           estado
         });
       }catch(_){}
+    }
+  }
+  return out;
+}
+
+/* Recolector RÁPIDO: no consulta proveedores/servicios, solo usa lo que ya está en g.itinerario */
+async function collectItinLinesFast(grupo){
+  const out = [];
+  const fechas = rangoFechas(grupo.fechaInicio, grupo.fechaFin);
+
+  for (const f of fechas){
+    // tolera objeto indexado
+    let acts = (grupo.itinerario && grupo.itinerario[f]) ? grupo.itinerario[f] : [];
+    if (!Array.isArray(acts)) acts = Object.values(acts||{}).filter(x => x && typeof x === 'object');
+
+    // orden por hora
+    acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
+
+    for (const a of acts){
+      const actName = (a?.actividad || '').toString().toUpperCase();
+      const estado  = (grupo?.serviciosEstado?.[f]?.[slug(actName)]?.estado || '').toString().toUpperCase();
+
+      out.push({
+        fechaISO: f,
+        hora: a?.horaInicio || '--:--',
+        actividad: actName,
+        proveedor: (a?.proveedor || '').toString().toUpperCase(),  // lo que venga en el act
+        contacto: '',                                              // sin consultas (rápido)
+        estado
+      });
     }
   }
   return out;
