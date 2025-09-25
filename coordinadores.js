@@ -91,6 +91,13 @@ function ensurePrintDOM(){
          margin-bottom: 16mm;  /* despeje footer */
          color: #0a0a0a;
        }
+       /* ====== ESTILOS DE TIPOGRAFÍA PARA EL CUERPO ====== */
+      #printSheet .print-doc .h1 { font-size: 16px; font-weight: 700; letter-spacing:.3px; }
+      #printSheet .print-doc .h2 { font-size: 14px; font-weight: 700; margin-top: 8px; }
+      #printSheet .print-doc .b  { font-weight: 700; }
+      #printSheet .print-doc .big{ font-size: 14px; }
+      #printSheet .print-doc .muted { color:#666; }
+      #printSheet .print-doc .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
      }
    `;
   document.head.appendChild(css);
@@ -2113,13 +2120,14 @@ function buildPrintTextDespacho(grupo, opts){
   const { A: A_real, E: E_real } = paxBreakdown(grupo);
 
   // ===== Encabezado =====
-  let out = '';
-  out += 'DESPACHO DE VIAJE\n\n';
-  out += `GRUPO: ${up(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id)} · CÓDIGO: ${code}\n\n`;
-  out += `DESTINO: ${up(grupo.destino||'—')} · PROGRAMA: ${up(grupo.programa||'—')}\n\n`;
-  out += `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}  PAX: ${paxPlan}`;
-  out += (paxReal ? ` (REAL ${paxReal} · A:${A_real} · E:${E_real})` : '');
-  out += '\n\n\n';
+   // ===== Encabezado (HTML) =====
+   let out = '';
+   out += '<div class="h1">DESPACHO DE VIAJE</div>\n';
+   out += `<div><span class="b">GRUPO:</span> ${up(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id)}  ·  <span class="b">CÓDIGO:</span> ${code}</div>\n`;
+   out += `<div><span class="b">DESTINO:</span> ${up(grupo.destino||'—')}  ·  <span class="b">PROGRAMA:</span> ${up(grupo.programa||'—')}</div>\n`;
+   out += `<div><span class="b">FECHAS:</span> ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}  ·  <span class="b">PAX:</span> ${paxPlan}${paxReal?`  <span class="muted">(REAL ${paxReal} · A:${A_real} · E:${E_real})</span>`:''}</div>\n`;
+   out += '<div>────────────────────────────────────────────────────────</div>\n\n';
+
 
   // ===== Hoteles =====
   out += `HOTELES (${hoteles.length||0}):\n\n`;
@@ -2215,7 +2223,7 @@ function buildPrintTextDespacho(grupo, opts){
   (itinLines||[]).forEach(x => { if (!byDate.has(x.fechaISO)) byDate.set(x.fechaISO, []); byDate.get(x.fechaISO).push(x); });
   const fechas = Array.from(byDate.keys()).sort();
   fechas.forEach((f, idx)=>{
-    out += `DÍA ${idx+1} - ${formatDateReadable(f)}\n\n`;
+    out += `<div class="h2">DÍA ${idx+1} – ${formatDateReadable(f)}</div>\n`;
     const items = (byDate.get(f)||[]).slice().sort((a,b)=>(a.hora||'').localeCompare(b.hora||''));
     items.forEach(a=>{
       const hora = (a.hora||'').trim();
@@ -2351,7 +2359,7 @@ async function preparePrintForGroup(grupo){
 
     // 7) Escribe el bloque <pre> y actualiza cabecera pequeña (por si la usas)
     const pre = document.getElementById('print-block');
-    if (pre) pre.textContent = text || '';
+    if (pre) pre.innerHTML = text || '';
 
     // Encabezado mini (si lo estás mostrando arriba)
     const code    = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
