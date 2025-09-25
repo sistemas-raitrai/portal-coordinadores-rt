@@ -1758,6 +1758,37 @@ async function staffReopenCierre(g){
   }
 }
 
+// Restablecer SOLO el inicio del viaje (deja FIN intacto, borra paxViajando si quieres)
+async function staffResetInicio(grupo){
+  if (!state.is){ alert('Solo staff puede restablecer el inicio.'); return; }
+  const ok = confirm('¿Restablecer INICIO DEL VIAJE? (volverá a PENDIENTE y se habilitará el botón de inicio)');
+  if(!ok) return;
+
+  try{
+    const path = doc(db,'grupos',grupo.id);
+    // Si prefieres NO borrar paxViajando, comenta esa línea.
+    await updateDoc(path, {
+      'viaje.inicio': deleteField(),
+      'viaje.estado': 'PENDIENTE',
+      paxViajando: deleteField()
+    });
+
+    await appendViajeLog(grupo.id, 'REABRIR_INICIO', 'SE REABRIÓ EL INICIO DEL VIAJE');
+
+    // Sincroniza estado local
+    if (!grupo.viaje) grupo.viaje = {};
+    delete grupo.viaje.inicio;
+    grupo.viaje.estado = 'PENDIENTE';
+    delete grupo.paxViajando;
+
+    showFlash('INICIO RESTABLECIDO', 'ok');
+    await renderOneGroup(grupo);
+  }catch(e){
+    console.error(e);
+    alert('NO FUE POSIBLE RESTABLECER EL INICIO.');
+  }
+}
+
 /* ====== SERVICIOS / VOUCHERS ====== */
 async function findServicio(destino, nombre){
   if(!destino||!nombre) return null;
