@@ -2528,8 +2528,7 @@ async function openCreateAlertModal(){
   back.style.display='flex';
 }
 
-
-// ====== PANEL GLOBAL DE ALERTAS (COMPLETO, CERRADO) ======
+// ====== PANEL GLOBAL DE ALERTAS (COMPLETO) ======
 async function renderGlobalAlerts(){
   const box = document.getElementById('alertsPanel');
   if (!box) return;
@@ -2538,17 +2537,17 @@ async function renderGlobalAlerts(){
   box.innerHTML = `
     <div class="alert-head" style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
       <h4 style="margin:0">ALERTAS</h4>
-      ${state.is ? '<button id="btnCreateAlert" class="btn ok">CREAR ALERTA</button>' : ''}
+      ${state.is ? '<button id="btnCreateAlert" class="btn ok" id="btnCreateAlert">CREAR ALERTA</button>' : ''}
     </div>
     <div class="muted">CARGANDO…</div>
   `;
 
   // Cargar todas las alertas
   let all = [];
-  try {
-    const qs = await getDocs(collection(db, 'alertas'));
-    qs.forEach(d => all.push({ id: d.id, ...(d.data() || {}) }));
-  } catch (e) {
+  try{
+    const qs = await getDocs(collection(db,'alertas'));
+    qs.forEach(d => all.push({ id:d.id, ...d.data() }));
+  }catch(e){
     console.error(e);
     box.innerHTML = '<div class="muted">NO SE PUDIERON CARGAR LAS ALERTAS.</div>';
     return;
@@ -2556,141 +2555,176 @@ async function renderGlobalAlerts(){
 
   // Coord actual (para filtrar "para mí")
   const myCoordId = state.is
-    ? (state.viewingCoordId ||
-       (state.coordinadores.find(c => (c.email||'').toLowerCase() === (state.user.email||'').toLowerCase())?.id || 'self'))
+    ? (state.viewingCoordId || (state.coordinadores.find(c => (c.email||'').toLowerCase() === (state.user.email||'').toLowerCase())?.id || 'self'))
     : (state.coordinadores.find(c => (c.email||'').toLowerCase() === (state.user.email||'').toLowerCase())?.id || 'self');
 
-  // Listas
+  // Dos listas: a) “para mí” (audience !== '' y me incluye), b) “ops” (audience === '' → Operaciones)
   const paraMi = all.filter(a => (a.audience !== '') && Array.isArray(a.forCoordIds) && a.forCoordIds.includes(myCoordId));
   const ops    = state.is ? all.filter(a => a.audience === '') : [];
 
-  // Utilidades
-  const readersLine = (a) => {
-    const rb = a.readBy || {};
-    const entries = Object.entries(rb).map(([k,v]) => {
-      const who  = (k || '').toString().toUpperCase();
-      const when = v?.seconds ? new Date(v.seconds*1000).toLocaleString('es-CL').toUpperCase() : '';
-      return `${who}${when ? (' · ' + when) : ''}`;
-    });
-    return entries.length ? `<div class="meta"><strong>LEÍDO POR:</strong> ${entries.join(' · ')}</div>` : '';
-  };
-
-  const makeCard = (a, scope) => {
-    const li = document.createElement('div');
-    li.className = 'alert-card';
-
-    const fecha = a.createdAt?.seconds ? new Date(a.createdAt.seconds*1000).toLocaleDateString('es-CL').toUpperCase() : '';
-    const autorEmail  = (a.createdBy?.email || '').toUpperCase();
-    const autorNombre = upperNameByEmail(a.createdBy?.email || '');
-    const gi = a.groupInfo || null;
-
-    const cab = (scope === 'ops') ? 'NUEVO COMENTARIO' : 'NOTIFICACIÓN';
-    const tipoCoord = (scope !== 'ops')
-      ? (Array.isArray(a.forCoordIds) && a.forCoordIds.length > 1 ? 'GLOBAL' : 'PERSONAL')
-      : null;
-
-    li.innerHTML = `
-      <div class="alert-title">${cab}${tipoCoord ? ` · ${tipoCoord}` : ''}</div>
-      <div class="meta">FECHA: ${fecha} · AUTOR: ${autorNombre} (${autorEmail})</div>
-      ${gi ? `
-        <div class="meta">GRUPO: ${(gi.nombre||'').toString().toUpperCase()} (${(gi.code||'').toString().toUpperCase()}) · DESTINO: ${(gi.destino||'').toString().toUpperCase()} · PROGRAMA: ${(gi.programa||'').toString().toUpperCase()}</div>
-        <div class="meta">FECHA ACTIVIDAD: ${dmy(gi.fechaActividad||'')} · ACTIVIDAD: ${(gi.actividad||'').toString().toUpperCase()}</div>
-      ` : ''}
-      <div style="margin:.45rem 0">${(a.mensaje||'').toString().toUpperCase()}</div>
-      ${readersLine(a)}
-      <div class="rowflex"><button class="btn ok btnRead">CONFIRMAR LECTURA</button></div>
-    `;
-
-    li.querySelector('.btnRead').onclick = async () => {
-      try {
-        const path = doc(db, 'alertas', a.id);
-        const payload = {};
-        if (scope === 'ops') {
-          payload[`readBy.:${(state.user.email||'').toLowerCase()}`] = serverTimestamp();
-        } else {
-          payload[`readBy.coord:${myCoordId}`] = serverTimestamp();
-        }
-        await updateDoc(path, payload);
-        await renderGlobalAlerts();
-      } catch (e) {
-        console.error(e);
-        alert('NO SE PUDO CONFIRMAR.');
-      }
-    };
-
-    return li;
-  };
-
-  const renderBucket = (arr, scope, titleText) => {
+  // Renderizador de listas con pestañas "No leídas / Leídas"
+  const renderList = (arr, scope) => {
     const readerKey = (scope === 'ops') ? `:${(state.user.email||'').toLowerCase()}` : `coord:${myCoordId}`;
+
     const isRead = (a) => {
       const rb = a.readBy || {};
-      return (scope === 'ops')
-        ? Object.keys(rb||{}).some(k => k.startsWith(':'))   // leído por alguien de Ops (por email)
-        : !!rb[readerKey];
+      if (scope === 'ops') {
+        // para ops marcamos lectura por email con prefijo ':'
+        return Object.keys(rb||{}).some(k => k.startsWith(':'));
+      }
+      return !!rb[readerKey];
     };
 
     const unread = arr.filter(a => !isRead(a));
     const read   = arr.filter(a =>  isRead(a));
 
-    const wrap = document.createElement('div');
-    wrap.className = 'act';
-    wrap.innerHTML = `<h4>${titleText}</h4>`;
-
-    const tabs = document.createElement('div');
-    tabs.className = 'tabs';
-    const t1 = document.createElement('div'); t1.className = 'tab active'; t1.textContent = `NO LEÍDAS (${unread.length})`;
-    const t2 = document.createElement('div'); t2.className = 'tab';        t2.textContent = `LEÍDAS (${read.length})`;
-    tabs.appendChild(t1); tabs.appendChild(t2);
-    wrap.appendChild(tabs);
-
-    const list = document.createElement('div');
-    list.style.display = 'grid';
-    list.style.gap = '.5rem';
-    wrap.appendChild(list);
-
-    const show = (which) => {
-      list.innerHTML = '';
-      const src = (which === 'unread') ? unread : read;
-      if (!src.length){
-        list.innerHTML = '<div class="muted">SIN ELEMENTOS.</div>';
-      } else {
-        src.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0))
-           .forEach(a => list.appendChild(makeCard(a, scope)));
-      }
+    const mkReadersLine = (a) => {
+      const rb = a.readBy || {};
+      const entries = Object.entries(rb).map(([k,v]) => {
+        const who  = (k || '').toString().toUpperCase();
+        const when = (v?.seconds) ? new Date(v.seconds*1000).toLocaleString('es-CL').toUpperCase() : '';
+        return `${who}${when ? (' · ' + when) : ''}`;
+      });
+      return entries.length ? `<div class="meta"><strong>LEÍDO POR:</strong> ${entries.join(' · ')}</div>` : '';
     };
 
-    t1.onclick = () => { t1.classList.add('active'); t2.classList.remove('active'); show('unread'); };
-    t2.onclick = () => { t2.classList.add('active'); t1.classList.remove('active'); show('read');   };
+    const mkCard = (a) => {
+      const li = document.createElement('div');
+      li.className = 'alert-card';
 
-    show('unread');
-    return wrap;
+      const fecha = a.createdAt?.seconds ? new Date(a.createdAt.seconds*1000).toLocaleDateString('es-CL').toUpperCase() : '';
+      const autorEmail  = (a.createdBy?.email || '').toUpperCase();
+      const autorNombre = upperNameByEmail(a.createdBy?.email || '');
+      const gi = a.groupInfo || null;
+
+      const cab = (scope === 'ops') ? 'NUEVO COMENTARIO' : 'NOTIFICACIÓN';
+      const tipoCoord = (scope !== 'ops')
+        ? (Array.isArray(a.forCoordIds) && a.forCoordIds.length > 1 ? 'GLOBAL' : 'PERSONAL')
+        : null;
+
+      li.innerHTML = `
+        <div class="alert-title">${cab}${tipoCoord ? ` · ${tipoCoord}` : ''}</div>
+        <div class="meta">FECHA: ${fecha} · AUTOR: ${autorNombre} (${autorEmail})</div>
+        ${gi ? `
+          <div class="meta">GRUPO: ${(gi.nombre||'').toString().toUpperCase()} (${(gi.code||'').toString().toUpperCase()}) · DESTINO: ${(gi.destino||'').toString().toUpperCase()} · PROGRAMA: ${(gi.programa||'').toString().toUpperCase()}</div>
+          <div class="meta">FECHA ACTIVIDAD: ${dmy(gi.fechaActividad||'')} · ACTIVIDAD: ${(gi.actividad||'').toString().toUpperCase()}</div>
+        ` : ''}
+        <div style="margin:.45rem 0">${(a.mensaje||'').toString().toUpperCase()}</div>
+        ${mkReadersLine(a)}
+        <div class="rowflex"><button class="btn ok btnRead">CONFIRMAR LECTURA</button></div>
+      `;
+
+      li.querySelector('.btnRead').onclick = async () => {
+        try{
+          const path = doc(db,'alertas', a.id);
+          const payload = {};
+          if (scope === 'ops') {
+            payload[`readBy.:${(state.user.email||'').toLowerCase()}`] = serverTimestamp();
+          } else {
+            payload[`readBy.coord:${myCoordId}`] = serverTimestamp();
+          }
+          await updateDoc(path, payload);
+          await renderGlobalAlerts();
+        }catch(e){
+          console.error(e);
+          alert('NO SE PUDO CONFIRMAR.');
+        }
+      };
+
+      return li;
+    };
+
+    const wrap = document.createElement('div');
+    const tabs = document.createElement('div'); tabs.className = 'tabs';
+    const t1 = document.createElement('div'); t1.className = 'tab active'; t1.textContent = `NO LEÍDAS (${unread.length})`;
+    const t2 = document.createElement('div'); t2.className = 'tab';         t2.textContent = `LEÍDAS (${read.length})`;
+    tabs.appendChild(t1); tabs.appendChild(t2); wrap.appendChild(tabs);
+
+    const cont = document.createElement('div'); wrap.appendChild(cont);
+
+    const renderTab = (which) => {
+      cont.innerHTML = '';
+      t1.classList.toggle('active', which === 'unread');
+      t2.classList.toggle('active', which === 'read');
+      const arr2 = (which === 'unread') ? unread : read;
+      if (!arr2.length) {
+        cont.innerHTML = '<div class="muted">SIN MENSAJES.</div>';
+        return;
+      }
+      arr2.forEach(a => cont.appendChild(mkCard(a)));
+    };
+
+    t1.onclick = () => renderTab('unread');
+    t2.onclick = () => renderTab('read');
+    renderTab('unread');
+
+    return { ui: wrap, unreadCount: unread.length, readCount: read.length };
   };
 
-  // Render final
-  const frag = document.createDocumentFragment();
-  if (paraMi.length || !state.is) {
-    frag.appendChild(renderBucket(paraMi, 'coord', 'PARA MÍ'));
-  }
-  if (state.is) {
-    frag.appendChild(renderBucket(ops, 'ops', 'OPERACIONES'));
+  // Construcción final del panel
+  const head = document.createElement('div');
+  head.className = 'alert-head';
+  head.style.cssText = 'display:flex;align-items:center;gap:.5rem;justify-content:space-between';
+
+  const left = document.createElement('div');
+  left.innerHTML = '<h4 style="margin:0">ALERTAS</h4>';
+
+  const right = document.createElement('div');
+  if (state.is){
+    const btn = document.createElement('button');
+    btn.id = 'btnCreateAlert';
+    btn.className = 'btn ok';
+    btn.textContent = 'CREAR ALERTA';
+    btn.onclick = openCreateAlertModal;
+    right.appendChild(btn);
   }
 
-  box.innerHTML = `
-    <div class="alert-head" style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
-      <h4 style="margin:0">ALERTAS</h4>
-      ${state.is ? '<button id="btnCreateAlert" class="btn ok">CREAR ALERTA</button>' : ''}
-    </div>
-  `;
-  box.appendChild(frag);
+  head.appendChild(left);
+  head.appendChild(right);
 
-  // Botón crear alerta (solo STAFF)
-  if (state.is) {
-    const btn = box.querySelector('#btnCreateAlert');
-    if (btn) btn.onclick = openCreateAlertModal;
+  const area = document.createElement('div');
+
+  const mi = renderList(paraMi, 'mi');
+  const op = state.is ? renderList(ops, 'ops') : null;
+
+  // Limpia y compone
+  box.innerHTML = '';
+  box.appendChild(head);
+
+  // Sección "Para mí"
+  const secMi = document.createElement('div');
+  secMi.className = 'act';
+  secMi.innerHTML = `<h4>PARA MÍ</h4>`;
+  secMi.appendChild(mi ? mi.ui : document.createTextNode(''));
+  if (!mi || (mi.unreadCount + mi.readCount) === 0){
+    const empty = document.createElement('div');
+    empty.className = 'muted';
+    empty.textContent = 'SIN ALERTAS.';
+    secMi.appendChild(empty);
   }
+  area.appendChild(secMi);
+
+  // Sección "Operaciones" (solo STAFF)
+  if (state.is){
+    const secOp = document.createElement('div');
+    secOp.className = 'act';
+    secOp.innerHTML = `<h4>OPERACIONES</h4>`;
+    secOp.appendChild(op ? op.ui : document.createTextNode(''));
+    if (!op || (op.unreadCount + op.readCount) === 0){
+      const empty2 = document.createElement('div');
+      empty2.className = 'muted';
+      empty2.textContent = 'SIN MENSAJES PARA OPERACIONES.';
+      secOp.appendChild(empty2);
+    }
+    area.appendChild(secOp);
+  }
+
+  box.appendChild(area);
+
+  // Hook del botón (en caso de que el DOM se haya recreado)
+  const btnCreate = box.querySelector('#btnCreateAlert');
+  if (btnCreate) btnCreate.onclick = openCreateAlertModal;
 }
-
 /* ====== GASTOS ====== */
 async function renderGastos(g, pane){
   pane.innerHTML='';
