@@ -544,6 +544,7 @@ function renderNavBar(){
      }
      // (el botón “crear alerta” ya se maneja en el panel de alertas)
    }
+}
 
 /* ====== VISTA GRUPO ====== */
 async function renderOneGroup(g, preferDate){
