@@ -53,55 +53,46 @@ function ensurePrintDOM(){
 
   const css = document.createElement('style');
   css.id = 'printStyles';
-  css.textContent = `
-    /* OCULTO EN PANTALLA */
-    #printSheet { display:none; }
-    #printSheet .print-head,
-    #printSheet .print-foot { display:none; }
-
-    /* ESTILOS DE IMPRESIÓN */
-    @media print {
-      @page { size: A4; margin: 20mm; }
-
-      /* Oculta toda la app y deja solo la hoja */
-      body * { visibility: hidden !important; }
-      #printSheet, #printSheet * { visibility: visible !important; }
-      #printSheet {
-        display: block !important;
-        position: static !important;
-      }
-
-      /* Encabezado fijo */
-      #printSheet .print-head {
-        position: fixed; top: 10mm; left: 0; right: 0;
-        display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 8px;
-        font-family: Calibri, Arial, sans-serif; font-size: 11px; color:#444;
-      }
-      #printSheet .ph-left { text-transform: uppercase; }
-      #printSheet .ph-left strong { font-size: 12px; }
-      #printSheet .ph-right img { height: 36px; object-fit: contain; }
-
-      /* Pie de página fijo con 1/N */
-      #printSheet .print-foot {
-        position: fixed; bottom: 10mm; left: 0; right: 0;
-        text-align: center; font-family: Calibri, Arial, sans-serif; font-size: 10px; color:#666;
-      }
-      #printSheet .page-num::after { content: counter(page) " / " counter(pages); }
-
-      /* Cuerpo del documento (texto corrido) */
-      #printSheet .print-doc {
-        white-space: pre-wrap;
-        text-transform: uppercase;
-        font-family: Calibri, Arial, sans-serif;
-        font-size: 12px; line-height: 1.25;
-        margin-top: 22mm;     /* despeje header */
-        margin-bottom: 16mm;  /* despeje footer */
-      }
-
-      /* Oculta la UI app en print por si queda algo suelto */
-      .wrap, #alertsPanel, #navPanel, #statsPanel, #gruposPanel { display:none !important; }
-    }
-  `;
+   css.textContent = `
+     /* PANTALLA: hoja oculta */
+     #printSheet { display:none; }
+   
+     /* IMPRESIÓN */
+     @media print {
+       @page { size: A4; margin: 20mm; }
+   
+       /* Muestra sólo la hoja de impresión; ocultamos la app por display, no por visibility */
+       #printSheet { display:block !important; }
+       .wrap, #alertsPanel, #navPanel, #statsPanel, #gruposPanel, #modalBack { display:none !important; }
+   
+       /* Encabezado y pie (fijos) */
+       #printSheet .print-head {
+         position: fixed; top: 10mm; left: 0; right: 0;
+         display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 8px;
+         font-family: Calibri, Arial, sans-serif; font-size: 11px; color:#444;
+       }
+       #printSheet .ph-left { text-transform: uppercase; }
+       #printSheet .ph-left strong { font-size: 12px; }
+       #printSheet .ph-right img { height: 36px; object-fit: contain; }
+   
+       #printSheet .print-foot {
+         position: fixed; bottom: 10mm; left: 0; right: 0;
+         text-align: center; font-family: Calibri, Arial, sans-serif; font-size: 10px; color:#666;
+       }
+       #printSheet .page-num::after { content: counter(page) " / " counter(pages); }
+   
+       /* Cuerpo */
+       #printSheet .print-doc {
+         white-space: pre-wrap;
+         text-transform: uppercase;
+         font-family: Calibri, Arial, sans-serif;
+         font-size: 12px; line-height: 1.25;
+         margin-top: 22mm;     /* despeje header */
+         margin-bottom: 16mm;  /* despeje footer */
+         color: #0a0a0a;
+       }
+     }
+   `;
   document.head.appendChild(css);
 
   const sheet = document.createElement('div');
@@ -597,10 +588,18 @@ function renderNavBar(){
      const btn = document.getElementById('btnPrintVch');
      if (btn){
        btn.textContent = 'IMPRIMIR DESPACHO';
-       btn.onclick = () => {
-         // Nada de awaits, nada de fetch: el texto ya está precargado.
-         window.print();
-       };
+         btn.onclick = async () => {
+           try {
+             ensurePrintDOM();
+             const g = state.ordenados[state.idx];
+             await preparePrintForGroup(g);     // refresca encabezado + cuerpo
+             // pequeño respiro para layout antes de imprimir
+             setTimeout(() => { window.print(); }, 50);
+           } catch (e) {
+             console.error('[PRINT] error antes de imprimir', e);
+             window.print();
+           }
+         };
      }
      // (el botón “crear alerta” ya se maneja en el panel de alertas)
    }
