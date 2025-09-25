@@ -1549,13 +1549,13 @@ async function renderActs(grupo, fechaISO, cont){
 
       '<div class="rowflex" style="margin:.35rem 0">' +
         '<input type="number" min="0" inputmode="numeric" placeholder="N° ASISTENCIA" value="' + paxFinalInit + '"/>' +
-        '<textarea placeholder="COMENTARIOS"></textarea>' +
+        '<textarea placeholder="COMENTARIOS PARA BITÁCORA"></textarea>' +
         '<button class="btn ok btnSave">GUARDAR</button>' +
         vchPlaceholder +
         '<button class="btn sec btnActInfo">DETALLE / TIPS</button>' +
       '</div>' +
       '<div class="bitacora" style="margin-top:.4rem">' +
-        '<div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>' +
+        '<div class="muted" style="margin-bottom:.25rem">BITÁCORA:</div>' +
         '<div class="bitItems" style="display:grid;gap:.35rem"><div class="muted">CARGANDO…</div></div>' +
       '</div>';
 
