@@ -2701,7 +2701,7 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
          <textarea id="foroText" placeholder="ESCRIBE UN COMENTARIO (SE PUBLICA CON TU CORREO)"></textarea>
          <button id="foroSend" class="btn ok">PUBLICAR</button>
        </div>
-       <div class="muted">Los comentarios del STAFF aparecen primero.</div>
+       <div class="muted">-------</div>
        <div id="foroList" style="display:grid;gap:.4rem;margin-top:.5rem"></div>
        <div class="rowflex" style="justify-content:center;margin-top:.4rem">
          <button id="foroMore" class="btn sec" style="display:none">CARGAR MÁS</button>
