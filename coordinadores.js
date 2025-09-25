@@ -506,18 +506,16 @@ function renderNavBar(){
    console.log('[PRINT] state.is?', state.is);
 
    if (state.is){
+     // ⚠️ Toma el botón por ID global para evitar problemas si no está dentro de #navPanel
      const btn = document.getElementById('btnPrintVch');
      if (btn){
        btn.textContent = 'IMPRIMIR DESPACHO';
-       btn.onclick = async () => {
-         const g = state.ordenados[state.idx];
-         if (!g){ alert('No hay viaje activo.'); return; }
-         // Ventana “en blanco” donde inyectaremos el HTML del despacho
-         const w = window.open('', '_blank', 'noopener,noreferrer');
-         if (!w){ alert('Bloqueado por el navegador. Permite ventanas emergentes para continuar.'); return; }
-         await openPrintDespacho(g, w); // 👈 usa el generador PDF/Print A4
+       btn.onclick = () => {
+         // Nada de awaits, nada de fetch: el texto ya está precargado.
+         window.print();
        };
      }
+     // (el botón “crear alerta” ya se maneja en el panel de alertas)
    }
 }
 
