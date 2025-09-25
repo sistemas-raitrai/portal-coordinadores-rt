@@ -660,17 +660,19 @@ async function renderOneGroup(g, preferDate){
   let tmr=null;
   input.oninput=()=>{ clearTimeout(tmr); tmr=setTimeout(async ()=>{
     state.groupQ=input.value||'';
-    const active=paneItin.style.display!=='none'?'itin':(paneGastos.style.display!=='none'?'gastos':'resumen');
-
+    const active = paneItin.style.display !== 'none' ? 'itin' :
+                   (paneFin.style.display !== 'none' ? 'fin' : 'resumen');
+   
     const r = await renderResumen(g, paneResumen);
     const i = renderItinerario(g, paneItin, localStorage.getItem('rt_last_date_'+g.id) || preferDate);
-    const ga= await renderGastos(g, paneGastos);
-
-    setTabLabel(btnResumen,'RESUMEN',r);
-    setTabLabel(btnItin,'ITINERARIO',i);
-    setTabLabel(btnGastos,'GASTOS',ga);
-
+    const f = await renderFinanzas(g, paneFin);
+   
+    setTabLabel(btnResumen, 'RESUMEN', r);
+    setTabLabel(btnItin,    'ITINERARIO', i);
+    setTabLabel(btnFin,     'FINANZAS', f);
+   
     show(active);
+
   },180); };
 }
 
