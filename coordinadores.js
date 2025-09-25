@@ -47,6 +47,89 @@ const timeIdNowMs = () => {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,'0')}`;
 };
 
+/* ====== IMPRESIÓN: HOJA OCULTA EN ESTA MISMA PÁGINA ====== */
+function ensurePrintDOM(){
+  if (document.getElementById('printSheet')) return;
+
+  const css = document.createElement('style');
+  css.id = 'printStyles';
+  css.textContent = `
+    /* OCULTO EN PANTALLA */
+    #printSheet { display:none; }
+    #printSheet .print-head,
+    #printSheet .print-foot { display:none; }
+
+    /* ESTILOS DE IMPRESIÓN */
+    @media print {
+      @page { size: A4; margin: 20mm; }
+
+      /* Oculta toda la app y deja solo la hoja */
+      body * { visibility: hidden !important; }
+      #printSheet, #printSheet * { visibility: visible !important; }
+      #printSheet {
+        display: block !important;
+        position: static !important;
+      }
+
+      /* Encabezado fijo */
+      #printSheet .print-head {
+        position: fixed; top: 10mm; left: 0; right: 0;
+        display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 8px;
+        font-family: Calibri, Arial, sans-serif; font-size: 11px; color:#444;
+      }
+      #printSheet .ph-left { text-transform: uppercase; }
+      #printSheet .ph-left strong { font-size: 12px; }
+      #printSheet .ph-right img { height: 36px; object-fit: contain; }
+
+      /* Pie de página fijo con 1/N */
+      #printSheet .print-foot {
+        position: fixed; bottom: 10mm; left: 0; right: 0;
+        text-align: center; font-family: Calibri, Arial, sans-serif; font-size: 10px; color:#666;
+      }
+      #printSheet .page-num::after { content: counter(page) " / " counter(pages); }
+
+      /* Cuerpo del documento (texto corrido) */
+      #printSheet .print-doc {
+        white-space: pre-wrap;
+        text-transform: uppercase;
+        font-family: Calibri, Arial, sans-serif;
+        font-size: 12px; line-height: 1.25;
+        margin-top: 22mm;     /* despeje header */
+        margin-bottom: 16mm;  /* despeje footer */
+      }
+
+      /* Oculta la UI app en print por si queda algo suelto */
+      .wrap, #alertsPanel, #navPanel, #statsPanel, #gruposPanel { display:none !important; }
+    }
+  `;
+  document.head.appendChild(css);
+
+  const sheet = document.createElement('div');
+  sheet.id = 'printSheet';
+  sheet.innerHTML = `
+    <div class="print-head">
+      <div class="ph-left">
+        <div><strong>DESPACHO DE VIAJE</strong></div>
+        <div id="ph-grupo"></div>
+        <div id="ph-meta1"></div>
+        <div id="ph-meta2"></div>
+        <div id="ph-fechas"></div>
+        <div id="ph-pax"></div>
+      </div>
+      <div class="ph-right">
+        <img src="RaitraiLogo.png" alt="RAITRAI"/>
+      </div>
+    </div>
+
+    <pre id="print-block" class="print-doc"></pre>
+
+    <div class="print-foot">
+      <span class="page-num"></span>
+    </div>
+  `;
+  document.body.appendChild(sheet);
+}
+
 /* ====== HISTORIAL VIAJE (utils) ====== */
 const HIST_ACTKEY = '_viaje_'; // o 'viaje_hist', cualquier cosa que NO sea __...__
 const fmtChile = (date) =>
@@ -213,8 +296,12 @@ onAuthStateChanged(auth, async (user) => {
    const legacyNewAlert = document.getElementById('btnNewAlert');
    if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
-  // PANEL ALERTAS
-  await renderGlobalAlerts();
+     // 🔽 crea hoja de impresión oculta
+     ensurePrintDOM();
+   
+     // PANEL ALERTAS
+     await renderGlobalAlerts();
+
 
   // AUTO-REFRESCO CADA 60S (solo alertas, sin reordenar paneles)
   if (!state.alertsTimer){
@@ -677,6 +764,7 @@ async function renderOneGroup(g, preferDate){
 
   },180); };
 
+ensurePrintDOM();
 await preparePrintForGroup(g);
 }
 
@@ -2068,13 +2156,40 @@ function buildPrintTextDespacho(grupo, itinLines){
   return out.trimEnd();
 }
 
-/* Prepara el bloque oculto con el texto del despacho */
+/* Prepara la hoja de impresión con encabezado + texto */
 async function preparePrintForGroup(grupo){
   try{
-    const el = document.getElementById('print-block');
-    if (!el || !grupo) return;
-    const lines = await collectItinLines(grupo);   // ya existe en tu código
-    el.textContent = buildPrintTextDespacho(grupo, lines);
+    ensurePrintDOM(); // por si aún no existe
+
+    if (!grupo) return;
+
+    // 1) Texto corrido (cuerpo)
+    const lines = await collectItinLines(grupo).catch(()=>[]);
+    const text  = buildPrintTextDespacho(grupo, lines);
+    const pre   = document.getElementById('print-block');
+    if (pre) pre.textContent = text || '';
+
+    // 2) Encabezado (metadatos)
+    const code    = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
+    const paxPlan = paxOf(grupo);
+    const paxReal = paxRealOf(grupo);
+    const { A: A_real, E: E_real } = paxBreakdown(grupo);
+
+    const $ = (id) => document.getElementById(id);
+    const up = (s) => (s||'').toString().toUpperCase();
+
+    const phGrupo  = $('ph-grupo');
+    const phMeta1  = $('ph-meta1');    // DESTINO / PROGRAMA
+    const phMeta2  = $('ph-meta2');    // CÓDIGO
+    const phFechas = $('ph-fechas');
+    const phPax    = $('ph-pax');
+
+    if (phGrupo)  phGrupo.textContent  = `GRUPO: ${up(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id)}`;
+    if (phMeta2)  phMeta2.textContent  = `CÓDIGO: ${code}`;
+    if (phMeta1)  phMeta1.textContent  = `DESTINO: ${up(grupo.destino||'—')}  ·  PROGRAMA: ${up(grupo.programa||'—')}`;
+    if (phFechas) phFechas.textContent = `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}`;
+    if (phPax)    phPax.textContent    = `PAX: PLAN ${paxPlan}` + (paxReal ? `  ·  REAL ${paxReal} (A:${A_real} · E:${E_real})` : '');
+
   }catch(e){
     console.error('[PRINT] preparePrintForGroup', e);
   }
