@@ -1552,7 +1552,7 @@ async function renderActs(grupo, fechaISO, cont){
         '<textarea placeholder="COMENTARIOS"></textarea>' +
         '<button class="btn ok btnSave">GUARDAR</button>' +
         vchPlaceholder +
-        '<button class="btn sec btnActInfo">DETALLE/COMENTARIOS…</button>' +
+        '<button class="btn sec btnActInfo">DETALLE / TIPS</button>' +
       '</div>' +
       '<div class="bitacora" style="margin-top:.4rem">' +
         '<div class="muted" style="margin-bottom:.25rem">BITÁCORA</div>' +
@@ -2696,7 +2696,7 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
        ${indicaciones ? `<div class="meta" style="white-space:pre-wrap">${indicaciones.toUpperCase()}</div>` : '<div class="muted">SIN INDICACIONES.</div>'}
      </div>
      <div class="act" id="foroBox">
-       <h4>COMENTARIOS DE LA ACTIVIDAD</h4>
+       <h4>TIPS O COMENTARIOS</h4>
        <div class="rowflex" style="margin:.35rem 0">
          <textarea id="foroText" placeholder="ESCRIBE UN COMENTARIO (SE PUBLICA CON TU CORREO)"></textarea>
          <button id="foroSend" class="btn ok">PUBLICAR</button>
