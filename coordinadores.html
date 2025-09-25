@@ -259,25 +259,36 @@
       .btn.gray { background:#64748b; color:#fff; }
     }
 
-    /* ===== IMPRESIÓN TEXTUAL SIMPLE ===== */
-    @media screen { 
-      #print-block { display: none; }
-    }
-    @media print {
-      /* Oculta todo menos el bloque de impresión */
-      body > *:not(#print-block) { display: none !important; }
+    /* ===== IMPRESIÓN DESPACHO ===== */
+    .rt-print-only { display: none; }
     
-      #print-block{
-        display:block !important;
-        white-space:pre-wrap;
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-        font-size: 12pt;
+    /* Ocultar toda la app en modo print y mostrar solo el bloque */
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      /* oculta TODO por defecto */
+      body * { visibility: hidden !important; }
+      /* muestra SOLO el bloque del despacho */
+      #print-block, #print-block * { visibility: visible !important; }
+      #print-block { 
+        display: block; 
+        position: static; 
+        white-space: pre-wrap;   /* respeta saltos de línea y ajusta a página */
+        word-wrap: break-word;
+        font-family: "Segoe UI", Arial, system-ui, sans-serif; /* similar a Word */
+        font-size: 12.5px;
         line-height: 1.35;
+        color: #0a0a0a;
         margin: 0;
         padding: 0;
       }
-      @page { margin: 16mm; }
-    }   
+    
+      /* Tamaño y márgenes de página estilo Word */
+      @page { 
+        size: A4; 
+        margin: 16mm 15mm 16mm 15mm; 
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -318,7 +329,7 @@
   </div>
 
   <script type="module" src="./coordinadores.js"></script>
-  <!-- Bloque de texto que solo aparece al imprimir -->
-  <pre id="print-block"></pre>
+  <!-- === PRINT BLOCK (solo para imprimir) === -->
+  <pre id="print-block" class="rt-print-only" aria-hidden="true"></pre>
 </body>
 </html>
