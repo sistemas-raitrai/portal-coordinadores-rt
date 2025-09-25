@@ -510,36 +510,9 @@ function renderNavBar(){
      const btn = document.getElementById('btnPrintVch');
      if (btn){
        btn.textContent = 'IMPRIMIR DESPACHO';
-       btn.onclick = async () => {
-         const g = state.ordenados[state.idx];
-         // 1) ABRIR POPUP **YA** (sin ningún await antes) → evita bloqueo de pop-up
-         const w = window.open('', '_blank', 'noopener');
-         if (!w) {
-           alert('No se pudo abrir la ventana de impresión (popup bloqueado por el navegador).');
-           return;
-         }
-   
-         // Mensaje temporal mientras generamos el HTML final
-         try {
-           w.document.open('text/html');
-           w.document.write(`<!doctype html>
-             <html><head><meta charset="utf-8"></head>
-             <body style="font-family:system-ui,Arial,sans-serif">
-               <p style="margin:24px">Generando DESPACHO…</p>
-             </body></html>`);
-           w.document.close();
-         } catch (e) {
-           console.error('[PRINT] No se pudo escribir HTML temporal', e);
-         }
-   
-         // 2) Generar el despacho en esa misma ventana
-         try {
-           await openPrintDespacho(g, w);  // 👈 nota: ahora pasa la ventana como 2º argumento
-         } catch (e) {
-           console.error('[PRINT] Error al generar el despacho', e);
-           try { w.close(); } catch(_){}
-           alert('Error al generar el despacho. Revisa la consola.');
-         }
+       btn.onclick = () => {
+         // Nada de awaits, nada de fetch: el texto ya está precargado.
+         window.print();
        };
      }
      // (el botón “crear alerta” ya se maneja en el panel de alertas)
@@ -703,6 +676,8 @@ async function renderOneGroup(g, preferDate){
     show(active);
 
   },180); };
+
+await preparePrintForGroup(g);
 }
 
 async function renderViajeHistory(g, box){
@@ -2029,6 +2004,80 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   }
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
   back.style.display='flex';
+}
+
+/* === IMPRESIÓN — helpers de formato === */
+function formatDateReadable(isoStr){
+  if(!isoStr) return '—';
+  const [yyyy, mm, dd] = isoStr.split('-').map(Number);
+  const d = new Date(yyyy, (mm||1)-1, dd||1);
+  const wd = d.toLocaleDateString('es-CL', { weekday: 'long' });
+  const name = wd.charAt(0).toUpperCase() + wd.slice(1);
+  const ddp = String(dd||'').padStart(2,'0');
+  const mmp = String(mm||'').padStart(2,'0');
+  return `${name} ${ddp}/${mmp}`;
+}
+
+/* Construye el texto “simple y elegante” del despacho */
+function buildPrintTextDespacho(grupo, itinLines){
+  const code = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
+  const paxPlan = paxOf(grupo);
+  const paxReal = paxRealOf(grupo);
+  const { A: A_real, E: E_real } = paxBreakdown(grupo);
+  const header = [
+    `DESPACHO DE VIAJE`,
+    `GRUPO: ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()}  ·  CÓDIGO: ${code}`,
+    `DESTINO: ${(grupo.destino||'—').toString().toUpperCase()}  ·  PROGRAMA: ${(grupo.programa||'—').toString().toUpperCase()}`,
+    `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}`,
+    `PAX: PLAN ${paxPlan}${paxReal?` · REAL ${paxReal} (A:${A_real} · E:${E_real})`:''}`,
+    ''.padEnd(50,'─'),
+    ''
+  ].join('\n');
+
+  // agrupa por fecha
+  const byDate = new Map();
+  for (const x of (itinLines||[])){
+    if(!byDate.has(x.fechaISO)) byDate.set(x.fechaISO, []);
+    byDate.get(x.fechaISO).push(x);
+  }
+
+  // ordena fechas
+  const fechas = Array.from(byDate.keys()).sort();
+
+  let out = header;
+  fechas.forEach((f, idx) => {
+    out += `Día ${idx+1} – ${formatDateReadable(f)}\n`;
+    const arr = byDate.get(f) || [];
+    if(!arr.length){
+      out += '— Sin actividades —\n\n';
+      return;
+    }
+    // orden por hora
+    arr.sort((a,b)=>(a.hora||'').localeCompare(b.hora||''));
+    arr.forEach(a=>{
+      const hora = a.hora || '--:--';
+      const act  = (a.actividad||'').toString().toUpperCase();
+      const prov = (a.proveedor||'').toString().toUpperCase();
+      const cont = a.contacto || '';
+      const est  = (a.estado||'').toString().toUpperCase();
+      out += `${hora}  ${act}${prov?` · ${prov}`:''}${cont?` · ${cont}`:''}${est?` · ${est}`:''}\n`;
+    });
+    out += '\n';
+  });
+
+  return out.trimEnd();
+}
+
+/* Prepara el bloque oculto con el texto del despacho */
+async function preparePrintForGroup(grupo){
+  try{
+    const el = document.getElementById('print-block');
+    if (!el || !grupo) return;
+    const lines = await collectItinLines(grupo);   // ya existe en tu código
+    el.textContent = buildPrintTextDespacho(grupo, lines);
+  }catch(e){
+    console.error('[PRINT] preparePrintForGroup', e);
+  }
 }
 
 /* ====== IMPRESIÓN DE DESPACHO (PDF por print) ====== */
