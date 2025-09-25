@@ -2101,63 +2101,159 @@ function formatDateReadable(isoStr){
 }
 
 /* Construye el texto “simple y elegante” del despacho */
-/* Construye el despacho en estilo “Word”: títulos, líneas, hora en columna */
-function buildPrintTextDespacho(grupo, itinLines){
+/* === DESPACHO (texto estilo Word) — con HOTELES, VUELOS, CONTACTOS, FINANZAS === */
+function buildPrintTextDespacho(grupo, opts){
+  // opts trae: { itinLines, hoteles, vuelos, contactos, finanzas }
+  const { itinLines=[], hoteles=[], vuelos=[], contactos=[], finanzas=null } = (opts||{});
+
+  const up = s => (s||'').toString().toUpperCase();
   const code = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
   const paxPlan = paxOf(grupo);
   const paxReal = paxRealOf(grupo);
   const { A: A_real, E: E_real } = paxBreakdown(grupo);
 
-  // Encabezado
-  const header = [
-    'DESPACHO DE VIAJE',
-    `GRUPO: ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()}  ·  CÓDIGO: ${code}`,
-    `DESTINO: ${(grupo.destino||'—').toString().toUpperCase()}  ·  PROGRAMA: ${(grupo.programa||'—').toString().toUpperCase()}`,
-    `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}`,
-    `PAX PLAN: ${paxPlan}${paxReal?`  ·  REAL: ${paxReal} (A:${A_real} · E:${E_real})`:''}`,
-    ''.padEnd(60,'─'),
-    ''
-  ].join('\n');
+  // ===== Encabezado =====
+  let out = '';
+  out += 'DESPACHO DE VIAJE\n\n';
+  out += `GRUPO: ${up(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id)} · CÓDIGO: ${code}\n\n`;
+  out += `DESTINO: ${up(grupo.destino||'—')} · PROGRAMA: ${up(grupo.programa||'—')}\n\n`;
+  out += `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}  PAX: ${paxPlan}`;
+  out += (paxReal ? ` (REAL ${paxReal} · A:${A_real} · E:${E_real})` : '');
+  out += '\n\n\n';
 
-  // Agrupar por fecha
-  const byDate = new Map();
-  for (const x of (itinLines||[])){
-    if(!byDate.has(x.fechaISO)) byDate.set(x.fechaISO, []);
-    byDate.get(x.fechaISO).push(x);
-  }
-  const fechas = Array.from(byDate.keys()).sort();
+  // ===== Hoteles =====
+  out += `HOTELES (${hoteles.length||0}):\n\n`;
+  if (!hoteles.length){
+    out += '— SIN ASIGNACIÓN DE HOTELES —\n\n\n';
+  } else {
+    hoteles.forEach((h,i)=>{
+      const nombre    = up(h.hotelNombre || h.hotel?.nombre || '');
+      const ci        = dmy(toISO(h.checkIn));
+      const co        = dmy(toISO(h.checkOut));
+      const noches    = (h.noches!=='' && h.noches!=null)? String(h.noches): '';
+      const estado    = up(h.status||'');
+      const est       = h.estudiantes || {F:0,M:0,O:0};
+      const estTot    = Number(h.estudiantesTotal ?? (est.F+est.M+est.O));
+      const adu       = h.adultos || {F:0,M:0,O:0};
+      const aduTot    = Number(h.adultosTotal ?? (adu.F+adu.M+adu.O));
+      const hhab      = h.habitaciones || {};
+      const habLine   = (hhab.singles!=null||hhab.dobles!=null||hhab.triples!=null||hhab.cuadruples!=null)
+        ? `HABITACIONES: ${[
+            (hhab.singles!=null?`SINGLES: ${hhab.singles}`:''),
+            (hhab.dobles!=null?`DOBLES: ${hhab.dobles}`:''),
+            (hhab.triples!=null?`TRIPLES: ${hhab.triples}`:''),
+            (hhab.cuadruples!=null?`CUÁDRUPLES: ${hhab.cuadruples}`:'')
+          ].filter(Boolean).join(' · ')}`
+        : '';
+      const dir       = up(h.hotel?.direccion || h.direccion || '');
+      const tel       = up(h.hotel?.contactoTelefono || h.contactoTelefono || '');
 
-  // Helper formato “DÍA X – JUEVES 25/09”
-  const formatDateReadable = (iso) => {
-    if(!iso) return '—';
-    const [yyyy, mm, dd] = iso.split('-').map(Number);
-    const d = new Date(yyyy, (mm||1)-1, dd||1);
-    const wd = d.toLocaleDateString('es-CL', { weekday: 'long' });
-    const name = wd.charAt(0).toUpperCase() + wd.slice(1);
-    const ddp = String(dd||'').padStart(2,'0');
-    const mmp = String(mm||'').padStart(2,'0');
-    return `${name.toUpperCase()} ${ddp}/${mmp}`;
-  };
-
-  // Cuerpo: hora en columna fija (5), texto a la derecha
-  let out = header;
-  fechas.forEach((f, i) => {
-    out += `DÍA ${i+1} – ${formatDateReadable(f)}\n`;
-
-    const arr = (byDate.get(f) || []).slice().sort((a,b)=>(a.hora||'').localeCompare(b.hora||''));
-    if(!arr.length){ out += '— SIN ACTIVIDADES —\n\n'; return; }
-
-    arr.forEach(a=>{
-      const hora = (a.hora||'--:--').padStart(5,' ');
-      let linea  = `${hora}  ${a.actividad}`;
-      if (a.proveedor) linea += ` · ${a.proveedor}`;
-      if (a.contacto)  linea += ` · ${a.contacto}`;
-      if (a.estado)    linea += ` · ${a.estado}`;
-      out += `${linea}\n`;
+      out += `NOMBRE: ${nombre}  CHECK-IN/OUT: ${ci} — ${co}${noches?`  NOCHES: ${noches}`:''}\n`;
+      if (estado) out += `ESTADO: ${estado}  `;
+      out += `ESTUDIANTES: F: ${est.F||0} · M: ${est.M||0} · O: ${est.O||0} (TOTAL ${estTot||0}) · ` +
+             `ADULTOS: F: ${adu.F||0} · M: ${adu.M||0} · O: ${adu.O||0} (TOTAL ${aduTot||0})\n`;
+      if (habLine) out += `${habLine}\n`;
+      if (dir)     out += `DIRECCIÓN: ${dir}\n`;
+      if (tel)     out += `TELÉFONO: ${tel}\n`;
+      out += '\n';
     });
+    out += '\n';
+  }
 
+  // ===== Transportes / Vuelos =====
+  out += 'TRANSPORTE / VUELOS:\n\n';
+  if (!vuelos.length){
+    out += '— SIN VUELOS/TRANSPORTE —\n\n\n';
+  } else {
+    vuelos.forEach(v=>{
+      const numero  = up(v.numero || v.tramos?.[0]?.numero || '');
+      const empresa = up(v.proveedor || v.tramos?.[0]?.aerolinea || '');
+      const ruta    = [up(v.origen || v.tramos?.[0]?.origen || ''), up(v.destino || v.tramos?.slice(-1)?.[0]?.destino || '')]
+                       .filter(Boolean).join(' — ');
+      const ida     = dmy(toISO(v.fechaIda)    || toISO(v.tramos?.[0]?.fechaIda) || '');
+      const vta     = dmy(toISO(v.fechaVuelta) || toISO(v.tramos?.slice(-1)?.[0]?.fechaVuelta) || '');
+
+      out += `N° / SERVICIO: ${numero || '—'}  EMPRESA: ${empresa || '—'}  RUTA: ${ruta || '—'}\n`;
+      out += `IDA: ${ida||'—'}  VUELTA: ${vta||'—'}\n`;
+
+      // tipo
+      const isAereo   = (v.tipoTransporte || 'aereo') === 'aereo';
+      const isMulti   = isAereo && v.tipoVuelo === 'regular' && Array.isArray(v.tramos) && v.tramos.length>0;
+      if (isMulti){
+        out += 'TIPO: REGULAR · MULTITRAMO\n';
+        (v.tramos||[]).forEach((t,i)=>{
+          const idaL = [ dmy(toISO(t.fechaIda)||''), t.presentacionIdaHora?`PRESENTACIÓN ${t.presentacionIdaHora}`:'', t.vueloIdaHora?`VUELO ${t.vueloIdaHora}`:'' ].filter(Boolean).join(' · ');
+          const vtaL = toISO(t.fechaVuelta)
+                        ? [ dmy(toISO(t.fechaVuelta)||''), t.presentacionVueltaHora?`PRESENTACIÓN ${t.presentacionVueltaHora}`:'', t.vueloVueltaHora?`VUELO ${t.vueloVueltaHora}`:'' ].filter(Boolean).join(' · ')
+                        : '';
+          out += `TRAMO ${i+1}: ${up(t.aerolinea||'')} ${up(t.numero||'')} — ${up(t.origen||'')} → ${up(t.destino||'')}\n`;
+          out += `IDA: ${idaL}\n`;
+          if (vtaL) out += `REGRESO: ${vtaL}\n`;
+        });
+      } else if (isAereo){
+        const l1 = [ v.presentacionIdaHora?`PRESENTACIÓN ${v.presentacionIdaHora}`:'', v.vueloIdaHora?`VUELO ${v.vueloIdaHora}`:'' ].filter(Boolean).join(' · ');
+        const l2 = [ v.presentacionVueltaHora?`PRESENTACIÓN ${v.presentacionVueltaHora}`:'', v.vueloVueltaHora?`VUELO ${v.vueloVueltaHora}`:'' ].filter(Boolean).join(' · ');
+        out += `TIPO: AÉREO${v.tipoVuelo?` · ${up(v.tipoVuelo)}`:''}\n`;
+        if (l1) out += `IDA: ${l1}\n`;
+        if (l2) out += `REGRESO: ${l2}\n`;
+      } else {
+        out += 'TIPO: TERRESTRE (BUS)\n';
+        if (v.idaHora || v.vueltaHora){
+          if (v.idaHora)    out += `SALIDA BUS (IDA): ${v.idaHora}\n`;
+          if (v.vueltaHora) out += `REGRESO BUS: ${v.vueltaHora}\n`;
+        }
+      }
+      out += '\n';
+    });
+    out += '\n';
+  }
+
+  // ===== Itinerario (por días) =====
+  out += 'ITINERARIO:  (ORDEN Y HORARIOS DE ACTIVIDADES PUEDEN SER MODIFICADOS)\n\n';
+  // agrupar por fecha
+  const byDate = new Map();
+  (itinLines||[]).forEach(x => { if (!byDate.has(x.fechaISO)) byDate.set(x.fechaISO, []); byDate.get(x.fechaISO).push(x); });
+  const fechas = Array.from(byDate.keys()).sort();
+  fechas.forEach((f, idx)=>{
+    out += `DÍA ${idx+1} - ${formatDateReadable(f)}\n\n`;
+    const items = (byDate.get(f)||[]).slice().sort((a,b)=>(a.hora||'').localeCompare(b.hora||''));
+    items.forEach(a=>{
+      const hora = (a.hora||'').trim();
+      out += (hora ? `${hora} ` : '') + `${a.actividad}\n`;
+    });
     out += '\n';
   });
+  out += '\n';
+
+  // ===== Contactos importantes =====
+  out += 'CONTACTOS IMPORTANTES:\n\n';
+  if (!contactos.length){
+    out += '— SIN CONTACTOS —\n\n';
+  } else {
+    contactos.forEach(c=>{
+      // formato: NOMBRE SERVICIO/PROVEEDOR · CONTACTO · TELEFONO · CORREO
+      const line = [ up(c.etiqueta||c.nombre||''), up(c.persona||''), up(c.telefono||''), up(c.email||'') ]
+                    .filter(Boolean).join(' · ');
+      out += `${line}\n`;
+    });
+    out += '\n';
+  }
+
+  // ===== Finanzas (abonos) =====
+  out += 'FINANZAS:\n\n';
+  if (!finanzas || !Array.isArray(finanzas.rows)){
+    out += '— SIN ABONOS REGISTRADOS —\n';
+  } else {
+    out += `ABONOS CLP ${ (finanzas.totales?.CLP||0).toLocaleString('es-CL') } · USD ${ (finanzas.totales?.USD||0) } · BRL ${ (finanzas.totales?.BRL||0) } · ARS ${ (finanzas.totales?.ARS||0) } · TOTAL CLP: ${ (finanzas.totalCLP||0).toLocaleString('es-CL') }\n\n`;
+    finanzas.rows.forEach(r=>{
+      out += `${up(r.asunto||'')} \n`;
+      out += `FECHA: ${r.fecha||'—'}\n`;
+      out += `MONEDA/VALOR: ${r.moneda||''} ${r.valor!=null?Number(r.valor).toLocaleString('es-CL'):''}\n`;
+      if (r.medio) out += `MEDIO: ${up(r.medio)}\n`;
+      if (r.detalle) out += `${up(r.detalle)}\n`;
+      out += '\n';
+    });
+  }
 
   return out.trimEnd();
 }
@@ -2165,42 +2261,116 @@ function buildPrintTextDespacho(grupo, itinLines){
 /* Prepara la hoja de impresión con encabezado + texto */
 async function preparePrintForGroup(grupo){
   try{
-    ensurePrintDOM(); // por si aún no existe
-
+    ensurePrintDOM();
     if (!grupo) return;
 
-    // 1) Texto corrido (cuerpo)
-    const lines = await collectItinLinesFast(grupo).catch(()=>[]);
-    const text  = buildPrintTextDespacho(grupo, lines);
-    const pre   = document.getElementById('print-block');
+    // 1) ITINERARIO (rápido)
+    const itinLines = await collectItinLinesFast(grupo).catch(()=>[]);
+
+    // 2) HOTELES (todas las asignaciones)
+    const hoteles   = await loadHotelesInfo(grupo).catch(()=>[]);
+
+    // 3) VUELOS/TRANSPORTE
+    const vuelosRaw = await loadVuelosInfo(grupo).catch(()=>[]);
+    const vuelos    = (vuelosRaw||[]).map(normalizeVuelo);
+
+    // 4) CONTACTOS (deduce de hoteles + proveedores de actividades)
+    const contactos = [];
+    // Hoteles
+    for (const h of (hoteles||[])){
+      contactos.push({
+        etiqueta: h.hotelNombre || h.hotel?.nombre || 'HOTEL',
+        persona:  (h.hotel?.contacto || '').toString(),
+        telefono: (h.hotel?.contactoTelefono || h.contactoTelefono || '').toString(),
+        email:    (h.hotel?.correo || h.hotel?.email || '').toString()
+      });
+    }
+    // Proveedores por actividad (busca ficha rápida)
+    const provSeen = new Set();
+    for (const ln of itinLines){
+      const provNom = (ln.proveedor||'').trim();
+      if (!provNom) continue;
+      const key = norm(provNom);
+      if (provSeen.has(key)) continue;
+      provSeen.add(key);
+      try{
+        const pd = await fetchProveedorByDestino((grupo.destino||'').toString().toUpperCase(), provNom);
+        if (pd){
+          contactos.push({
+            etiqueta: pd.proveedor || provNom,
+            persona:  pd.contacto || '',
+            telefono: pd.telefono || '',
+            email:    pd.correo || ''
+          });
+        }
+      }catch(_){}
+    }
+    // limpiar contactos vacíos y deduplicar por etiqueta
+    const uniq = new Map();
+    for (const c of contactos){
+      const k = norm(c.etiqueta||'');
+      if (!k) continue;
+      if (!uniq.has(k)) uniq.set(k, c);
+    }
+
+    // 5) Finanzas (si tienes helpers, si no, queda “sin abonos”)
+    let fin = null;
+    const haveLoadAbonos = (typeof loadAbonos === 'function');
+    if (haveLoadAbonos){
+      try{
+        const abonos = await loadAbonos(grupo.id);
+        const rows = [];
+        const tot = { CLP:0, USD:0, BRL:0, ARS:0 };
+        for (const a of (abonos||[])){
+          const fecha = dmy(toISO(a.fecha||''));   // 'DD-MM-YYYY'
+          const moneda= (a.moneda||'').toString().toUpperCase();
+          const valor = Number(a.valor||0);
+          if (tot[moneda]!=null) tot[moneda]+=valor;
+          rows.push({
+            fecha, asunto:(a.asunto||'').toString().toUpperCase(),
+            moneda, valor, medio:(a.medio||'')?.toString().toUpperCase()||'',
+            detalle: (a.detalle||'')?.toString()
+          });
+        }
+        fin = {
+          rows,
+          totales: tot,
+          totalCLP: Number(tot.CLP || 0) // (si quieres convertir USD/BRL/ARS a CLP aquí, hazlo)
+        };
+      }catch(_){/* ignora */}
+    }
+
+    // 6) Construye el texto completo
+    const text = buildPrintTextDespacho(grupo, {
+      itinLines,
+      hoteles,
+      vuelos,
+      contactos: Array.from(uniq.values()),
+      finanzas: fin
+    });
+
+    // 7) Escribe el bloque <pre> y actualiza cabecera pequeña (por si la usas)
+    const pre = document.getElementById('print-block');
     if (pre) pre.textContent = text || '';
 
-    // 2) Encabezado (metadatos)
+    // Encabezado mini (si lo estás mostrando arriba)
     const code    = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
     const paxPlan = paxOf(grupo);
     const paxReal = paxRealOf(grupo);
     const { A: A_real, E: E_real } = paxBreakdown(grupo);
+    const $ = (id)=>document.getElementById(id);
+    const up = (s)=> (s||'').toString().toUpperCase();
 
-    const $ = (id) => document.getElementById(id);
-    const up = (s) => (s||'').toString().toUpperCase();
-
-    const phGrupo  = $('ph-grupo');
-    const phMeta1  = $('ph-meta1');    // DESTINO / PROGRAMA
-    const phMeta2  = $('ph-meta2');    // CÓDIGO
-    const phFechas = $('ph-fechas');
-    const phPax    = $('ph-pax');
-
-    if (phGrupo)  phGrupo.textContent  = `GRUPO: ${up(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id)}`;
-    if (phMeta2)  phMeta2.textContent  = `CÓDIGO: ${code}`;
-    if (phMeta1)  phMeta1.textContent  = `DESTINO: ${up(grupo.destino||'—')}  ·  PROGRAMA: ${up(grupo.programa||'—')}`;
-    if (phFechas) phFechas.textContent = `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}`;
-    if (phPax)    phPax.textContent    = `PAX: PLAN ${paxPlan}` + (paxReal ? `  ·  REAL ${paxReal} (A:${A_real} · E:${E_real})` : '');
+    $('ph-grupo') && ( $('ph-grupo').textContent = `GRUPO: ${up(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id)}` );
+    $('ph-meta2') && ( $('ph-meta2').textContent = `CÓDIGO: ${code}` );
+    $('ph-meta1') && ( $('ph-meta1').textContent = `DESTINO: ${up(grupo.destino||'—')}  ·  PROGRAMA: ${up(grupo.programa||'—')}` );
+    $('ph-fechas')&& ( $('ph-fechas').textContent= `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}` );
+    $('ph-pax')   && ( $('ph-pax').textContent   = `PAX: ${paxPlan}` + (paxReal?`  ·  REAL ${paxReal} (A:${A_real} · E:${E_real})`:'') );
 
   }catch(e){
     console.error('[PRINT] preparePrintForGroup', e);
   }
 }
-
 /* ====== IMPRESIÓN DE DESPACHO (PDF por print) ====== */
 
 // Reúne una línea por actividad del itinerario con contacto de proveedor
