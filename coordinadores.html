@@ -258,7 +258,26 @@
       .btn.ok { background:#16a34a; color:#fff; }
       .btn.gray { background:#64748b; color:#fff; }
     }
-      
+
+    /* ===== IMPRESIÓN TEXTUAL SIMPLE ===== */
+    @media screen { 
+      #print-block { display: none; }
+    }
+    @media print {
+      /* Oculta todo menos el bloque de impresión */
+      body > *:not(#print-block) { display: none !important; }
+    
+      #print-block{
+        display:block !important;
+        white-space:pre-wrap;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+        font-size: 12pt;
+        line-height: 1.35;
+        margin: 0;
+        padding: 0;
+      }
+      @page { margin: 16mm; }
+    }   
   </style>
 </head>
 <body>
@@ -299,5 +318,7 @@
   </div>
 
   <script type="module" src="./coordinadores.js"></script>
+  <!-- Bloque de texto que solo aparece al imprimir -->
+  <pre id="print-block"></pre>
 </body>
 </html>
