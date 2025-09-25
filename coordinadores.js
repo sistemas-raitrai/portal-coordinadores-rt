@@ -2224,8 +2224,7 @@ function buildPrintTextDespacho(grupo, opts){
     out += `<div class="h2">DÍA ${idx+1} – ${formatDateReadable(f)}</div>\n`;
     const items = (byDate.get(f)||[]).slice().sort((a,b)=>(a.hora||'').localeCompare(b.hora||''));
     items.forEach(a=>{
-      const hora = (a.hora||'').trim();
-      out += (hora ? `${hora} ` : '') + `${a.actividad}\n`;
+      out += `${a.actividad}\n`;   // sin hora
     });
     out += '\n';
   });
@@ -2407,7 +2406,7 @@ async function collectItinLines(grupo){
 
         out.push({
           fechaISO: f,
-          hora: a?.horaInicio || '--:--',
+          hora: '',
           actividad: actName.toUpperCase(),
           proveedor: provTxt,
           contacto: [contacto, telefono, correo].filter(Boolean).join(' · '),
@@ -2551,7 +2550,6 @@ async function openPrintDespacho(g, w){
   const itinRows = (itin||[]).map(x => `
     <tr>
       <td>${dmy(x.fechaISO)}</td>
-      <td>${(x.hora||'--:--')}</td>
       <td>${(x.actividad||'').toString().toUpperCase()}</td>
       <td>${(x.proveedor||'').toString().toUpperCase()}</td>
       <td>${x.contacto||'—'}</td>
@@ -2564,7 +2562,7 @@ async function openPrintDespacho(g, w){
       <thead>
         <tr><th>FECHA</th><th>HORA</th><th>ACTIVIDAD</th><th>PROVEEDOR</th><th>CONTACTO</th><th>ESTADO</th></tr>
       </thead>
-      <tbody>${itinRows || '<tr><td colspan="6" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
+      <tbody>${itinRows || '<tr><td colspan="5" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
     </table>
   `;
 
