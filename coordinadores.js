@@ -503,19 +503,47 @@ function renderNavBar(){
   sel.onchange=async ()=>{ const v=sel.value||''; if(v==='all'){ state.filter={type:'all',value:null}; renderStatsFiltered(); sel.value=`trip:${state.idx}`; }
     else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; await renderOneGroup(state.ordenados[state.idx]); } };
 
+   console.log('[PRINT] state.is?', state.is);
+
    if (state.is){
-     const btn = p.querySelector('#btnPrintVch');
+     // ⚠️ Toma el botón por ID global para evitar problemas si no está dentro de #navPanel
+     const btn = document.getElementById('btnPrintVch');
      if (btn){
        btn.textContent = 'IMPRIMIR DESPACHO';
-       // btn.onclick = openPrintVouchersModal; // ← LEGACY: comentado a pedido
        btn.onclick = async () => {
          const g = state.ordenados[state.idx];
-         await openPrintDespacho(g);
+         // 1) ABRIR POPUP **YA** (sin ningún await antes) → evita bloqueo de pop-up
+         const w = window.open('', '_blank', 'noopener');
+         if (!w) {
+           alert('No se pudo abrir la ventana de impresión (popup bloqueado por el navegador).');
+           return;
+         }
+   
+         // Mensaje temporal mientras generamos el HTML final
+         try {
+           w.document.open('text/html');
+           w.document.write(`<!doctype html>
+             <html><head><meta charset="utf-8"></head>
+             <body style="font-family:system-ui,Arial,sans-serif">
+               <p style="margin:24px">Generando DESPACHO…</p>
+             </body></html>`);
+           w.document.close();
+         } catch (e) {
+           console.error('[PRINT] No se pudo escribir HTML temporal', e);
+         }
+   
+         // 2) Generar el despacho en esa misma ventana
+         try {
+           await openPrintDespacho(g, w);  // 👈 nota: ahora pasa la ventana como 2º argumento
+         } catch (e) {
+           console.error('[PRINT] Error al generar el despacho', e);
+           try { w.close(); } catch(_){}
+           alert('Error al generar el despacho. Revisa la consola.');
+         }
        };
      }
      // (el botón “crear alerta” ya se maneja en el panel de alertas)
    }
-}
 
 /* ====== VISTA GRUPO ====== */
 async function renderOneGroup(g, preferDate){
@@ -2044,8 +2072,12 @@ async function collectItinLines(grupo){
   return out;
 }
 
-async function openPrintDespacho(g){
-  if (!g){ alert('No hay viaje activo.'); return; }
+async function openPrintDespacho(g, w){
+  if (!g){
+    alert('No hay viaje activo.');
+    return;
+  }
+  console.log('[PRINT] Inicia generación', { grupoId: g.id });
 
   // ==== DATOS BASE ====
   const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
@@ -2054,19 +2086,41 @@ async function openPrintDespacho(g){
   const { A: A_real, E: E_real } = paxBreakdown(g);
   const fechasTxt = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
-  // Itinerario (líneas)
-  const itin = await collectItinLines(g);
+  // 1) Itinerario (líneas con proveedor/contacto)
+  console.time('[PRINT] collectItinLines');
+  const itin = await collectItinLines(g).catch((e)=>{ console.error(e); return []; });
+  console.timeEnd('[PRINT] collectItinLines');
 
-  // Finanzas: SOLO ABONOS (usa tu función existente loadAbonos)
+  // 2) Finanzas: ABONOS (defensivo si faltan helpers externos)
+  const haveLoadAbonos = (typeof loadAbonos === 'function');
+  const haveConv = (typeof convertirMoneda === 'function');
+
   let abonos = [];
-  try { abonos = await loadAbonos(g.id); } catch(_){}
+  if (haveLoadAbonos){
+    try {
+      console.time('[PRINT] loadAbonos');
+      abonos = await loadAbonos(g.id);
+      console.timeEnd('[PRINT] loadAbonos');
+    } catch (e) {
+      console.warn('[PRINT] loadAbonos falló:', e);
+      abonos = [];
+    }
+  } else {
+    console.warn('[PRINT] loadAbonos no definido. Se omiten abonos.');
+  }
+
+  const toCLP = async (valor, moneda) => {
+    if (!haveConv) return 0;
+    try { return await convertirMoneda(Number(valor||0), String(moneda||'CLP'), 'CLP'); }
+    catch(e){ console.warn('[PRINT] convertirMoneda falló:', e); return 0; }
+  };
+
   const abonosRows = [];
   for (const a of (abonos||[])){
     const fecha  = dmy(toISO(a.fecha||''));                 // fecha abono
-    const moneda = (a.moneda||'').toString().toUpperCase();  // CLP/USD/BRL/ARS
+    const moneda = (a.moneda||'').toString().toUpperCase(); // CLP/USD/BRL/ARS
     const valor  = Number(a.valor||0);
-    let clpEq    = 0;
-    try { clpEq = await convertirMoneda(valor, moneda, 'CLP'); } catch(_){ clpEq = 0; }
+    const clpEq  = await toCLP(valor, moneda);
     abonosRows.push({ fecha, asunto:(a.asunto||'').toString().toUpperCase(), moneda, valor, clp: clpEq });
   }
   const totalCLP = Math.round(abonosRows.reduce((s,x)=> s + Number(x.clp||0), 0));
@@ -2117,14 +2171,14 @@ async function openPrintDespacho(g){
     <div class="small">VIAJE: ${fechasTxt} · DESTINO: ${(g.destino||'—').toString().toUpperCase()} · PROGRAMA: ${(g.programa||'—').toString().toUpperCase()}</div>
   `;
 
-  const itinRows = itin.map(x => `
+  const itinRows = (itin||[]).map(x => `
     <tr>
       <td>${dmy(x.fechaISO)}</td>
       <td>${(x.hora||'--:--')}</td>
-      <td>${x.actividad}</td>
-      <td>${x.proveedor}</td>
+      <td>${(x.actividad||'').toString().toUpperCase()}</td>
+      <td>${(x.proveedor||'').toString().toUpperCase()}</td>
       <td>${x.contacto||'—'}</td>
-      <td>${x.estado||''}</td>
+      <td>${(x.estado||'').toString().toUpperCase()}</td>
     </tr>`).join('');
 
   const itinerario = `
@@ -2137,7 +2191,8 @@ async function openPrintDespacho(g){
     </table>
   `;
 
-  const finRows = abonosRows.map(r => `
+  // Si no hay loadAbonos, ocultamos la tabla de abonos para no confundir
+  const finRows = (abonosRows||[]).map(r => `
     <tr>
       <td>${r.fecha||'—'}</td>
       <td>${r.asunto||'—'}</td>
@@ -2146,7 +2201,7 @@ async function openPrintDespacho(g){
       <td class="right">${Math.round(r.clp||0).toLocaleString('es-CL')}</td>
     </tr>`).join('');
 
-  const finanzas = `
+  const finanzas = haveLoadAbonos ? `
     <h2>FINANZAS — ABONOS</h2>
     <table class="t-tight">
       <thead>
@@ -2157,7 +2212,7 @@ async function openPrintDespacho(g){
         <tr><th colspan="4" class="right">TOTAL CLP</th><th class="right">${totalCLP.toLocaleString('es-CL')}</th></tr>
       </tfoot>
     </table>
-  `;
+  ` : '';
 
   const html = `
     <!doctype html><html><head><meta charset="utf-8">${css}</head>
@@ -2165,27 +2220,28 @@ async function openPrintDespacho(g){
       ${infoGeneral}
       ${resumen}
       <div class="cut">${itinerario}</div>
-      <div class="cut">${finanzas}</div>
+      ${finanzas ? `<div class="cut">${finanzas}</div>` : ''}
       <div class="footer">RAITRAI — Despacho de Viaje. Para PDF usa “Guardar como PDF”.</div>
-      <script>window.addEventListener('load',()=>{ window.print(); setTimeout(()=>window.close(), 600); });</script>
+      <script>
+        window.addEventListener('load', ()=>{
+          try { window.print(); } catch(_) {}
+          setTimeout(()=>{ try{ window.close(); }catch(_){ } }, 600);
+        });
+      </script>
     </body></html>
   `;
 
-  const w = window.open('', '_blank', 'noopener');
-  if (!w){ alert('No se pudo abrir la ventana de impresión (popup bloqueado).'); return; }
-  w.document.open('text/html');
-  w.document.write(html);
-  w.document.close();
-}
-
-function formatCL(dt){
+  // 3) Escribir en la ventana ya abierta
   try{
-    return new Intl.DateTimeFormat('es-CL',{
-      timeZone:'America/Santiago',
-      year:'numeric',month:'2-digit',day:'2-digit',
-      hour:'2-digit',minute:'2-digit'
-    }).format(dt).toUpperCase();
-  }catch(_){ return dt.toLocaleString('es-CL').toUpperCase(); }
+    w.document.open('text/html');
+    w.document.write(html);
+    w.document.close();
+    console.log('[PRINT] HTML escrito en ventana.');
+  }catch(e){
+    console.error('[PRINT] No se pudo escribir el HTML final', e);
+    alert('No se pudo escribir el documento de impresión.');
+    try{ w.close(); }catch(_){}
+  }
 }
 
 // Busca proveedor en la ruta por DESTINO (según la actividad/servicio)
