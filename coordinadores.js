@@ -16,7 +16,7 @@ import { ref as sRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
 // === CORREO POR GAS (CONFIG) ===
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3MrdI310lJ8XqxqCgQyDpnYNJbEgO2nIBM5ZOYAlCdLhqGESPwHVB5b_SM-qRJVOs/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyjmjkknaQIxeyLQLjpWfj5mR1D_rLj2Sihntr7_gIBHszuHqq5wBSeiVBjLpOIGe44/exec';
 const GAS_KEY = '1GN4C10P4ST0RP1N0-P1N0P4ST0R1GN4C10';   // misma KEY que en Apps Script
 
 /* ====== UTILS TEXTO/FECHAS ====== */
@@ -2169,28 +2169,38 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
        <p><b>Observaciones:</b><br>${nota ? nota.replace(/\\n/g,'<br>') : '—'}</p>
        <p>— Enviado por Administración RT.</p>`;
 
-    try{
-      const res = await fetch(GAS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-RT-Key': GAS_KEY },
-        body: JSON.stringify({
-          to: proveedorEmail.toLowerCase(),
-          cc: 'operaciones@raitrai.cl',
-          subject: asunto,
-          htmlBody,
-          replyTo: 'operaciones@raitrai.cl'
-        })
-      });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'ERROR');
-
-      await setEstadoServicio(grupo, fechaISO, act, 'FINALIZADA', true);
-      showFlash('CORREO ENVIADO', 'ok');
-      document.getElementById('modalBack').style.display='none';
-    }catch(e){
-      console.error(e);
-      alert('No se pudo enviar el correo.');
-    }
+      try {
+        const res = await fetch(GAS_URL, {
+          method: 'POST',
+          mode: 'cors',
+          cache: 'no-store',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-RT-Key': GAS_KEY
+          },
+          body: JSON.stringify({
+            to: proveedorEmail.toLowerCase(),
+            cc: 'operaciones@raitrai.cl',
+            subject: asunto,
+            htmlBody,
+            replyTo: 'operaciones@raitrai.cl'
+          })
+        });
+      
+        // Lee JSON y valida
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.ok) {
+          throw new Error(json.error || `HTTP_${res.status}`);
+        }
+      
+        await setEstadoServicio(grupo, fechaISO, act, 'FINALIZADA', true);
+        showFlash('CORREO ENVIADO', 'ok');
+        document.getElementById('modalBack').style.display='none';
+      
+      } catch (e) {
+        console.error('[MAIL] Error', e);
+        alert('No se pudo enviar el correo.');
+      }
   };
 
   document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
