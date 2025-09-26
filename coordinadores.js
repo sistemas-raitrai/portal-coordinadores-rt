@@ -16,7 +16,7 @@ import { ref as sRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
 // === CORREO POR GAS (CONFIG) ===
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbxMi0V0lXllQmPLzcc1AOrTANWpyMJWIlOmCf1fdnf6k3ZWFwcuUVYCPtA4uu7yxgc3/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwRMaUfZ0gJq015HIJ0yKyqu6_rkfmBkOp3oQH0wh4RSpjNxYTxmAf55Pv9pXQ64fUy/exec';
 const GAS_KEY = '1GN4C10P4ST0RP1N0-P1N0P4ST0R1GN4C10';   // misma KEY que en Apps Script
 
 /* ====== UTILS TEXTO/FECHAS ====== */
