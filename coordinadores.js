@@ -2150,32 +2150,41 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
   `;
 
    document.getElementById('rtSendMail').onclick = async () => {
-     if (!proveedorEmail) { alert('No hay correo del proveedor. Completa su ficha.'); return; }
-   
-     const coordNom = (grupo.coordinadorNombre || '').toString().toUpperCase();
-     const nota = (document.getElementById('rt-nota-extra').value || '').trim();
-   
-     const htmlBody =
-       `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
-        <p>Confirmamos la asistencia para el servicio indicado:</p>
-        <ul>
-          <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
-          <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
-          <li><b>Grupo:</b> ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${code})</li>
-          <li><b>Destino / Programa:</b> ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}</li>
-          <li><b>Pax asistentes:</b> ${asis.paxFinal}</li>
-          <li><b>Coordinador(a):</b> ${coordNom || '—'}</li>
-        </ul>
-        <p><b>Observaciones:</b><br>${nota ? nota.replace(/\n/g,'<br>') : '—'}</p>
-        <p>— Enviado por Administración RT.</p>`;
+     console.group('[MAIL] Enviar');
+     const btn = document.getElementById('rtSendMail');
+     btn.disabled = true;
    
      try {
+       const to = (proveedorEmail || '').trim().toLowerCase();
+       console.log('[MAIL] to:', to);
+       if (!to) { alert('No hay correo del proveedor. Completa su ficha.'); return; }
+   
+       const coordNom = (grupo.coordinadorNombre || '').toString().toUpperCase();
+       const nota = (document.getElementById('rt-nota-extra').value || '').trim();
+   
+       const htmlBody =
+         `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
+          <p>Confirmamos la asistencia para el servicio indicado:</p>
+          <ul>
+            <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
+            <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
+            <li><b>Grupo:</b> ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})</li>
+            <li><b>Destino / Programa:</b> ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}</li>
+            <li><b>Pax asistentes:</b> ${asis.paxFinal}</li>
+            <li><b>Coordinador(a):</b> ${coordNom || '—'}</li>
+          </ul>
+          <p><b>Observaciones:</b><br>${nota ? nota.replace(/\n/g,'<br>') : '—'}</p>
+          <p>— Enviado por Administración RT.</p>`;
+   
+       console.time('[MAIL] fetch');
+       console.log('[MAIL] POST →', GAS_URL, { to, asunto });
+   
        const res = await fetch(GAS_URL, {
          method: 'POST',
          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita preflight
          body: JSON.stringify({
-           key: GAS_KEY,               // misma clave que en Apps Script
-           to: proveedorEmail.toLowerCase(),
+           key: GAS_KEY,
+           to,
            cc: 'operaciones@raitrai.cl',
            subject: asunto,
            htmlBody,
@@ -2183,16 +2192,33 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
          })
        });
    
-       const json = await res.json().catch(() => ({}));
-       if (!res.ok || !json.ok) throw new Error(json.error || `HTTP ${res.status}`);
+       console.timeEnd('[MAIL] fetch');
+       console.log('[MAIL] HTTP status:', res.status, res.statusText);
    
-       showFlash('CORREO ENVIADO');            // opcional
+       let raw = '';
+       try { raw = await res.text(); } catch(_) {}
+       console.log('[MAIL] raw body:', raw);
+   
+       let json = {};
+       try { json = raw ? JSON.parse(raw) : {}; } catch (e) { console.warn('[MAIL] JSON parse fail', e); }
+   
+       console.log('[MAIL] parsed json:', json);
+   
+       if (!res.ok || !json.ok) {
+         throw new Error(json.error || `HTTP ${res.status}`);
+       }
+   
+       showFlash('CORREO ENVIADO');
        document.getElementById('modalBack').style.display = 'none';
      } catch (e) {
-       console.error(e);
+       console.error('[MAIL] ERROR', e);
        alert('No se pudo enviar el correo.');
+     } finally {
+       btn.disabled = false;
+       console.groupEnd();
      }
    };
+
 }
 
 /* === IMPRESIÓN — helpers de formato === */
