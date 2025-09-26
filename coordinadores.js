@@ -273,6 +273,12 @@ function showFlash(msg, kind='ok'){
   }, 2200);
 }
 
+// === LOGS GLOBALES (poner una sola vez) ===
+if (typeof window !== 'undefined') {
+  window.addEventListener('error',  ev => console.error('[GLOBAL ERROR]', ev.message, ev.error));
+  window.addEventListener('unhandledrejection', ev => console.error('[PROMISE REJECTION]', ev.reason));
+}
+
 /* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
   if (!user){ location.href='index.html'; return; }
