@@ -15,6 +15,10 @@ import {
 import { ref as sRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
+// === CORREO POR GAS (CONFIG) ===
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3MrdI310lJ8XqxqCgQyDpnYNJbEgO2nIBM5ZOYAlCdLhqGESPwHVB5b_SM-qRJVOs/exec';
+const GAS_KEY = '1GN4C10P4ST0RP1N0-P1N0P4ST0R1GN4C10';   // misma KEY que en Apps Script
+
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
@@ -1567,7 +1571,10 @@ async function renderActs(grupo, fechaISO, cont){
       try {
         const servicio = await findServicio(grupo.destino, actName).catch(()=>null);
         const tipoRaw  = (servicio?.voucher || 'No Aplica').toString();
-        const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
+        const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO'
+           : /fisic/i.test(tipoRaw)    ? 'FISICO'
+           : /correo/i.test(tipoRaw)   ? 'CORREO'
+           : 'NOAPLICA';
         await openActividadModal(grupo, fechaISO, act, servicio, tipo);
       } catch(e) {
         console.error('openActividadModal error', e);
@@ -1636,27 +1643,50 @@ async function renderActs(grupo, fechaISO, cont){
       });
 
     // (2) Servicio / botón de voucher asíncrono
-    (async () => {
-      try {
-        const servicio = await findServicio(grupo.destino, actName);
-        const tipoRaw  = (servicio?.voucher || 'No Aplica').toString();
-        const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO' : (/fisic/i.test(tipoRaw) ? 'FISICO' : 'NOAPLICA');
-
-        if (tipo !== 'NOAPLICA') {
-          const wrap = div.querySelector('.btnVchWrap');
-          if (wrap) {
-            const btn = document.createElement('button');
-            btn.className = 'btn sec';
-            btn.textContent = 'FINALIZAR…';
-            btn.onclick = async () => { await openVoucherModal(grupo, fechaISO, act, servicio, tipo); };
-            wrap.replaceWith(btn);
+      // (2) Servicio / botón de voucher asíncrono
+      (async () => {
+        try {
+          const servicio = await findServicio(grupo.destino, actName);
+          const tipoRaw  = (servicio?.voucher || 'No Aplica').toString();
+          const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO'
+                     : /fisic/i.test(tipoRaw)    ? 'FISICO'
+                     : /correo/i.test(tipoRaw)   ? 'CORREO'
+                     : 'NOAPLICA';
+      
+          if (tipo !== 'NOAPLICA') {
+            const wrap = div.querySelector('.btnVchWrap');
+            if (wrap) {
+              const btn = document.createElement('button');
+              btn.className = 'btn sec';
+      
+              if (tipo === 'CORREO') {
+                btn.textContent = 'ENVIAR CORREO…';
+                btn.onclick = async () => {
+                  // intenta tomar correo directo del servicio o de la ficha del proveedor
+                  let provEmail = String(servicio?.correoProveedor || '').trim();
+                  if (!provEmail) {
+                    try {
+                      const prov = await fetchProveedorByDestino(
+                        (grupo.destino||'').toString().toUpperCase(),
+                        (servicio?.proveedor || act.proveedor || '').toString()
+                      );
+                      provEmail = String(prov?.correo || '').trim();
+                    } catch(_) {}
+                  }
+                  await openCorreoConfirmModal(grupo, fechaISO, act, provEmail);
+                };
+              } else {
+                btn.textContent = 'FINALIZAR…';
+                btn.onclick = async () => { await openVoucherModal(grupo, fechaISO, act, servicio, tipo); };
+              }
+      
+              wrap.replaceWith(btn);
+            }
           }
+        } catch (e) {
+          console.warn('findServicio falló', { destino: grupo.destino, act: actName, e });
         }
-      } catch (e) {
-        // Si falla la búsqueda del servicio, simplemente no mostramos botón
-        console.warn('findServicio falló', { destino: grupo.destino, act: actName, e });
-      }
-    })();
+      })();
   }
 }
 
@@ -2091,6 +2121,80 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   }
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
   back.style.display='flex';
+}
+
+async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
+  // exige asistencia guardada
+  const asis = getSavedAsistencia(grupo, fechaISO, act.actividad);
+  if (asis?.paxFinal == null) { alert('Primero guarda la ASISTENCIA (PAX).'); return; }
+
+  const back  = document.getElementById('modalBack');
+  const title = document.getElementById('modalTitle');
+  const body  = document.getElementById('modalBody');
+
+  const code = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
+  const asunto =
+    `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${code})`;
+
+  title.textContent = 'ENVIAR CONFIRMACIÓN POR CORREO';
+
+  body.innerHTML = `
+    <div class="meta"><strong>PARA:</strong> ${(proveedorEmail||'—').toUpperCase()}</div>
+    <div class="meta"><strong>CC:</strong> OPERACIONES@RAITRAI.CL</div>
+    <div class="meta"><strong>ASUNTO:</strong> ${asunto}</div>
+    <div class="meta">NOTA ADICIONAL (opcional):</div>
+    <textarea id="rt-nota-extra" placeholder="Escribe una nota corta…"></textarea>
+    <div class="rowflex" style="margin-top:.6rem">
+      <button id="rtSendMail" class="btn ok">ENVIAR</button>
+    </div>
+  `;
+
+  document.getElementById('rtSendMail').onclick = async () => {
+    if (!proveedorEmail) { alert('No hay correo del proveedor. Completa su ficha.'); return; }
+
+    const coordNom = (grupo.coordinadorNombre || '').toString().toUpperCase();
+    const nota = (document.getElementById('rt-nota-extra').value || '').trim();
+
+    const htmlBody =
+      `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
+       <p>Confirmamos la asistencia para el servicio indicado:</p>
+       <ul>
+         <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
+         <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
+         <li><b>Grupo:</b> ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${code})</li>
+         <li><b>Destino / Programa:</b> ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}</li>
+         <li><b>Pax asistentes:</b> ${asis.paxFinal}</li>
+         <li><b>Coordinador(a):</b> ${coordNom || '—'}</li>
+       </ul>
+       <p><b>Observaciones:</b><br>${nota ? nota.replace(/\\n/g,'<br>') : '—'}</p>
+       <p>— Enviado por Administración RT.</p>`;
+
+    try{
+      const res = await fetch(GAS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-RT-Key': GAS_KEY },
+        body: JSON.stringify({
+          to: proveedorEmail.toLowerCase(),
+          cc: 'operaciones@raitrai.cl',
+          subject: asunto,
+          htmlBody,
+          replyTo: 'operaciones@raitrai.cl'
+        })
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || 'ERROR');
+
+      await setEstadoServicio(grupo, fechaISO, act, 'FINALIZADA', true);
+      showFlash('CORREO ENVIADO', 'ok');
+      document.getElementById('modalBack').style.display='none';
+    }catch(e){
+      console.error(e);
+      alert('No se pudo enviar el correo.');
+    }
+  };
+
+  document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
+  back.style.display = 'flex';
 }
 
 /* === IMPRESIÓN — helpers de formato === */
