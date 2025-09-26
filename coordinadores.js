@@ -2149,48 +2149,50 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
     </div>
   `;
 
-  document.getElementById('rtSendMail').onclick = async () => {
-    if (!proveedorEmail) { alert('No hay correo del proveedor. Completa su ficha.'); return; }
-
-    const coordNom = (grupo.coordinadorNombre || '').toString().toUpperCase();
-    const nota = (document.getElementById('rt-nota-extra').value || '').trim();
-
-    const htmlBody =
-      `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
-       <p>Confirmamos la asistencia para el servicio indicado:</p>
-       <ul>
-         <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
-         <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
-         <li><b>Grupo:</b> ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${code})</li>
-         <li><b>Destino / Programa:</b> ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}</li>
-         <li><b>Pax asistentes:</b> ${asis.paxFinal}</li>
-         <li><b>Coordinador(a):</b> ${coordNom || '—'}</li>
-       </ul>
-       <p><b>Observaciones:</b><br>${nota ? nota.replace(/\\n/g,'<br>') : '—'}</p>
-       <p>— Enviado por Administración RT.</p>`;
-
-      try {
-         const res = await fetch(GAS_URL, {
-           method: 'POST',
-           // 👇 TEXTO PLANO para evitar preflight; SIN header custom
-           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-           body: JSON.stringify({
-             key: GAS_KEY,                                     // la clave va en el body
-             to: proveedorEmail.toLowerCase(),
-             cc: 'operaciones@raitrai.cl',
-             subject: asunto,
-             htmlBody,
-             replyTo: 'operaciones@raitrai.cl'
-           })
-         });
-      
-         const json = await res.json();
-         if (!json.ok) throw new Error(json.error || 'ERROR');
-  };   
-
-  document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
-  back.style.display = 'flex';
-}
+   document.getElementById('rtSendMail').onclick = async () => {
+     if (!proveedorEmail) { alert('No hay correo del proveedor. Completa su ficha.'); return; }
+   
+     const coordNom = (grupo.coordinadorNombre || '').toString().toUpperCase();
+     const nota = (document.getElementById('rt-nota-extra').value || '').trim();
+   
+     const htmlBody =
+       `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
+        <p>Confirmamos la asistencia para el servicio indicado:</p>
+        <ul>
+          <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
+          <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
+          <li><b>Grupo:</b> ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${code})</li>
+          <li><b>Destino / Programa:</b> ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}</li>
+          <li><b>Pax asistentes:</b> ${asis.paxFinal}</li>
+          <li><b>Coordinador(a):</b> ${coordNom || '—'}</li>
+        </ul>
+        <p><b>Observaciones:</b><br>${nota ? nota.replace(/\n/g,'<br>') : '—'}</p>
+        <p>— Enviado por Administración RT.</p>`;
+   
+     try {
+       const res = await fetch(GAS_URL, {
+         method: 'POST',
+         headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita preflight
+         body: JSON.stringify({
+           key: GAS_KEY,               // misma clave que en Apps Script
+           to: proveedorEmail.toLowerCase(),
+           cc: 'operaciones@raitrai.cl',
+           subject: asunto,
+           htmlBody,
+           replyTo: 'operaciones@raitrai.cl'
+         })
+       });
+   
+       const json = await res.json().catch(() => ({}));
+       if (!res.ok || !json.ok) throw new Error(json.error || `HTTP ${res.status}`);
+   
+       showFlash('CORREO ENVIADO');            // opcional
+       document.getElementById('modalBack').style.display = 'none';
+     } catch (e) {
+       console.error(e);
+       alert('No se pudo enviar el correo.');
+     }
+   };
 
 /* === IMPRESIÓN — helpers de formato === */
 function formatDateReadable(isoStr){
