@@ -37,13 +37,20 @@ function buildMailto({ to, cc, subject, htmlBody }) {
 
 async function sendMailViaGAS(payload, { retries = 1 } = {}) {
   const attempt = async () => {
+     
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), MAIL_TIMEOUT_MS);
-
+    // completa el payload con la CLAVE y defaults seguros
+    const finalPayload = {
+       key: GAS_KEY,                       // 👈 tu GAS la acepta por body.key
+       replyTo: payload.replyTo ?? 'operaciones@raitrai.cl',
+       ...payload
+    };
     const res = await fetch(GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple → sin preflight
       body: JSON.stringify(payload),
+      body: JSON.stringify(finalPayload),
       signal: ctrl.signal,
       mode: 'cors',
       credentials: 'omit',
