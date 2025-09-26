@@ -19,6 +19,65 @@ import { ref as sRef, uploadBytes, getDownloadURL }
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwRMaUfZ0gJq015HIJ0yKyqu6_rkfmBkOp3oQH0wh4RSpjNxYTxmAf55Pv9pXQ64fUy/exec';
 const GAS_KEY = '1GN4C10P4ST0RP1N0-P1N0P4ST0R1GN4C10';   // misma KEY que en Apps Script
 
+// === MAIL HELPERS (GAS) ============================================
+const MAIL_TIMEOUT_MS = 15000;
+
+function buildMailto({ to, cc, subject, htmlBody }) {
+  // Versión texto plano rápida para fallback (quita tags simples)
+  const text = htmlBody
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .trim();
+  const qp = encodeURIComponent;
+  let url = `mailto:${encodeURIComponent(to)}?subject=${qp(subject)}&body=${qp(text)}`;
+  if (cc) url += `&cc=${encodeURIComponent(cc)}`;
+  return url;
+}
+
+async function sendMailViaGAS(payload, { retries = 1 } = {}) {
+  const attempt = async () => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), MAIL_TIMEOUT_MS);
+
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple → sin preflight
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store'
+    }).catch((e) => { throw e; });
+
+    clearTimeout(t);
+
+    let raw = '';
+    try { raw = await res.text(); } catch (_) {}
+
+    // A veces GAS responde text/html; intentamos parsear igual
+    let json = {};
+    try { json = raw ? JSON.parse(raw) : {}; } catch (_) {
+      // si no es JSON, intentemos detectar “ok” textual
+      if (/ok\b/i.test(raw)) json = { ok: true };
+    }
+
+    if (!res.ok || !json.ok) {
+      const msg = json.error || `HTTP ${res.status} ${res.statusText || ''} — ${raw?.slice?.(0, 200) || ''}`;
+      throw new Error(msg);
+    }
+    return json;
+  };
+
+  try {
+    return await attempt();
+  } catch (e) {
+    if (retries > 0) return attempt();
+    throw e;
+  }
+}
+
+
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
@@ -2155,6 +2214,7 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
     </div>
   `;
 
+   // === MAIL PATCH START ===
    document.getElementById('rtSendMail').onclick = async () => {
      console.group('[MAIL] Enviar');
      const btn = document.getElementById('rtSendMail');
@@ -2168,6 +2228,9 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
        const coordNom = (grupo.coordinadorNombre || '').toString().toUpperCase();
        const nota = (document.getElementById('rt-nota-extra').value || '').trim();
    
+       const asunto =
+         `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})`;
+   
        const htmlBody =
          `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
           <p>Confirmamos la asistencia para el servicio indicado:</p>
@@ -2176,55 +2239,73 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
             <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
             <li><b>Grupo:</b> ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})</li>
             <li><b>Destino / Programa:</b> ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}</li>
-            <li><b>Pax asistentes:</b> ${asis.paxFinal}</li>
+            <li><b>Pax asistentes:</b> ${getSavedAsistencia(grupo, fechaISO, act.actividad)?.paxFinal ?? '—'}</li>
             <li><b>Coordinador(a):</b> ${coordNom || '—'}</li>
           </ul>
           <p><b>Observaciones:</b><br>${nota ? nota.replace(/\n/g,'<br>') : '—'}</p>
           <p>— Enviado por Administración RT.</p>`;
    
+       // visual
+       const oldTxt = btn.textContent;
+       btn.textContent = 'ENVIANDO…';
+   
+       // Llamada robusta a GAS
+       const payload = {
+         key: GAS_KEY,
+         to,
+         cc: 'operaciones@raitrai.cl',
+         subject: asunto,
+         htmlBody,
+         replyTo: 'operaciones@raitrai.cl'
+       };
+   
        console.time('[MAIL] fetch');
-       console.log('[MAIL] POST →', GAS_URL, { to, asunto });
-   
-       const res = await fetch(GAS_URL, {
-         method: 'POST',
-         headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita preflight
-         body: JSON.stringify({
-           key: GAS_KEY,
-           to,
-           cc: 'operaciones@raitrai.cl',
-           subject: asunto,
-           htmlBody,
-           replyTo: 'operaciones@raitrai.cl'
-         })
-       });
-   
+       const out = await sendMailViaGAS(payload, { retries: 0 });
        console.timeEnd('[MAIL] fetch');
-       console.log('[MAIL] HTTP status:', res.status, res.statusText);
-   
-       let raw = '';
-       try { raw = await res.text(); } catch(_) {}
-       console.log('[MAIL] raw body:', raw);
-   
-       let json = {};
-       try { json = raw ? JSON.parse(raw) : {}; } catch (e) { console.warn('[MAIL] JSON parse fail', e); }
-   
-       console.log('[MAIL] parsed json:', json);
-   
-       if (!res.ok || !json.ok) {
-         throw new Error(json.error || `HTTP ${res.status}`);
-       }
+       console.log('[MAIL] OK:', out);
    
        showFlash('CORREO ENVIADO');
        document.getElementById('modalBack').style.display = 'none';
      } catch (e) {
        console.error('[MAIL] ERROR', e);
-       alert('No se pudo enviar el correo.');
+   
+       // Fallback: abrir cliente de correo del usuario
+       const useMailto = confirm('No se pudo enviar por servidor.\n¿Quieres abrir tu correo para enviarlo manualmente?');
+       if (useMailto) {
+         const mailto = buildMailto({
+           to: (proveedorEmail || '').trim(),
+           cc: 'operaciones@raitrai.cl',
+           subject: document.querySelector('#modalBody .meta:nth-child(3)')?.textContent?.replace('ASUNTO: ','') || 'CONFIRMACIÓN DE ASISTENCIA',
+           htmlBody: document.querySelector('#modalBody .meta + textarea') ? 
+             // rehacemos el mismo cuerpo si hace falta
+             (()=>{
+               const nota = (document.getElementById('rt-nota-extra').value || '').trim();
+               return (
+                 `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
+                  <p>Confirmamos la asistencia para el servicio indicado:</p>
+                  <ul>
+                    <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
+                    <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
+                    <li><b>Grupo:</b> ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})</li>
+                    <li><b>Destino / Programa:</b> ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}</li>
+                    <li><b>Pax asistentes:</b> ${getSavedAsistencia(grupo, fechaISO, act.actividad)?.paxFinal ?? '—'}</li>
+                  </ul>
+                  <p><b>Observaciones:</b><br>${nota ? nota.replace(/\n/g,'<br>') : '—'}</p>
+                  <p>— Enviado por Administración RT.</p>`
+               );
+             })() : ''
+         });
+         window.location.href = mailto;
+       } else {
+         alert('No se pudo enviar el correo.');
+       }
      } finally {
        btn.disabled = false;
+       btn.textContent = 'ENVIAR';
        console.groupEnd();
      }
    };
-
+   // === MAIL PATCH END ===
 }
 
 /* === IMPRESIÓN — helpers de formato === */
