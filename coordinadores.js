@@ -2193,6 +2193,7 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
        alert('No se pudo enviar el correo.');
      }
    };
+}
 
 /* === IMPRESIÓN — helpers de formato === */
 function formatDateReadable(isoStr){
