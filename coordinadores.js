@@ -35,52 +35,73 @@ function buildMailto({ to, cc, subject, htmlBody }) {
   return url;
 }
 
+// === MAIL HELPERS (GAS) ============================================
+const MAIL_TIMEOUT_MS = 15000;
+
+function buildMailto({ to, cc, subject, htmlBody }) {
+  const text = htmlBody
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .trim();
+  const qp = encodeURIComponent;
+  let url = `mailto:${encodeURIComponent(to)}?subject=${qp(subject)}&body=${qp(text)}`;
+  if (cc) url += `&cc=${encodeURIComponent(cc)}`;
+  return url;
+}
+
 async function sendMailViaGAS(payload, { retries = 1 } = {}) {
-  const attempt = async () => {
+  // Siempre mandamos origin tanto en query como en body (GAS no puede leer headers)
+  const qp  = encodeURIComponent;
+  const url = `${GAS_URL}?origin=${qp(location.origin)}&key=${qp(GAS_KEY)}`;
+
+  const finalPayload = {
+    key: GAS_KEY,
+    origin: location.origin,                 // 👈 IMPORTANTE para tu whitelist del GAS
+    replyTo: payload.replyTo ?? 'operaciones@raitrai.cl',
+    ...payload
+  };
+
+  // 1) Intento "cors" (si el webapp devolviera ACAO alguna vez)
+  try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), MAIL_TIMEOUT_MS);
 
-    // payload final con clave + defaults
-    const finalPayload = {
-      key: GAS_KEY,
-      replyTo: payload.replyTo ?? 'operaciones@raitrai.cl',
-      origin: location.origin,
-      ...payload
-    };
-
-    const res = await fetch(GAS_URL, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple → sin preflight
       body: JSON.stringify(finalPayload),
-      signal: ctrl.signal,
       mode: 'cors',
       credentials: 'omit',
-      cache: 'no-store'
-    }).catch((e) => { throw e; });
+      cache: 'no-store',
+      signal: ctrl.signal
+    });
 
     clearTimeout(t);
 
-    let raw = '';
-    try { raw = await res.text(); } catch (_) {}
-
-    // GAS a veces responde text/html; tratamos de parsear
+    const raw = await res.text().catch(() => '');
     let json = {};
-    try { json = raw ? JSON.parse(raw) : {}; } catch (_) {
-      if (/ok\b/i.test(raw)) json = { ok: true };
-    }
+    try { json = raw ? JSON.parse(raw) : {}; } catch (_) {}
+    if (res.ok && json.ok) return json;
 
-    if (!res.ok || !json.ok) {
-      const msg = json.error || `HTTP ${res.status} ${res.statusText || ''} — ${raw?.slice?.(0, 200) || ''}`;
-      throw new Error(msg);
-    }
-    return json;
-  };
-
-  try {
-    return await attempt();
+    throw new Error(json.error || `HTTP ${res.status} ${res.statusText || ''}`);
   } catch (e) {
-    if (retries > 0) return sendMailViaGAS(payload, { retries: retries - 1 });
-    throw e;
+    // 2) Fallback "no-cors": el navegador no exigirá CORS y la petición llega al GAS.
+    // No podemos leer la respuesta (opaque), así que si no explota la red lo damos por OK.
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(finalPayload),
+        mode: 'no-cors',
+        credentials: 'omit',
+        cache: 'no-store'
+      });
+      return { ok: true, opaque: true };
+    } catch (e2) {
+      if (retries > 0) return sendMailViaGAS(payload, { retries: retries - 1 });
+      throw e2;
+    }
   }
 }
 
