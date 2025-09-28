@@ -2186,236 +2186,121 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
     document.getElementById('vchOk').onclick   =()=> setEstadoServicio(g,fechaISO,act,'FINALIZADA', true);
     document.getElementById('vchPend').onclick =()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE',  true);
 
-   } else if (tipo === 'CORREO') {
-     // === SOLUCIÓN TEMPORAL: MAILTO + MARCAR COMO ENVIADA (sin envío automático) ===
-   
-     // 1) Exige PAX guardados (declaración de asistencia)
-     const asis = getSavedAsistencia(g, fechaISO, act.actividad);
-     if (asis?.paxFinal == null) { alert('PRIMERO GUARDA LA ASISTENCIA (PAX).'); return; }
-   
-     // 2) Intentar prellenar correo del proveedor
-     let provEmail = String(servicio?.correoProveedor || '').trim();
-     if (!provEmail) {
-       try {
-         const prov = await findProveedorDocByDestino(
-           (g.destino || '').toString().toUpperCase(),
-           (servicio?.proveedor || act.proveedor || '').toString()
-         );
-         provEmail = String(prov?.correo || prov?.email || '').trim();
-       } catch(_) {}
-     }
-   
-     // 3) Texto del correo (asunto + cuerpo) — formato simple, apto para móvil
-     const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
-     const actividadTXT  = (act.actividad||'').toString().toUpperCase();
-     const grupoTXT      = (g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase();
-     const destinoTXT    = (g.destino||'—').toString().toUpperCase();
-     const programaTXT   = (g.programa||'—').toString().toUpperCase();
-     const fechaTXT      = dmy(fechaISO);
-     const paxTXT        = (asis?.paxFinal ?? '—');
-     const coordTXT      = (g.coordinadorNombre || '—').toString().toUpperCase();
-   
-     const asunto = `CONFIRMACIÓN DE ASISTENCIA — ${actividadTXT} — ${fechaTXT} — ${grupoTXT} (${code})`;
-     const cuerpoPlano =
-   `ESTIMADOS ${ (act.proveedor||'PROVEEDOR').toString().toUpperCase() }:
-   
-   CONFIRMAMOS LA ASISTENCIA PARA EL SERVICIO INDICADO:
-   
-   • ACTIVIDAD: ${actividadTXT}
-   • FECHA: ${fechaTXT}
-   • GRUPO: ${grupoTXT} (${code})
-   • DESTINO / PROGRAMA: ${destinoTXT} / ${programaTXT}
-   • PAX ASISTENTES: ${paxTXT}
-   • COORDINADOR(A): ${coordTXT}
-   
-   OBSERVACIONES:
-   —`;
-   
-     // 4) Estado inicial de "correo enviado" (por si alguien ya lo marcó antes)
-     const actKey = slug(act.actividad || 'actividad');
-     const correoYaEnviado = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
-   
-     // 5) UI del modal
-     body.innerHTML = `
-       ${renderVoucherHTMLSync(g,fechaISO,act,null,false)}
-       <div class="meta" style="margin-top:.5rem"><strong>CONFIGURAR CORREO (SE ABRE TU APP DE MAIL)</strong></div>
-       <div class="rowflex" style="gap:.4rem;align-items:center;margin:.25rem 0 .25rem 0">
-         <input id="rtMailTo" type="email" placeholder="PARA" value="${(provEmail||'')}" style="flex:1"/>
-         <input id="rtMailCc" type="email" placeholder="CC" value="operaciones@raitrai.cl" style="flex:1"/>
-       </div>
-       <input id="rtMailSubj" type="text" placeholder="ASUNTO" value="${asunto.replace(/"/g,'&quot;')}" />
-       <textarea id="rtMailBody" placeholder="CUERPO (SE PUEDE EDITAR ANTES DE ENVIAR)" style="margin-top:.4rem;height:140px">${cuerpoPlano}</textarea>
-   
-       <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
-         <button id="rtAbrirMail"   class="btn ok">ABRIR CORREO</button>
-         <button id="rtMarkSent"    class="btn sec">MARCAR COMO ENVIADA</button>
-         <button id="rtFinalizar"   class="btn warn" ${correoYaEnviado ? '' : 'disabled title="PRIMERO MARCA EL CORREO COMO ENVIADO"'}>
-           FINALIZAR ACTIVIDAD
-         </button>
-         <button id="vchPend" class="btn">PENDIENTE</button>
-       </div>
-       <div class="meta muted">MÓVIL: “ABRIR CORREO” usa <code>mailto:</code> y rellena tu app (GMAIL / MAIL) con tu CUENTA ACTIVA.</div>
-     `;
-   
-     // 6) Handlers
-     const $to     = document.getElementById('rtMailTo');
-     const $cc     = document.getElementById('rtMailCc');
-     const $subj   = document.getElementById('rtMailSubj');
-     const $body   = document.getElementById('rtMailBody');
-     const $open   = document.getElementById('rtAbrirMail');
-     const $mark   = document.getElementById('rtMarkSent');
-     const $fin    = document.getElementById('rtFinalizar');
-   
-     // 6.a) ABRIR CORREO (mailto)
-     $open.onclick = () => {
-       const to = ($to.value||'').trim();
-       if (!to) { alert('INGRESA UN DESTINATARIO (PARA).'); return; }
-       const mailto = buildMailto({ to, cc: ($cc.value||'').trim(), subject: ($subj.value||'').trim(), htmlBody: ($body.value||'').trim() });
-       // En móvil funciona bien con location.href; en desktop también
-       window.location.href = mailto;
-     };
-   
-     // 6.b) MARCAR COMO ENVIADA → guarda en Firestore y registra aviso
-     $mark.onclick = async () => {
-       const to = ($to.value||'').trim();
-       if (!to) { alert('COMPLETA EL CORREO DEL PROVEEDOR.'); return; }
-       try {
-         const refGrupo = doc(db,'grupos', g.id);
-         const payload  = {};
-         payload[`serviciosEstado.${fechaISO}.${actKey}.correo`] = { estado:'ENVIADA', enviadaAt: serverTimestamp() };
-         await updateDoc(refGrupo, payload);
-   
-         // espejo local (para habilitar botones sin recargar)
-         (g.serviciosEstado ||= {});
-         (g.serviciosEstado[fechaISO] ||= {});
-         (g.serviciosEstado[fechaISO][actKey] ||= {});
-         g.serviciosEstado[fechaISO][actKey].correo = { estado:'ENVIADA', enviadaAt: new Date() };
-   
-         // bitácora / alerta operativa
-         try {
-           await appendViajeLog(
-             g.id,
-             'DECLARACION_CORREO',
-             `DECLARACIÓN ENVIADA — ${actividadTXT} — ${fechaTXT} — PAX:${paxTXT}`,
-             { actividad: actividadTXT, fecha: fechaTXT, pax: paxTXT }
-           );
-           await addDoc(collection(db,'alertas'),{
-             audience:'',
-             mensaje: `DECLARACIÓN ENVIADA — ${actividadTXT} — ${fechaTXT} — PAX:${paxTXT}`,
-             createdAt: serverTimestamp(),
-             createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() },
-             readBy:{},
-             groupInfo:{
-               grupoId:g.id,
-               nombre:(g.nombreGrupo||g.aliasGrupo||g.id),
-               code: (g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):''),
-               destino:(g.destino||null),
-               programa:(g.programa||null),
-               fechaActividad:fechaISO,
-               actividad: actividadTXT
-             }
-           });
-           await renderGlobalAlerts();
-         } catch(_) {}
-   
-         showFlash('CORREO MARCADO COMO ENVIADO');
-         if ($fin) { $fin.disabled = false; $fin.removeAttribute('title'); }
-       } catch (e) {
-         console.error('Error al marcar correo ENVIADA', e);
-         alert('NO SE PUDO GUARDAR EL ESTADO DEL CORREO.');
-       }
-     };
-   
-     // 6.c) FINALIZAR ACTIVIDAD (solo si hay PAX y correo ENVIADA)
-     $fin.onclick = async () => {
-       const paxOk = (getSavedAsistencia(g, fechaISO, act.actividad)?.paxFinal ?? null) != null;
-       const correoOk = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
-       if (!paxOk)      { alert('FALTA DECLARAR LA ASISTENCIA (PAX).'); return; }
-       if (!correoOk)   { alert('PRIMERO MARCA EL CORREO COMO ENVIADO.'); return; }
-       await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
-       document.getElementById('modalBack').style.display='none';
-     };
-   
-     // 6.d) Dejar como PENDIENTE
-     document.getElementById('vchPend').onclick = () =>
-       setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
+} else if (tipo === 'CORREO') {
+  // ——— EXIGE ASISTENCIA GUARDADA ———
+  const asis = getSavedAsistencia(g, fechaISO, act.actividad);
+  if (asis?.paxFinal == null) { alert('PRIMERO GUARDA LA ASISTENCIA (PAX).'); return; }
 
+  // ——— INTENTAR PRELLENAR CORREO DEL PROVEEDOR ———
+  let provEmail = String(servicio?.correoProveedor || '').trim();
+  if (!provEmail) {
+    try {
+      const prov = await findProveedorDocByDestino(
+        (g.destino || '').toString().toUpperCase(),
+        (servicio?.proveedor || act.proveedor || '').toString()
+      );
+      provEmail = String(prov?.correo || prov?.email || '').trim();
+    } catch(_) {}
+  }
 
-    const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
-    const asunto =
-      `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase()} (${code})`;
-    const coordNom = (g.coordinadorNombre || '').toString().toUpperCase();
+  // ——— DATOS PARA EL CORREO ———
+  const code        = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
+  const actividadTX = (act.actividad||'').toString().toUpperCase();
+  const grupoTX     = (g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase();
+  const destinoTX   = (g.destino||'—').toString().toUpperCase();
+  const programaTX  = (g.programa||'—').toString().toUpperCase();
+  const fechaTX     = dmy(fechaISO);
+  const paxTX       = (asis?.paxFinal ?? '—');
+  const coordTX     = (g.coordinadorNombre || '—').toString().toUpperCase();
 
-    body.innerHTML = `
-      ${voucherHTML}
-      <div class="meta" style="margin-top:.5rem"><strong>CONFIGURAR CORREO</strong></div>
-      <div class="rowflex" style="gap:.4rem;align-items:center;margin:.25rem 0 .25rem 0">
-        <input id="mailTo" type="email" placeholder="PARA" value="${(provEmail||'')}" style="flex:1"/>
-        <input id="mailCc" type="email" placeholder="CC" value="operaciones@raitrai.cl" style="flex:1"/>
-      </div>
-      <input id="mailSubj" type="text" placeholder="ASUNTO" value="${asunto.replace(/"/g,'&quot;')}" />
-      <textarea id="mailNota" placeholder="NOTA ADICIONAL (opcional)" style="margin-top:.4rem"></textarea>
-      <div class="rowflex" style="margin-top:.6rem">
-        <button id="mailSend" class="btn ok">ENVIAR Y FINALIZAR</button>
-        <button id="vchPend" class="btn warn">PENDIENTE</button>
-      </div>
-      <div class="meta muted">TIP: SI FALLA EL SERVIDOR, SE OFRECERÁ ABRIR TU CLIENTE DE CORREO (MAILTO).</div>
-    `;
+  const subject = `CONFIRMACIÓN DE ASISTENCIA — ${actividadTX} — ${fechaTX} — ${grupoTX} (${code})`;
 
-    document.getElementById('mailSend').onclick = async () => {
-      const to = (document.getElementById('mailTo').value || '').trim();
-      const cc = (document.getElementById('mailCc').value || '').trim();
-      const subject = (document.getElementById('mailSubj').value || '').trim();
-      const nota = (document.getElementById('mailNota').value || '').trim();
+  // Texto por defecto (editable). Lo paso a plano para textarea.
+  const defaultHtml =
+    `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
+     <p>Confirmamos la asistencia para el servicio indicado:</p>
+     <ul>
+       <li><b>Actividad:</b> ${actividadTX}</li>
+       <li><b>Fecha:</b> ${fechaTX}</li>
+       <li><b>Grupo:</b> ${grupoTX} (${code})</li>
+       <li><b>Destino / Programa:</b> ${destinoTX} / ${programaTX}</li>
+       <li><b>Pax asistentes:</b> ${paxTX}</li>
+       <li><b>Coordinador(a):</b> ${coordTX}</li>
+     </ul>
+     <p><b>Observaciones:</b><br>—</p>
+     <p>— Enviado por Administración RT.</p>`;
 
-      if (!to) { alert('INGRESA UN DESTINATARIO (PARA).'); return; }
+  body.innerHTML = `
+    ${voucherHTML}
+    <div class="meta" style="margin-top:.5rem"><strong>CONFIGURAR CORREO</strong></div>
+    <div class="rowflex" style="gap:.4rem;align-items:center;margin:.25rem 0 .25rem 0">
+      <input id="rtMailTo" type="email" placeholder="PARA" value="${(provEmail||'')}" style="flex:1"/>
+      <input id="rtMailCc" type="email" placeholder="CC" value="operaciones@raitrai.cl" style="flex:1"/>
+    </div>
+    <input id="rtMailSubj" type="text" placeholder="ASUNTO" value="${subject.replace(/"/g,'&quot;')}" />
+    <textarea id="rtMailBody" placeholder="CUERPO (SE PUEDE EDITAR ANTES DE ENVIAR)" style="margin-top:.4rem;height:140px">${
+      defaultHtml.replace(/<br\s*\/?>/gi,'\n').replace(/<[^>]+>/g,'')
+    }</textarea>
 
-      const htmlBody =
-        `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
-         <p>Confirmamos la asistencia para el servicio indicado:</p>
-         <ul>
-           <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
-           <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
-           <li><b>Grupo:</b> ${(g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase()} (${code})</li>
-           <li><b>Destino / Programa:</b> ${(g.destino||'—').toString().toUpperCase()} / ${(g.programa||'—').toString().toUpperCase()}</li>
-           <li><b>Pax asistentes:</b> ${getSavedAsistencia(g, fechaISO, act.actividad)?.paxFinal ?? '—'}</li>
-           <li><b>Coordinador(a):</b> ${coordNom || '—'}</li>
-         </ul>
-         <p><b>Observaciones:</b><br>${nota ? nota.replace(/\n/g,'<br>') : '—'}</p>
-         <p>— Enviado por Administración RT.</p>`;
+    <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
+      <button id="rtSendMail" class="btn ok">ENVIAR</button>
+      <button id="rtOpenMail" class="btn sec">ABRIR CORREO</button>
+      <button id="vchPend" class="btn warn">PENDIENTE</button>
+    </div>
+    <div class="meta muted">Si el servidor falla, podrás abrir tu app de correo con todo prellenado.</div>
+  `;
 
-      const btn = document.getElementById('mailSend');
-      const oldTxt = btn.textContent; btn.disabled = true; btn.textContent = 'ENVIANDO…';
+  // ——— HANDLERS ———
+  const $to   = document.getElementById('rtMailTo');
+  const $cc   = document.getElementById('rtMailCc');
+  const $subj = document.getElementById('rtMailSubj');
+  const $txt  = document.getElementById('rtMailBody');
 
-      try {
-        await sendMailViaGAS({
-          key: GAS_KEY,
-          to, cc,
-          subject,
-          htmlBody,
-          replyTo: 'operaciones@raitrai.cl'
-        }, { retries: 0 });
+  // 1) Enviar por GAS (con fallback a mailto)
+  document.getElementById('rtSendMail').onclick = async () => {
+    const to = ($to.value||'').trim();
+    if (!to) { alert('INGRESA UN DESTINATARIO (PARA).'); return; }
+    const cc      = ($cc.value||'').trim();
+    const subj    = ($subj.value||'').trim();
+    const bodyTxt = ($txt.value||'').trim();
+    const htmlBody = bodyTxt.includes('<') ? bodyTxt : bodyTxt.split('\n').map(l=>l||'&nbsp;').join('<br>');
 
-        await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
-        showFlash('CORREO ENVIADO');
-        document.getElementById('modalBack').style.display='none';
-      } catch (e) {
-        console.error('[MAIL] ERROR', e);
-        const useMailto = confirm('No se pudo enviar por servidor.\n¿Quieres abrir tu correo para enviarlo manualmente?');
-        if (useMailto) {
-          const mailto = buildMailto({ to, cc, subject, htmlBody });
-          window.location.href = mailto;
-          // no marcamos FINALIZADA automáticamente en el fallback
-        } else {
-          alert('No se pudo enviar el correo.');
-        }
-      } finally {
-        btn.disabled = false; btn.textContent = oldTxt;
+    const btn = document.getElementById('rtSendMail');
+    const old = btn.textContent; btn.disabled = true; btn.textContent = 'ENVIANDO…';
+    try{
+      await sendMailViaGAS({ key: GAS_KEY, to, cc, subject: subj, htmlBody, replyTo: 'operaciones@raitrai.cl' }, { retries: 0 });
+      await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
+      showFlash('CORREO ENVIADO');
+      document.getElementById('modalBack').style.display='none';
+    }catch(e){
+      console.error('[MAIL] ERROR', e);
+      const useFallback = confirm('No se pudo enviar por servidor.\n¿Abrir tu correo para enviarlo manualmente?');
+      if (useFallback) {
+        const mailto = buildMailto({ to, cc, subject: subj, htmlBody });
+        window.location.href = mailto;
+        // En fallback no marcamos FINALIZADA automáticamente
       }
-    };
+    }finally{
+      btn.disabled = false; btn.textContent = old;
+    }
+  };
 
-    document.getElementById('vchPend').onclick = () =>
-      setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
+  // 2) Abrir mailto directo (opción manual)
+  document.getElementById('rtOpenMail').onclick = () => {
+    const to = ($to.value||'').trim();
+    if (!to) { alert('INGRESA UN DESTINATARIO (PARA).'); return; }
+    const mailto = buildMailto({
+      to,
+      cc: ($cc.value||'').trim(),
+      subject: ($subj.value||'').trim(),
+      htmlBody: ($txt.value||'').trim()
+    });
+    window.location.href = mailto;
+  };
+
+  // 3) Dejar PENDIENTE
+  document.getElementById('vchPend').onclick = () =>
+    setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
 
   } else {
     // ELECTRÓNICO (clave / NFC)
