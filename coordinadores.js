@@ -343,6 +343,13 @@ if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', ev => console.error('[PROMISE REJECTION]', ev.reason));
 }
 
+// Stubs no-op para evitar "is not defined" mientras integras los módulos reales
+window.renderGlobalAlerts ??= async ()=>{};
+window.renderFinanzas ??= async ()=>0;
+window.setEstadoServicio ??= async ()=> showFlash('ESTADO ACTUALIZADO');
+window.openActividadModal ??= async ()=>{};
+window.staffResetInicio ??= async ()=>{};
+
 /* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
   if (!user){ location.href='index.html'; return; }
@@ -633,15 +640,27 @@ function renderStats(list){
 
 /* ====== NAV ====== */
 function renderNavBar(){
-  const p=document.getElementById('navPanel');
-  const sel=p.querySelector('#allTrips'); sel.textContent='';
+  // Crea el panel si no existe y sólo inyecta el HTML base una vez
+  const p = ensurePanel('navPanel');
+  if (!p.innerHTML.trim()) {
+    p.innerHTML = `
+      <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap">
+        <button id="btnPrev" class="btn sec">◀</button>
+        <select id="allTrips" style="flex:1;min-width:260px"></select>
+        <button id="btnNext" class="btn sec">▶</button>
+        <button id="btnPrintVch" class="btn sec">IMPRIMIR DESPACHO</button>
+      </div>`;
+  }
 
-  // FILTRO TODOS (SOLO UI DEL SELECT DE VIAJES)
-  const ogFiltro=document.createElement('optgroup'); ogFiltro.label='FILTRO';
+  const sel = p.querySelector('#allTrips');
+  sel.textContent = '';
+
+  // FILTRO TODOS (sólo UI del select de viajes)
+  const ogFiltro = document.createElement('optgroup'); ogFiltro.label = 'FILTRO';
   ogFiltro.appendChild(new Option('TODOS','all')); sel.appendChild(ogFiltro);
 
   // VIAJES
-  const ogTrips=document.createElement('optgroup'); ogTrips.label='VIAJES';
+  const ogTrips = document.createElement('optgroup'); ogTrips.label = 'VIAJES';
   state.ordenados.forEach((g,i)=>{
     const name=(g.nombreGrupo||g.aliasGrupo||g.id);
     const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
@@ -649,36 +668,48 @@ function renderNavBar(){
     ogTrips.appendChild(opt);
   });
   sel.appendChild(ogTrips);
-  sel.value=`trip:${state.idx}`;
+  sel.value = `trip:${state.idx}`;
 
-  p.querySelector('#btnPrev').onclick=async ()=>{ const list=getFilteredList(); if(!list.length) return;
+  p.querySelector('#btnPrev').onclick = async ()=>{
+    const list=getFilteredList(); if(!list.length) return;
     const cur=state.ordenados[state.idx]?.id; const j=list.findIndex(g=>g.id===cur);
     const j2=Math.max(0,j-1), targetId=list[j2].id;
-    state.idx=state.ordenados.findIndex(g=>g.id===targetId); await renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`; };
-  p.querySelector('#btnNext').onclick=async ()=>{ const list=getFilteredList(); if(!list.length) return;
+    state.idx=state.ordenados.findIndex(g=>g.id===targetId);
+    await renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`;
+  };
+  p.querySelector('#btnNext').onclick = async ()=>{
+    const list=getFilteredList(); if(!list.length) return;
     const cur=state.ordenados[state.idx]?.id; const j=list.findIndex(g=>g.id===cur);
     const j2=Math.min(list.length-1,j+1), targetId=list[j2].id;
-    state.idx=state.ordenados.findIndex(g=>g.id===targetId); await renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`; };
-  sel.onchange=async ()=>{ const v=sel.value||''; if(v==='all'){ state.filter={type:'all',value:null}; renderStatsFiltered(); sel.value=`trip:${state.idx}`; }
-    else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; await renderOneGroup(state.ordenados[state.idx]); } };
+    state.idx=state.ordenados.findIndex(g=>g.id===targetId);
+    await renderOneGroup(state.ordenados[state.idx]); sel.value=`trip:${state.idx}`;
+  };
+  sel.onchange = async ()=>{
+    const v=sel.value||'';
+    if(v==='all'){ state.filter={type:'all',value:null}; renderStatsFiltered(); sel.value=`trip:${state.idx}`; }
+    else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; await renderOneGroup(state.ordenados[state.idx]); }
+  };
 
-   console.log('[PRINT] state.is?', state.is);
-   if (state.is){
-     const btn = document.getElementById('btnPrintVch');
-     if (btn){
-       btn.textContent = 'IMPRIMIR DESPACHO';
-       btn.onclick = async () => {
-         try{
-           const g = state.ordenados[state.idx];
-           await preparePrintForGroup(g);   // deja listo #print-block (rápido)
-           window.print();                  // imprime SOLO #print-block (CSS de arriba)
-         }catch(e){
-           console.error('[PRINT] error', e);
-           alert('No se pudo preparar el despacho para imprimir.');
-         }
-       };
-     }
-   }
+  // Botón imprimir sólo visible a STAFF
+  if (state.is){
+    const btn = document.getElementById('btnPrintVch');
+    if (btn){
+      btn.textContent = 'IMPRIMIR DESPACHO';
+      btn.onclick = async () => {
+        try{
+          const g = state.ordenados[state.idx];
+          await preparePrintForGroup(g);   // deja listo #print-block
+          window.print();
+        }catch(e){
+          console.error('[PRINT] error', e);
+          alert('No se pudo preparar el despacho para imprimir.');
+        }
+      };
+    }
+  } else {
+    const btn = document.getElementById('btnPrintVch');
+    if (btn) btn.style.display = 'none';
+  }
 }
 
 /* ====== VISTA GRUPO ====== */
@@ -1998,6 +2029,11 @@ async function findProveedorDocByDestino(destino, proveedorName){
   }catch(_){ return null; }
 }
 
+// Alias global idempotente (no redeclara si ya existe en otra parte del bundle)
+if (typeof window !== 'undefined' && !window.fetchProveedorByDestino) {
+  window.fetchProveedorByDestino = (...args) => findProveedorDocByDestino(...args);
+}
+
 /* ====== Lógica de hotel por día con CHEQ OUT ====== */
 
 // Devuelve las actividades del día como array (tolera objeto indexado)
@@ -2120,13 +2156,15 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   const body=document.getElementById('modalBody');
   title.textContent=`VOUCHER — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)}`;
 
-  let proveedorDoc=null;
-  try{
-    if(servicio?.proveedor){
-      const qs=await getDocs(collection(db,'Proveedores'));
-      qs.forEach(d=>{ const x=d.data()||{}; if(norm(x.nombre||d.id||'')===norm(servicio.proveedor||'')) proveedorDoc={id:d.id,...x}; });
-    }
-  }catch(_){}
+   let proveedorDoc = null;
+   try {
+     if (servicio?.proveedor) {
+       proveedorDoc = await findProveedorDocByDestino(
+         (g.destino || '').toString().toUpperCase(),
+         servicio.proveedor
+       );
+     }
+   } catch(_) {}
 
   const voucherHTML=renderVoucherHTMLSync(g,fechaISO,act,proveedorDoc,false);
 
@@ -2565,113 +2603,139 @@ async function preparePrintForGroup(grupo){
     ensurePrintDOM();
     if (!grupo) return;
 
-    // 1) ITINERARIO (rápido)
-    const itinLines = await collectItinLinesFast(grupo).catch(()=>[]);
+    // 1) ITINERARIO (rápido con fallback)
+    async function collectLinesFallback(g){
+      const out = [];
+      const map = g?.itinerario || {};
+      for (const f of Object.keys(map).sort()){
+        let arr = Array.isArray(map[f]) ? map[f] : Object.values(map[f]||{}).filter(x=>x&&typeof x==='object');
+        arr.forEach(a=>{
+          out.push({
+            fechaISO: f,
+            actividad: (a.actividad||'').toString().toUpperCase(),
+            proveedor: (a.proveedor||'').toString(),
+            hora: a.horaInicio || a.hora || ''
+          });
+        });
+      }
+      return out;
+    }
+    let itinLines = [];
+    if (typeof collectItinLinesFast === 'function'){
+      try{ itinLines = await collectItinLinesFast(grupo); }catch(_){}
+    }
+    if (!Array.isArray(itinLines) || !itinLines.length){
+      itinLines = await collectLinesFallback(grupo);
+    }
 
     // 2) HOTELES (todas las asignaciones)
-    const hoteles   = await loadHotelesInfo(grupo).catch(()=>[]);
+    const hoteles = await loadHotelesInfo(grupo).catch(()=>[]);
+    // Asegura array
+    const hotelesArr = Array.isArray(hoteles) ? hoteles : (hoteles ? [hoteles] : []);
 
     // 3) VUELOS/TRANSPORTE
     const vuelosRaw = await loadVuelosInfo(grupo).catch(()=>[]);
     const vuelos    = (vuelosRaw||[]).map(normalizeVuelo);
 
-    // 4) CONTACTOS (deduce de hoteles + proveedores de actividades)
+    // 4) CONTACTOS (hoteles + proveedores de actividades)
     const contactos = [];
+
     // Hoteles
-    for (const h of (hoteles||[])){
+    for (const h of (hotelesArr||[])){
       contactos.push({
-        etiqueta: h.hotelNombre || h.hotel?.nombre || 'HOTEL',
+        etiqueta: (h.hotelNombre || h.hotel?.nombre || 'HOTEL'),
         persona:  (h.hotel?.contacto || '').toString(),
-        telefono: (h.hotel?.contactoTelefono || h.contactoTelefono || '').toString(),
-        email:    (h.hotel?.correo || h.hotel?.email || '').toString()
+        telefono: String(h.hotel?.contactoTelefono || h.contactoTelefono || ''),
+        email:    String(h.hotel?.correo || h.hotel?.email || h.correo || h.email || '')
       });
     }
-    // Proveedores por actividad (busca ficha rápida)
+
+    // Proveedores por actividad (coincidencia por destino)
     const provSeen = new Set();
-    for (const ln of itinLines){
+    for (const ln of (itinLines||[])){
       const provNom = (ln.proveedor||'').trim();
       if (!provNom) continue;
       const key = norm(provNom);
       if (provSeen.has(key)) continue;
       provSeen.add(key);
       try{
-        const pd = await fetchProveedorByDestino((grupo.destino||'').toString().toUpperCase(), provNom);
+        const pd = await findProveedorDocByDestino(
+          (grupo.destino||'').toString().toUpperCase(),
+          provNom
+        );
         if (pd){
+          const telefono = pd.telefono || pd.telefono1 || pd.celular || pd.fono || '';
+          const email    = pd.correo || pd.email || '';
           contactos.push({
-            etiqueta: pd.proveedor || provNom,
-            persona:  pd.contacto || '',
-            telefono: pd.telefono || '',
-            email:    pd.correo || ''
+            etiqueta: (pd.proveedor || pd.nombre || provNom),
+            persona:  (pd.contacto || pd.contactoNombre || ''),
+            telefono: String(telefono||''),
+            email:    String(email||'')
           });
         }
       }catch(_){}
     }
-    // limpiar contactos vacíos y deduplicar por etiqueta
-    const uniq = new Map();
+
+    // Dedup contactos (por etiqueta+tel+email)
+    const cset = new Set();
+    const contactosDedup = [];
     for (const c of contactos){
-      const k = norm(c.etiqueta||'');
-      if (!k) continue;
-      if (!uniq.has(k)) uniq.set(k, c);
+      const k = `${norm(c.etiqueta||'')}|${norm(c.telefono||'')}|${norm(c.email||'')}`;
+      if (cset.has(k)) continue;
+      cset.add(k);
+      contactosDedup.push(c);
     }
 
-    // 5) Finanzas (si tienes helpers, si no, queda “sin abonos”)
-    let fin = null;
-    const haveLoadAbonos = (typeof loadAbonos === 'function');
-    if (haveLoadAbonos){
-      try{
-        const abonos = await loadAbonos(grupo.id);
-        const rows = [];
-        const tot = { CLP:0, USD:0, BRL:0, ARS:0 };
-        for (const a of (abonos||[])){
-          const fecha = dmy(toISO(a.fecha||''));   // 'DD-MM-YYYY'
-          const moneda= (a.moneda||'').toString().toUpperCase();
-          const valor = Number(a.valor||0);
-          if (tot[moneda]!=null) tot[moneda]+=valor;
-          rows.push({
-            fecha, asunto:(a.asunto||'').toString().toUpperCase(),
-            moneda, valor, medio:(a.medio||'')?.toString().toUpperCase()||'',
-            detalle: (a.detalle||'')?.toString()
-          });
-        }
-        fin = {
-          rows,
-          totales: tot,
-          totalCLP: Number(tot.CLP || 0) // (si quieres convertir USD/BRL/ARS a CLP aquí, hazlo)
+    // 5) Finanzas (resumen si existe)
+    let finForPrint = null;
+    try{
+      const fin = await ensureFinanzasSummary(grupo.id);
+      if (fin){
+        finForPrint = {
+          totales: fin.totales || {},
+          totalCLP: Number(fin.totalCLP || 0),
+          rows: Array.isArray(fin.rows) ? fin.rows : []
         };
-      }catch(_){/* ignora */}
-    }
+      }
+    }catch(_){}
 
-    // 6) Construye el texto completo
-    const text = buildPrintTextDespacho(grupo, {
+    // 6) Construir el texto HTML del despacho
+    const htmlText = buildPrintTextDespacho(grupo, {
       itinLines,
-      hoteles,
+      hoteles: hotelesArr,
       vuelos,
-      contactos: Array.from(uniq.values()),
-      finanzas: fin
+      contactos: contactosDedup,
+      finanzas: finForPrint
     });
 
-    // 7) Escribe el bloque <pre> y actualiza cabecera pequeña (por si la usas)
-    const pre = document.getElementById('print-block');
-    if (pre) pre.innerHTML = text || '';
+    // 7) Poblar encabezado fijo
+    const up = s => (s||'').toString().toUpperCase();
+    const code = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
+    const ph1 = document.getElementById('ph-grupo');
+    const ph2 = document.getElementById('ph-meta1');
+    const ph3 = document.getElementById('ph-meta2');
+    const ph4 = document.getElementById('ph-fechas');
+    const ph5 = document.getElementById('ph-pax');
+    if (ph1) ph1.textContent = `${up(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id)} · CÓDIGO: ${code}`;
+    if (ph2) ph2.textContent = `DESTINO: ${up(grupo.destino||'—')} · PROGRAMA: ${up(grupo.programa||'—')}`;
+    if (ph3) ph3.textContent = '';
+    if (ph4) ph4.textContent = `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}`;
+    if (ph5) {
+      const plan = paxOf(grupo);
+      const real = paxRealOf(grupo);
+      const br   = paxBreakdown(grupo);
+      ph5.textContent = `PAX: ${plan}${real?` (REAL ${real} · A:${br.A||0} · E:${br.E||0})`:''}`;
+    }
 
-    // Encabezado mini (si lo estás mostrando arriba)
-    const code    = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
-    const paxPlan = paxOf(grupo);
-    const paxReal = paxRealOf(grupo);
-    const { A: A_real, E: E_real } = paxBreakdown(grupo);
-    const $ = (id)=>document.getElementById(id);
-    const up = (s)=> (s||'').toString().toUpperCase();
-
-    $('ph-grupo') && ( $('ph-grupo').textContent = `GRUPO: ${up(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id)}` );
-    $('ph-meta2') && ( $('ph-meta2').textContent = `CÓDIGO: ${code}` );
-    $('ph-meta1') && ( $('ph-meta1').textContent = `DESTINO: ${up(grupo.destino||'—')}  ·  PROGRAMA: ${up(grupo.programa||'—')}` );
-    $('ph-fechas')&& ( $('ph-fechas').textContent= `FECHAS: ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}` );
-    $('ph-pax')   && ( $('ph-pax').textContent   = `PAX: ${paxPlan}` + (paxReal?`  ·  REAL ${paxReal} (A:${A_real} · E:${E_real})`:'') );
+    // 8) Volcar el documento en la hoja
+    const blk = document.getElementById('print-block');
+    if (blk) blk.innerHTML = htmlText;
 
   }catch(e){
-    console.error('[PRINT] preparePrintForGroup', e);
+    console.error('[preparePrintForGroup] error', e);
   }
 }
+
 /* ====== IMPRESIÓN DE DESPACHO (PDF por print) ====== */
 
 // Reúne una línea por actividad del itinerario con contacto de proveedor
