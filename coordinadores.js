@@ -37,19 +37,19 @@ function buildMailto({ to, cc, subject, htmlBody }) {
 
 async function sendMailViaGAS(payload, { retries = 1 } = {}) {
   const attempt = async () => {
-     
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), MAIL_TIMEOUT_MS);
-    // completa el payload con la CLAVE y defaults seguros
+
+    // payload final con clave + defaults
     const finalPayload = {
-       key: GAS_KEY,                       // 👈 tu GAS la acepta por body.key
-       replyTo: payload.replyTo ?? 'operaciones@raitrai.cl',
-       ...payload
+      key: GAS_KEY,
+      replyTo: payload.replyTo ?? 'operaciones@raitrai.cl',
+      ...payload
     };
+
     const res = await fetch(GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple → sin preflight
-      body: JSON.stringify(payload),
       body: JSON.stringify(finalPayload),
       signal: ctrl.signal,
       mode: 'cors',
@@ -62,10 +62,9 @@ async function sendMailViaGAS(payload, { retries = 1 } = {}) {
     let raw = '';
     try { raw = await res.text(); } catch (_) {}
 
-    // A veces GAS responde text/html; intentamos parsear igual
+    // GAS a veces responde text/html; tratamos de parsear
     let json = {};
     try { json = raw ? JSON.parse(raw) : {}; } catch (_) {
-      // si no es JSON, intentemos detectar “ok” textual
       if (/ok\b/i.test(raw)) json = { ok: true };
     }
 
@@ -79,11 +78,10 @@ async function sendMailViaGAS(payload, { retries = 1 } = {}) {
   try {
     return await attempt();
   } catch (e) {
-    if (retries > 0) return attempt();
+    if (retries > 0) return sendMailViaGAS(payload, { retries: retries - 1 });
     throw e;
   }
 }
-
 
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
@@ -1714,8 +1712,7 @@ async function renderActs(grupo, fechaISO, cont){
         div.querySelector('.bitItems').innerHTML = '<div class="muted">NO SE PUDO CARGAR LA BITÁCORA.</div>';
       });
 
-    // (2) Servicio / botón de voucher asíncrono
-      // (2) Servicio / botón de voucher asíncrono
+    // (2) Servicio / botón de voucher asíncrono (unificado)
       (async () => {
         try {
           const servicio = await findServicio(grupo.destino, actName);
@@ -1730,28 +1727,8 @@ async function renderActs(grupo, fechaISO, cont){
             if (wrap) {
               const btn = document.createElement('button');
               btn.className = 'btn sec';
-      
-              if (tipo === 'CORREO') {
-                btn.textContent = 'ENVIAR CORREO…';
-                btn.onclick = async () => {
-                  // intenta tomar correo directo del servicio o de la ficha del proveedor
-                  let provEmail = String(servicio?.correoProveedor || '').trim();
-                  if (!provEmail) {
-                    try {
-                      const prov = await fetchProveedorByDestino(
-                        (grupo.destino||'').toString().toUpperCase(),
-                        (servicio?.proveedor || act.proveedor || '').toString()
-                      );
-                      provEmail = String(prov?.correo || '').trim();
-                    } catch(_) {}
-                  }
-                  await openCorreoConfirmModal(grupo, fechaISO, act, provEmail);
-                };
-              } else {
-                btn.textContent = 'FINALIZAR…';
-                btn.onclick = async () => { await openVoucherModal(grupo, fechaISO, act, servicio, tipo); };
-              }
-      
+              btn.textContent = 'FINALIZAR…';
+              btn.onclick = async () => { await openVoucherModal(grupo, fechaISO, act, servicio, tipo); };
               wrap.replaceWith(btn);
             }
           }
@@ -1759,6 +1736,7 @@ async function renderActs(grupo, fechaISO, cont){
           console.warn('findServicio falló', { destino: grupo.destino, act: actName, e });
         }
       })();
+
   }
 }
 
@@ -2020,6 +1998,11 @@ async function findProveedorDocByDestino(destino, proveedorName){
   }catch(_){ return null; }
 }
 
+// Alias para mantener compatibilidad con llamadas existentes
+async function fetchProveedorByDestino(destino, proveedorName) {
+  return await findProveedorDocByDestino(destino, proveedorName);
+}
+
 /* ====== Lógica de hotel por día con CHEQ OUT ====== */
 
 // Devuelve las actividades del día como array (tolera objeto indexado)
@@ -2152,7 +2135,7 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
 
   const voucherHTML=renderVoucherHTMLSync(g,fechaISO,act,proveedorDoc,false);
 
-  if(tipo==='FISICO'){
+  if (tipo==='FISICO'){
     body.innerHTML= `${voucherHTML}
       <div class="rowflex" style="margin-top:.6rem">
         <button id="vchPrint" class="btn sec">IMPRIMIR</button>
@@ -2162,7 +2145,102 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
     document.getElementById('vchPrint').onclick=()=>{ const w=window.open('','_blank'); w.document.write(`<!doctype html><html><body>${voucherHTML}</body></html>`); w.document.close(); w.print(); };
     document.getElementById('vchOk').onclick   =()=> setEstadoServicio(g,fechaISO,act,'FINALIZADA', true);
     document.getElementById('vchPend').onclick =()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE',  true);
+
+  } else if (tipo==='CORREO') {
+    // exige asistencia guardada
+    const asis = getSavedAsistencia(g, fechaISO, act.actividad);
+    if (asis?.paxFinal == null) { alert('PRIMERO GUARDA LA ASISTENCIA (PAX).'); return; }
+
+    // intentar prellenar correo del proveedor
+    let provEmail = String(servicio?.correoProveedor || '').trim();
+    if (!provEmail) {
+      try {
+        const prov = await findProveedorDocByDestino(
+          (g.destino || '').toString().toUpperCase(),
+          (servicio?.proveedor || act.proveedor || '').toString()
+        );
+        provEmail = String(prov?.correo || prov?.email || '').trim();
+      } catch(_) {}
+    }
+
+    const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
+    const asunto =
+      `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase()} (${code})`;
+    const coordNom = (g.coordinadorNombre || '').toString().toUpperCase();
+
+    body.innerHTML = `
+      ${voucherHTML}
+      <div class="meta" style="margin-top:.5rem"><strong>CONFIGURAR CORREO</strong></div>
+      <div class="rowflex" style="gap:.4rem;align-items:center;margin:.25rem 0 .25rem 0">
+        <input id="mailTo" type="email" placeholder="PARA" value="${(provEmail||'')}" style="flex:1"/>
+        <input id="mailCc" type="email" placeholder="CC" value="operaciones@raitrai.cl" style="flex:1"/>
+      </div>
+      <input id="mailSubj" type="text" placeholder="ASUNTO" value="${asunto.replace(/"/g,'&quot;')}" />
+      <textarea id="mailNota" placeholder="NOTA ADICIONAL (opcional)" style="margin-top:.4rem"></textarea>
+      <div class="rowflex" style="margin-top:.6rem">
+        <button id="mailSend" class="btn ok">ENVIAR Y FINALIZAR</button>
+        <button id="vchPend" class="btn warn">PENDIENTE</button>
+      </div>
+      <div class="meta muted">TIP: SI FALLA EL SERVIDOR, SE OFRECERÁ ABRIR TU CLIENTE DE CORREO (MAILTO).</div>
+    `;
+
+    document.getElementById('mailSend').onclick = async () => {
+      const to = (document.getElementById('mailTo').value || '').trim();
+      const cc = (document.getElementById('mailCc').value || '').trim();
+      const subject = (document.getElementById('mailSubj').value || '').trim();
+      const nota = (document.getElementById('mailNota').value || '').trim();
+
+      if (!to) { alert('INGRESA UN DESTINATARIO (PARA).'); return; }
+
+      const htmlBody =
+        `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
+         <p>Confirmamos la asistencia para el servicio indicado:</p>
+         <ul>
+           <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
+           <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
+           <li><b>Grupo:</b> ${(g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase()} (${code})</li>
+           <li><b>Destino / Programa:</b> ${(g.destino||'—').toString().toUpperCase()} / ${(g.programa||'—').toString().toUpperCase()}</li>
+           <li><b>Pax asistentes:</b> ${getSavedAsistencia(g, fechaISO, act.actividad)?.paxFinal ?? '—'}</li>
+           <li><b>Coordinador(a):</b> ${coordNom || '—'}</li>
+         </ul>
+         <p><b>Observaciones:</b><br>${nota ? nota.replace(/\n/g,'<br>') : '—'}</p>
+         <p>— Enviado por Administración RT.</p>`;
+
+      const btn = document.getElementById('mailSend');
+      const oldTxt = btn.textContent; btn.disabled = true; btn.textContent = 'ENVIANDO…';
+
+      try {
+        await sendMailViaGAS({
+          key: GAS_KEY,
+          to, cc,
+          subject,
+          htmlBody,
+          replyTo: 'operaciones@raitrai.cl'
+        }, { retries: 0 });
+
+        await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
+        showFlash('CORREO ENVIADO');
+        document.getElementById('modalBack').style.display='none';
+      } catch (e) {
+        console.error('[MAIL] ERROR', e);
+        const useMailto = confirm('No se pudo enviar por servidor.\n¿Quieres abrir tu correo para enviarlo manualmente?');
+        if (useMailto) {
+          const mailto = buildMailto({ to, cc, subject, htmlBody });
+          window.location.href = mailto;
+          // no marcamos FINALIZADA automáticamente en el fallback
+        } else {
+          alert('No se pudo enviar el correo.');
+        }
+      } finally {
+        btn.disabled = false; btn.textContent = oldTxt;
+      }
+    };
+
+    document.getElementById('vchPend').onclick = () =>
+      setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
+
   } else {
+    // ELECTRÓNICO (clave / NFC)
     const clave=(servicio?.clave||'').toString();
     body.innerHTML= `${voucherHTML}
       <div class="rowflex" style="margin-top:.6rem">
@@ -2191,6 +2269,7 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
       }catch(_){}
     }
   }
+
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
   back.style.display='flex';
 }
