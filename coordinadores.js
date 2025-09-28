@@ -35,21 +35,6 @@ function buildMailto({ to, cc, subject, htmlBody }) {
   return url;
 }
 
-// === MAIL HELPERS (GAS) ============================================
-const MAIL_TIMEOUT_MS = 15000;
-
-function buildMailto({ to, cc, subject, htmlBody }) {
-  const text = htmlBody
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .trim();
-  const qp = encodeURIComponent;
-  let url = `mailto:${encodeURIComponent(to)}?subject=${qp(subject)}&body=${qp(text)}`;
-  if (cc) url += `&cc=${encodeURIComponent(cc)}`;
-  return url;
-}
-
 async function sendMailViaGAS(payload, { retries = 1 } = {}) {
   // Siempre mandamos origin tanto en query como en body (GAS no puede leer headers)
   const qp  = encodeURIComponent;
