@@ -2186,22 +2186,160 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
     document.getElementById('vchOk').onclick   =()=> setEstadoServicio(g,fechaISO,act,'FINALIZADA', true);
     document.getElementById('vchPend').onclick =()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE',  true);
 
-  } else if (tipo==='CORREO') {
-    // exige asistencia guardada
-    const asis = getSavedAsistencia(g, fechaISO, act.actividad);
-    if (asis?.paxFinal == null) { alert('PRIMERO GUARDA LA ASISTENCIA (PAX).'); return; }
+   } else if (tipo === 'CORREO') {
+     // === SOLUCIÓN TEMPORAL: MAILTO + MARCAR COMO ENVIADA (sin envío automático) ===
+   
+     // 1) Exige PAX guardados (declaración de asistencia)
+     const asis = getSavedAsistencia(g, fechaISO, act.actividad);
+     if (asis?.paxFinal == null) { alert('PRIMERO GUARDA LA ASISTENCIA (PAX).'); return; }
+   
+     // 2) Intentar prellenar correo del proveedor
+     let provEmail = String(servicio?.correoProveedor || '').trim();
+     if (!provEmail) {
+       try {
+         const prov = await findProveedorDocByDestino(
+           (g.destino || '').toString().toUpperCase(),
+           (servicio?.proveedor || act.proveedor || '').toString()
+         );
+         provEmail = String(prov?.correo || prov?.email || '').trim();
+       } catch(_) {}
+     }
+   
+     // 3) Texto del correo (asunto + cuerpo) — formato simple, apto para móvil
+     const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
+     const actividadTXT  = (act.actividad||'').toString().toUpperCase();
+     const grupoTXT      = (g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase();
+     const destinoTXT    = (g.destino||'—').toString().toUpperCase();
+     const programaTXT   = (g.programa||'—').toString().toUpperCase();
+     const fechaTXT      = dmy(fechaISO);
+     const paxTXT        = (asis?.paxFinal ?? '—');
+     const coordTXT      = (g.coordinadorNombre || '—').toString().toUpperCase();
+   
+     const asunto = `CONFIRMACIÓN DE ASISTENCIA — ${actividadTXT} — ${fechaTXT} — ${grupoTXT} (${code})`;
+     const cuerpoPlano =
+   `ESTIMADOS ${ (act.proveedor||'PROVEEDOR').toString().toUpperCase() }:
+   
+   CONFIRMAMOS LA ASISTENCIA PARA EL SERVICIO INDICADO:
+   
+   • ACTIVIDAD: ${actividadTXT}
+   • FECHA: ${fechaTXT}
+   • GRUPO: ${grupoTXT} (${code})
+   • DESTINO / PROGRAMA: ${destinoTXT} / ${programaTXT}
+   • PAX ASISTENTES: ${paxTXT}
+   • COORDINADOR(A): ${coordTXT}
+   
+   OBSERVACIONES:
+   —`;
+   
+     // 4) Estado inicial de "correo enviado" (por si alguien ya lo marcó antes)
+     const actKey = slug(act.actividad || 'actividad');
+     const correoYaEnviado = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
+   
+     // 5) UI del modal
+     body.innerHTML = `
+       ${renderVoucherHTMLSync(g,fechaISO,act,null,false)}
+       <div class="meta" style="margin-top:.5rem"><strong>CONFIGURAR CORREO (SE ABRE TU APP DE MAIL)</strong></div>
+       <div class="rowflex" style="gap:.4rem;align-items:center;margin:.25rem 0 .25rem 0">
+         <input id="rtMailTo" type="email" placeholder="PARA" value="${(provEmail||'')}" style="flex:1"/>
+         <input id="rtMailCc" type="email" placeholder="CC" value="operaciones@raitrai.cl" style="flex:1"/>
+       </div>
+       <input id="rtMailSubj" type="text" placeholder="ASUNTO" value="${asunto.replace(/"/g,'&quot;')}" />
+       <textarea id="rtMailBody" placeholder="CUERPO (SE PUEDE EDITAR ANTES DE ENVIAR)" style="margin-top:.4rem;height:140px">${cuerpoPlano}</textarea>
+   
+       <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
+         <button id="rtAbrirMail"   class="btn ok">ABRIR CORREO</button>
+         <button id="rtMarkSent"    class="btn sec">MARCAR COMO ENVIADA</button>
+         <button id="rtFinalizar"   class="btn warn" ${correoYaEnviado ? '' : 'disabled title="PRIMERO MARCA EL CORREO COMO ENVIADO"'}>
+           FINALIZAR ACTIVIDAD
+         </button>
+         <button id="vchPend" class="btn">PENDIENTE</button>
+       </div>
+       <div class="meta muted">MÓVIL: “ABRIR CORREO” usa <code>mailto:</code> y rellena tu app (GMAIL / MAIL) con tu CUENTA ACTIVA.</div>
+     `;
+   
+     // 6) Handlers
+     const $to     = document.getElementById('rtMailTo');
+     const $cc     = document.getElementById('rtMailCc');
+     const $subj   = document.getElementById('rtMailSubj');
+     const $body   = document.getElementById('rtMailBody');
+     const $open   = document.getElementById('rtAbrirMail');
+     const $mark   = document.getElementById('rtMarkSent');
+     const $fin    = document.getElementById('rtFinalizar');
+   
+     // 6.a) ABRIR CORREO (mailto)
+     $open.onclick = () => {
+       const to = ($to.value||'').trim();
+       if (!to) { alert('INGRESA UN DESTINATARIO (PARA).'); return; }
+       const mailto = buildMailto({ to, cc: ($cc.value||'').trim(), subject: ($subj.value||'').trim(), htmlBody: ($body.value||'').trim() });
+       // En móvil funciona bien con location.href; en desktop también
+       window.location.href = mailto;
+     };
+   
+     // 6.b) MARCAR COMO ENVIADA → guarda en Firestore y registra aviso
+     $mark.onclick = async () => {
+       const to = ($to.value||'').trim();
+       if (!to) { alert('COMPLETA EL CORREO DEL PROVEEDOR.'); return; }
+       try {
+         const refGrupo = doc(db,'grupos', g.id);
+         const payload  = {};
+         payload[`serviciosEstado.${fechaISO}.${actKey}.correo`] = { estado:'ENVIADA', enviadaAt: serverTimestamp() };
+         await updateDoc(refGrupo, payload);
+   
+         // espejo local (para habilitar botones sin recargar)
+         (g.serviciosEstado ||= {});
+         (g.serviciosEstado[fechaISO] ||= {});
+         (g.serviciosEstado[fechaISO][actKey] ||= {});
+         g.serviciosEstado[fechaISO][actKey].correo = { estado:'ENVIADA', enviadaAt: new Date() };
+   
+         // bitácora / alerta operativa
+         try {
+           await appendViajeLog(
+             g.id,
+             'DECLARACION_CORREO',
+             `DECLARACIÓN ENVIADA — ${actividadTXT} — ${fechaTXT} — PAX:${paxTXT}`,
+             { actividad: actividadTXT, fecha: fechaTXT, pax: paxTXT }
+           );
+           await addDoc(collection(db,'alertas'),{
+             audience:'',
+             mensaje: `DECLARACIÓN ENVIADA — ${actividadTXT} — ${fechaTXT} — PAX:${paxTXT}`,
+             createdAt: serverTimestamp(),
+             createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() },
+             readBy:{},
+             groupInfo:{
+               grupoId:g.id,
+               nombre:(g.nombreGrupo||g.aliasGrupo||g.id),
+               code: (g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):''),
+               destino:(g.destino||null),
+               programa:(g.programa||null),
+               fechaActividad:fechaISO,
+               actividad: actividadTXT
+             }
+           });
+           await renderGlobalAlerts();
+         } catch(_) {}
+   
+         showFlash('CORREO MARCADO COMO ENVIADO');
+         if ($fin) { $fin.disabled = false; $fin.removeAttribute('title'); }
+       } catch (e) {
+         console.error('Error al marcar correo ENVIADA', e);
+         alert('NO SE PUDO GUARDAR EL ESTADO DEL CORREO.');
+       }
+     };
+   
+     // 6.c) FINALIZAR ACTIVIDAD (solo si hay PAX y correo ENVIADA)
+     $fin.onclick = async () => {
+       const paxOk = (getSavedAsistencia(g, fechaISO, act.actividad)?.paxFinal ?? null) != null;
+       const correoOk = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
+       if (!paxOk)      { alert('FALTA DECLARAR LA ASISTENCIA (PAX).'); return; }
+       if (!correoOk)   { alert('PRIMERO MARCA EL CORREO COMO ENVIADO.'); return; }
+       await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
+       document.getElementById('modalBack').style.display='none';
+     };
+   
+     // 6.d) Dejar como PENDIENTE
+     document.getElementById('vchPend').onclick = () =>
+       setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
 
-    // intentar prellenar correo del proveedor
-    let provEmail = String(servicio?.correoProveedor || '').trim();
-    if (!provEmail) {
-      try {
-        const prov = await findProveedorDocByDestino(
-          (g.destino || '').toString().toUpperCase(),
-          (servicio?.proveedor || act.proveedor || '').toString()
-        );
-        provEmail = String(prov?.correo || prov?.email || '').trim();
-      } catch(_) {}
-    }
 
     const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
     const asunto =
