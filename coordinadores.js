@@ -44,6 +44,7 @@ async function sendMailViaGAS(payload, { retries = 1 } = {}) {
     const finalPayload = {
       key: GAS_KEY,
       replyTo: payload.replyTo ?? 'operaciones@raitrai.cl',
+      origin: location.origin,
       ...payload
     };
 
