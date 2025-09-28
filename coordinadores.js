@@ -1998,11 +1998,6 @@ async function findProveedorDocByDestino(destino, proveedorName){
   }catch(_){ return null; }
 }
 
-// Alias para mantener compatibilidad con llamadas existentes
-async function fetchProveedorByDestino(destino, proveedorName) {
-  return await findProveedorDocByDestino(destino, proveedorName);
-}
-
 /* ====== Lógica de hotel por día con CHEQ OUT ====== */
 
 // Devuelve las actividades del día como array (tolera objeto indexado)
