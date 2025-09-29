@@ -317,7 +317,7 @@ function ensurePanel(id, html=''){
 function enforceOrder(){
   const wrap=document.querySelector('.wrap');
   // ORDEN CORRECTO: STAFF -> ALERTAS -> STATS -> NAV -> GRUPOS
-  ['alertsPanel','staffBar','statsPanel','navPanel','gruposPanel'].forEach(id=>{
+  ['alertsPanelV2','staffBar','statsPanel','navPanel','gruposPanel'].forEach(id=>{
     const n=document.getElementById(id);
     if(n) wrap.appendChild(n);
   });
@@ -378,7 +378,7 @@ if (typeof window !== 'undefined') {
 
   // --- Panel base + controles
    function ensureAlertsPanel(){
-     const host = ensurePanel('alertsPanel');
+     const host = ensurePanel('alertsPanelV2');
    
      // 🚫 IMPORTANTE: borra cualquier HTML legacy que venga del archivo .html
      host.innerHTML = '';  // o host.replaceChildren();
@@ -482,7 +482,7 @@ if (typeof window !== 'undefined') {
   // --- Render list + filtros + orden + marcar leído
   function renderAlertsPanel(){
     ensureAlertsPanel();
-    const p    = document.getElementById('alertsPanel');
+    const p    = document.getElementById('alertsPanelV2');
     const list = p.querySelector('#alList');
     const meta = p.querySelector('#alMeta');
 
@@ -568,7 +568,7 @@ if (typeof window !== 'undefined') {
   }
 
   // API pública
-  window.renderGlobalAlerts = async () => {
+  window.renderGlobalAlertsV2 = async () => {
     ensureAlertsPanel();
     if (!state.alertsUI.inited){
       state.alertsUI.inited = true;
@@ -624,12 +624,11 @@ onAuthStateChanged(auth, async (user) => {
      ensurePrintDOM();
    
      // PANEL ALERTAS
-     await renderGlobalAlerts();
-
+     await window.renderGlobalAlertsV2();
 
   // AUTO-REFRESCO CADA 60S (solo alertas, sin reordenar paneles)
   if (!state.alertsTimer){
-    state.alertsTimer = setInterval(renderGlobalAlerts, 60000);
+    state.alertsTimer = setInterval(window.renderGlobalAlertsV2, 60000);
   }
 });
 
@@ -667,7 +666,7 @@ async function showSelector(coordinadores){
     state.viewingCoordId = id || null;
     localStorage.setItem('rt__coord', id);
     await loadGruposForCoordinador(elegido, state.user);
-    await renderGlobalAlerts();
+    await window.renderGlobalAlertsV2();
   };
   const last=localStorage.getItem('rt__coord');
   if (last){
@@ -1972,7 +1971,7 @@ async function renderActs(grupo, fechaISO, cont){
 
           await loadBitacora(grupo.id, fechaISO, actKey, div.querySelector('.bitItems'));
           div.querySelector('textarea').value='';
-          await renderGlobalAlerts();
+          await window.renderGlobalAlertsV2();
         }
 
         btn.textContent='GUARDADO'; setTimeout(()=>{ btn.textContent='GUARDAR'; btn.disabled=false; },900);
@@ -2569,7 +2568,7 @@ OBSERVACIONES:
             actividad: actividadTX
           }
         });
-        await renderGlobalAlerts();
+        await window.renderGlobalAlertsV2();
       } catch (_) {}
 
       showFlash('CORREO MARCADO COMO ENVIADO');
@@ -3644,7 +3643,7 @@ async function openCreateAlertModal(){
       readBy:{}
     });
     document.getElementById('modalBack').style.display='none';
-    await renderGlobalAlerts();
+    await window.renderGlobalAlertsV2();
   };
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
   back.style.display='flex';
@@ -3746,7 +3745,7 @@ async function renderGlobalAlerts(){
             payload[`readBy.coord:${myCoordId}`] = serverTimestamp();
           }
           await updateDoc(path, payload);
-          await renderGlobalAlerts();
+          await window.renderGlobalAlertsV2();
         }catch(e){
           console.error(e);
           alert('NO SE PUDO CONFIRMAR.');
