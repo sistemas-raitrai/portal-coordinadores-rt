@@ -350,8 +350,197 @@ if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', ev => console.error('[PROMISE REJECTION]', ev.reason));
 }
 
-// Stubs no-op para evitar "is not defined" mientras integras los módulos reales
-window.renderGlobalAlerts ??= async ()=>{};
+/* ===== ALERTAS PAGINADAS + BUSCADOR + ORDEN (REEMPLAZA TU STUB DE renderGlobalAlerts) ===== */
+(() => {
+  const ALERTS_PAGE_1 = 10;
+  const ALERTS_PAGE_MORE = 20;
+
+  const normTxt = (s='') => s.toString()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase();
+
+  if (!state.alertsUI) {
+    state.alertsUI = {
+      items: [],
+      lastDoc: null,
+      totalLoaded: 0,
+      q: '',
+      sort: 'desc',
+      loading: false,
+      inited: false,
+    };
+  }
+
+  function ensureAlertsPanel(){
+    const p = ensurePanel('alertsPanel');
+    if (!p.innerHTML.trim()){
+      p.innerHTML = `
+        <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
+          <input id="alQ" type="text" placeholder="BUSCAR EN ALERTAS..." style="flex:1;min-width:240px"/>
+          <select id="alSort" title="Orden">
+            <option value="desc">NUEVAS → ANTIGUAS</option>
+            <option value="asc">ANTIGUAS → NUEVAS</option>
+          </select>
+          <button id="alRefresh" class="btn sec">REFRESCAR</button>
+        </div>
+        <div id="alList" class="acts"></div>
+        <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
+          <button id="alMore" class="btn">CARGAR 20 MÁS</button>
+        </div>
+        <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
+      `;
+
+      const $q = p.querySelector('#alQ');
+      const $sort = p.querySelector('#alSort');
+      const $refresh = p.querySelector('#alRefresh');
+      const $more = p.querySelector('#alMore');
+
+      let tmr=null;
+      $q.oninput = () => {
+        clearTimeout(tmr);
+        tmr = setTimeout(() => {
+          state.alertsUI.q = normTxt($q.value||'');
+          renderAlertsPanel();
+        }, 150);
+      };
+
+      $sort.onchange = () => {
+        state.alertsUI.sort = $sort.value || 'desc';
+        renderAlertsPanel();
+      };
+
+      $refresh.onclick = async () => {
+        state.alertsUI.items = [];
+        state.alertsUI.totalLoaded = 0;
+        state.alertsUI.lastDoc = null;
+        await fetchAlertsPage({ initial:true });
+      };
+
+      $more.onclick = async () => {
+        await fetchAlertsPage({ initial:false });
+      };
+    }
+    return p;
+  }
+
+  async function fetchAlertsPage({ initial=false } = {}){
+    if (state.alertsUI.loading) return;
+    state.alertsUI.loading = true;
+    try{
+      const base = collection(db,'alertas');
+      let qFs = query(
+        base,
+        orderBy('createdAt','desc'),
+        limit(initial ? ALERTS_PAGE_1 : ALERTS_PAGE_MORE)
+      );
+      if (!initial && state.alertsUI.lastDoc){
+        qFs = query(
+          base,
+          orderBy('createdAt','desc'),
+          startAfter(state.alertsUI.lastDoc),
+          limit(ALERTS_PAGE_MORE)
+        );
+      }
+
+      const snap = await getDocs(qFs);
+      if (!snap.size){
+        showFlash('NO HAY MÁS ALERTAS', 'info');
+        return;
+      }
+
+      const batch = [];
+      snap.forEach(d => {
+        const x = d.data() || {};
+        batch.push({
+          id: d.id,
+          mensaje: (x.mensaje || '').toString(),
+          audience: (x.audience || '').toString(),
+          createdAt: x.createdAt?.seconds ? new Date(x.createdAt.seconds*1000) : null,
+          createdBy: x.createdBy || null,
+          groupInfo: x.groupInfo || null,
+          _q: normTxt([
+            x.mensaje,
+            x.audience,
+            x?.groupInfo?.actividad,
+            x?.groupInfo?.destino,
+            x?.groupInfo?.nombre,
+          ].filter(Boolean).join(' '))
+        });
+      });
+
+      state.alertsUI.items.push(...batch);
+      state.alertsUI.totalLoaded += batch.length;
+      state.alertsUI.lastDoc = snap.docs[snap.docs.length - 1];
+
+      renderAlertsPanel();
+    }catch(e){
+      console.error('[ALERTAS] fetch', e);
+      showFlash('ERROR AL CARGAR ALERTAS', 'err');
+    }finally{
+      state.alertsUI.loading = false;
+    }
+  }
+
+  function renderAlertsPanel(){
+    ensurePanel('alertsPanel');
+    const p = document.getElementById('alertsPanel');
+    const list = p.querySelector('#alList');
+    const meta = p.querySelector('#alMeta');
+
+    const q = state.alertsUI.q;
+    let arr = state.alertsUI.items.slice();
+
+    // ejemplo de filtro por audiencia (activalo si corresponde)
+    // if (!state.is) arr = arr.filter(a => a.audience !== 'staff_only');
+
+    if (q) arr = arr.filter(a => a._q.includes(q));
+
+    arr.sort((a,b) => {
+      const ta = a.createdAt ? a.createdAt.getTime() : 0;
+      const tb = b.createdAt ? b.createdAt.getTime() : 0;
+      return (state.alertsUI.sort === 'desc') ? (tb - ta) : (ta - tb);
+    });
+
+    if (!arr.length){
+      list.innerHTML = '<div class="muted">SIN ALERTAS (USA “REFRESCAR” O “CARGAR 20 MÁS”).</div>';
+    } else {
+      const frag = document.createDocumentFragment();
+      arr.forEach(a => {
+        const box = document.createElement('div');
+        box.className = 'act';
+        const cuando = a.createdAt
+          ? new Intl.DateTimeFormat('es-CL',{ dateStyle:'short', timeStyle:'short' }).format(a.createdAt).toUpperCase()
+          : '—';
+        box.innerHTML = `
+          <div class="meta"><strong>${(a.mensaje||'').toString().toUpperCase()}</strong></div>
+          <div class="meta muted">FECHA: ${cuando}${a.audience ? ' · AUDIENCIA: '+a.audience.toUpperCase() : ''}</div>
+          ${a.groupInfo ? `<div class="meta">GRUPO: ${(a.groupInfo.nombre||'—').toString().toUpperCase()} · ACT: ${(a.groupInfo.actividad||'—').toString().toUpperCase()} · DEST: ${(a.groupInfo.destino||'—').toString().toUpperCase()}</div>` : ''}
+        `;
+        frag.appendChild(box);
+      });
+      list.innerHTML = '';
+      list.appendChild(frag);
+    }
+
+    meta.textContent =
+      `MOSTRANDO ${arr.length} / CARGADAS ${state.alertsUI.totalLoaded} — ` +
+      `BUSCA PARA FILTRAR O “CARGAR 20 MÁS” PARA HISTÓRICO.`;
+  }
+
+  window.renderGlobalAlerts = async () => {
+    ensureAlertsPanel();
+    if (!state.alertsUI.inited) {
+      state.alertsUI.inited = true;
+      await fetchAlertsPage({ initial:true });
+    } else {
+      state.alertsUI.items = [];
+      state.alertsUI.totalLoaded = 0;
+      state.alertsUI.lastDoc = null;
+      await fetchAlertsPage({ initial:true });
+    }
+  };
+})();
+
 window.renderFinanzas ??= async ()=>0;
 window.setEstadoServicio ??= async ()=> showFlash('ESTADO ACTUALIZADO');
 window.openActividadModal ??= async ()=>{};
