@@ -626,10 +626,17 @@ onAuthStateChanged(auth, async (user) => {
      // PANEL ALERTAS
      await window.renderGlobalAlertsV2();
 
-  // AUTO-REFRESCO CADA 60S (solo alertas, sin reordenar paneles)
-  if (!state.alertsTimer){
-    state.alertsTimer = setInterval(window.renderGlobalAlertsV2, 60000);
-  }
+      // matar cualquier timer viejo de versiones anteriores
+      try { if (state.alertsTimer)     { clearInterval(state.alertsTimer);     state.alertsTimer = null; } } catch(_) {}
+      try { if (window.rtAlertsTimer)  { clearInterval(window.rtAlertsTimer);  window.rtAlertsTimer  = null; } } catch(_) {}
+      try { if (window.alertsTimer)    { clearInterval(window.alertsTimer);    window.alertsTimer    = null; } } catch(_) {}
+      
+      // AUTO-REFRESCO CADA 60S (solo alertas, sin reordenar paneles)
+      if (!state.alertsTimer){
+        state.alertsTimer = setInterval(window.renderGlobalAlertsV2, 60000);
+        // opcional: espejo para legacy que miraba window.*
+        window.rtAlertsTimer = state.alertsTimer;
+      }
 });
 
 /* ====== CARGAS FIRESTORE ====== */
