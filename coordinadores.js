@@ -573,10 +573,15 @@ if (typeof window !== 'undefined') {
       resetAlertsCache();
       await fetchAlertsPage(true);
     }
+      // (defensa) OCULTAR PANELES LEGACY DE ALERTAS (cubre varias variantes)
+      ['alerts','alertas','panel-alertas','alertasPanel','alertasWrap'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
+      document.querySelectorAll('[data-section="alertas"], .alertas-wrap, .alertasTabs').forEach(n => {
+        n.style.display = 'none';
+      });
 
-    // (defensa) oculta algún panel legacy si existiera
-    const legacy = document.getElementById('alerts'); // por si hay uno viejo con otra ID
-    if (legacy) legacy.style.display = 'none';
   };
 })();
 
