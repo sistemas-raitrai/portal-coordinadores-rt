@@ -203,6 +203,50 @@ function ensurePrintDOM(){
   document.body.appendChild(sheet);
 }
 
+async function preparePrintForGroup(g){
+  ensurePrintDOM();
+  const $doc   = document.getElementById('print-block');
+  const $grp   = document.getElementById('ph-grupo');
+  const $m1    = document.getElementById('ph-meta1');
+  const $m2    = document.getElementById('ph-meta2');
+  const $fech  = document.getElementById('ph-fechas');
+  const $pax   = document.getElementById('ph-pax');
+
+  const nombre = (g.nombreGrupo||g.aliasGrupo||g.id)||'';
+  const code   = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
+  const rango  = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
+  const destino= (g.destino||'').toString().toUpperCase();
+  const programa=(g.programa||'').toString().toUpperCase();
+
+  $grp.textContent  = `GRUPO: ${nombre.toUpperCase()} (${code})`;
+  $m1.textContent   = `DESTINO: ${destino}`;
+  $m2.textContent   = `PROGRAMA: ${programa || '—'}`;
+  $fech.textContent = `FECHAS: ${rango}`;
+  const real  = paxRealOf(g);
+  const plan  = paxOf(g);
+  $pax.innerHTML    = `PAX: ${real && real!==plan ? `${plan} → ${real}` : plan}`;
+
+  // Cuerpo simple: fechas + actividades ordenadas por hora
+  let body = '';
+  const fechas = rangoFechas(g.fechaInicio,g.fechaFin);
+  for (const f of fechas){
+    const actsRaw = (g.itinerario && g.itinerario[f]) ? g.itinerario[f] : [];
+    const acts = (Array.isArray(actsRaw) ? actsRaw : Object.values(actsRaw||{}))
+      .filter(a => a && typeof a==='object')
+      .sort((a,b)=> timeVal(a?.horaInicio)-timeVal(b?.horaInicio));
+    body += `\n\n# ${dmy(f)}\n`;
+    if (!acts.length){ body += '— SIN ACTIVIDADES —\n'; continue; }
+    for (const a of acts){
+      const hIni = (a.horaInicio||'') ? ` ${a.horaInicio}` : '';
+      const hFin = (a.horaFin||'')    ? ` — ${a.horaFin}`  : '';
+      const prov = (a.proveedor||'')  ? ` · PROV: ${a.proveedor.toString().toUpperCase()}` : '';
+      body += `• ${(a.actividad||'').toString().toUpperCase()}${hIni}${hFin}${prov}\n`;
+    }
+  }
+  $doc.textContent = body.trim();
+}
+
+
 /* ====== HISTORIAL VIAJE (utils) ====== */
 const HIST_ACTKEY = '_viaje_'; // o 'viaje_hist', cualquier cosa que NO sea __...__
 const fmtChile = (date) =>
@@ -341,7 +385,7 @@ function showFlash(msg, kind='ok'){
   setTimeout(()=>{
     n.style.opacity='0'; n.style.transform='translateY(6px)';
     n.addEventListener('transitionend', ()=> n.remove(), { once:true });
-  }, 2200);
+  }, 4000);
 }
 
 // === LOGS GLOBALES (poner una sola vez) ===
