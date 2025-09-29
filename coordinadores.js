@@ -377,45 +377,50 @@ if (typeof window !== 'undefined') {
   };
 
   // --- Panel base + controles
-  function ensureAlertsPanel(){
-    const host = ensurePanel('alertsPanel');
-    if (!host.innerHTML.trim()){
-      host.innerHTML = `
-        <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
-          <input id="alQ" type="text" placeholder="BUSCAR EN ALERTAS..." style="flex:1;min-width:240px"/>
-          <select id="alFilter" title="Filtro">
-            <option value="all">TODAS</option>
-            <option value="unread">NO LEÍDAS</option>
-            <option value="read">LEÍDAS</option>
-            <option value="ops">SOLO OPERACIONES</option>
-            <option value="mine">SOLO MÍAS</option>
-          </select>
-          <select id="alSort" title="Orden">
-            <option value="desc">NUEVAS → ANTIGUAS</option>
-            <option value="asc">ANTIGUAS → NUEVAS</option>
-          </select>
-          <button id="alRefresh" class="btn sec">REFRESCAR</button>
-        </div>
-        <div id="alList" class="acts"></div>
-        <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
-          <button id="alMore" class="btn">CARGAR 20 MÁS</button>
-        </div>
-        <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
-      `;
-      const $q = host.querySelector('#alQ');
-      const $filter = host.querySelector('#alFilter');
-      const $sort = host.querySelector('#alSort');
-
-      let t=null;
-      $q.oninput = () => { clearTimeout(t); t=setTimeout(()=>{ state.alertsUI.q = norm($q.value||''); renderAlertsPanel(); }, 150); };
-      $filter.onchange = () => { state.alertsUI.filter = $filter.value; renderAlertsPanel(); };
-      $sort.onchange   = () => { state.alertsUI.sort   = $sort.value;   renderAlertsPanel(); };
-
-      host.querySelector('#alRefresh').onclick = async () => { resetAlertsCache(); await fetchAlertsPage(true); };
-      host.querySelector('#alMore').onclick    = async () => { await fetchAlertsPage(false); };
-    }
-    return host;
-  }
+   function ensureAlertsPanel(){
+     const host = ensurePanel('alertsPanel');
+   
+     // 🚫 IMPORTANTE: borra cualquier HTML legacy que venga del archivo .html
+     host.innerHTML = '';  // o host.replaceChildren();
+   
+     // ⬇️ Render del panel NUEVO
+     host.innerHTML = `
+       <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
+         <input id="alQ" type="text" placeholder="BUSCAR EN ALERTAS..." style="flex:1;min-width:240px"/>
+         <select id="alFilter" title="Filtro">
+           <option value="all">TODAS</option>
+           <option value="unread">NO LEÍDAS</option>
+           <option value="read">LEÍDAS</option>
+           <option value="ops">SOLO OPERACIONES</option>
+           <option value="mine">SOLO MÍAS</option>
+         </select>
+         <select id="alSort" title="Orden">
+           <option value="desc">NUEVAS → ANTIGUAS</option>
+           <option value="asc">ANTIGUAS → NUEVAS</option>
+         </select>
+         <button id="alRefresh" class="btn sec">REFRESCAR</button>
+       </div>
+       <div id="alList" class="acts"></div>
+       <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
+         <button id="alMore" class="btn">CARGAR 20 MÁS</button>
+       </div>
+       <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
+     `;
+   
+     const $q = host.querySelector('#alQ');
+     const $filter = host.querySelector('#alFilter');
+     const $sort = host.querySelector('#alSort');
+   
+     let t=null;
+     $q.oninput = () => { clearTimeout(t); t=setTimeout(()=>{ state.alertsUI.q = norm($q.value||''); renderAlertsPanel(); }, 150); };
+     $filter.onchange = () => { state.alertsUI.filter = $filter.value; renderAlertsPanel(); };
+     $sort.onchange   = () => { state.alertsUI.sort   = $sort.value;   renderAlertsPanel(); };
+   
+     host.querySelector('#alRefresh').onclick = async () => { resetAlertsCache(); await fetchAlertsPage(true); };
+     host.querySelector('#alMore').onclick    = async () => { await fetchAlertsPage(false); };
+   
+     return host;
+   }
 
   function resetAlertsCache(){
     state.alertsUI.items = [];
