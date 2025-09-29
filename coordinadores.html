@@ -329,6 +329,18 @@
   </div>
 
   <script type="module" src="./coordinadores.js"></script>
+
+  <script>
+    // Fallback: si en 2s el panel no se inicializó, lo forzamos.
+    window.addEventListener('load', function () {
+      setTimeout(function () {
+        if (window.renderGlobalAlerts && !(window.state?.alertsUI?.inited)) {
+          window.renderGlobalAlerts();
+        }
+      }, 2000);
+    });
+  </script>
+
   <!-- === PRINT BLOCK (solo para imprimir) === -->
   <pre id="print-block" class="rt-print-only" aria-hidden="true"></pre>
 </body>
