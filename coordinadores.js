@@ -364,42 +364,45 @@ if (typeof window !== 'undefined') {
 
   const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 
-  // Estado UI (reutiliza si ya existe)
-  state.alertsUI ||= {
-    items: [],
-    lastDoc: null,
-    totalLoaded: 0,
-    q: '',
-    sort: 'desc',          // 'desc'|'asc'
-    filter: 'all',         // 'all'|'unread'|'read'|'ops'|'mine'
-    loading: false,
-    inited: false,
-  };
+  
+   // Estado UI (reutiliza si ya existe)
+   state.alertsUI ||= {
+     items: [],
+     lastDoc: null,
+     totalLoaded: 0,
+     q: '',
+     // sin "sort": siempre nuevas→antiguas
+     filter: 'all',         // se ajusta luego según sea STAFF o no
+     loading: false,
+     inited: false,
+   };
 
   // --- Panel base + controles
    function ensureAlertsPanel(){
      const host = ensurePanel('alertsPanelV2');
    
-     // 🚫 IMPORTANTE: borra cualquier HTML legacy que venga del archivo .html
-     host.innerHTML = '';  // o host.replaceChildren();
-   
-     // ⬇️ Render del panel NUEVO
      host.innerHTML = `
        <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
          <input id="alQ" type="text" placeholder="BUSCAR EN ALERTAS..." style="flex:1;min-width:240px"/>
-         <select id="alFilter" title="Filtro">
-           <option value="all">TODAS</option>
-           <option value="unread">NO LEÍDAS</option>
-           <option value="read">LEÍDAS</option>
-           <option value="ops">SOLO OPERACIONES</option>
-           <option value="mine">SOLO MÍAS</option>
-         </select>
-         <select id="alSort" title="Orden">
-           <option value="desc">NUEVAS → ANTIGUAS</option>
-           <option value="asc">ANTIGUAS → NUEVAS</option>
-         </select>
+   
+         ${state.is ? `
+           <!-- STAFF: ÁMBITO -->
+           <select id="alScope" title="ÁMBITO">
+             <option value="all">TODAS</option>
+             <option value="ops">SOLO OPERACIONES</option>
+             <option value="mine">SOLO MÍAS</option>
+           </select>
+         ` : `
+           <!-- NO STAFF: ESTADO -->
+           <select id="alState" title="ESTADO">
+             <option value="unread">NO LEÍDAS</option>
+             <option value="read">LEÍDAS</option>
+           </select>
+         `}
+   
          <button id="alRefresh" class="btn sec">REFRESCAR</button>
        </div>
+   
        <div id="alList" class="acts"></div>
        <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
          <button id="alMore" class="btn">CARGAR 20 MÁS</button>
@@ -408,13 +411,19 @@ if (typeof window !== 'undefined') {
      `;
    
      const $q = host.querySelector('#alQ');
-     const $filter = host.querySelector('#alFilter');
-     const $sort = host.querySelector('#alSort');
-   
      let t=null;
      $q.oninput = () => { clearTimeout(t); t=setTimeout(()=>{ state.alertsUI.q = norm($q.value||''); renderAlertsPanel(); }, 150); };
-     $filter.onchange = () => { state.alertsUI.filter = $filter.value; renderAlertsPanel(); };
-     $sort.onchange   = () => { state.alertsUI.sort   = $sort.value;   renderAlertsPanel(); };
+   
+     if (state.is){
+       const $scope = host.querySelector('#alScope');
+       // reflejar valor actual si ya existía
+       if (['all','ops','mine'].includes(state.alertsUI.filter)) $scope.value = state.alertsUI.filter;
+       $scope.onchange = () => { state.alertsUI.filter = $scope.value; renderAlertsPanel(); };
+     } else {
+       const $state = host.querySelector('#alState');
+       $state.value = (state.alertsUI.filter === 'read') ? 'read' : 'unread';
+       $state.onchange = () => { state.alertsUI.filter = $state.value; renderAlertsPanel(); };
+     }
    
      host.querySelector('#alRefresh').onclick = async () => { resetAlertsCache(); await fetchAlertsPage(true); };
      host.querySelector('#alMore').onclick    = async () => { await fetchAlertsPage(false); };
@@ -495,19 +504,25 @@ if (typeof window !== 'undefined') {
     // BUSCADOR
     if (q) arr = arr.filter(a => a._q.includes(q));
 
-    // FILTRO
-    const f = state.alertsUI.filter;
-    if (f === 'unread') arr = arr.filter(a => !a.readBy?.[meUid]);
-    if (f === 'read')   arr = arr.filter(a =>  a.readBy?.[meUid]);
-    if (f === 'ops')    arr = arr.filter(a => OPS_SENDERS.has(a.createdByEmail));
-    if (f === 'mine')   arr = arr.filter(a => a.createdByEmail === meEmail);
+   // FILTRO (dependiente de STAFF)
+   const f = state.alertsUI.filter;
+   if (state.is){
+     // STAFF: all | ops | mine
+     if (f === 'ops')  arr = arr.filter(a => OPS_SENDERS.has(a.createdByEmail));
+     if (f === 'mine') arr = arr.filter(a => a.createdByEmail === meEmail);
+     // 'all' no filtra
+   } else {
+     // NO STAFF: unread | read
+     if (f === 'unread') arr = arr.filter(a => !a.readBy?.[meUid]);
+     if (f === 'read')   arr = arr.filter(a =>  a.readBy?.[meUid]);
+   }
 
     // ORDEN (fallback si falta fecha)
-    arr.sort((a,b) => {
-      const ta = a.createdAt ? a.createdAt.getTime() : 0;
-      const tb = b.createdAt ? b.createdAt.getTime() : 0;
-      return (state.alertsUI.sort === 'desc') ? (tb - ta) : (ta - tb);
-    });
+      arr.sort((a,b) => {
+        const ta = a.createdAt ? a.createdAt.getTime() : 0;
+        const tb = b.createdAt ? b.createdAt.getTime() : 0;
+        return tb - ta; // SIEMPRE NUEVAS → ANTIGUAS
+      });
 
     // DIBUJO
     if (!arr.length){
@@ -622,7 +637,18 @@ onAuthStateChanged(auth, async (user) => {
 
      // 🔽 crea hoja de impresión oculta
      ensurePrintDOM();
-   
+
+   // === Preferencias iniciales del panel de alertas según rol ===
+   state.alertsUI ||= { filter:'all' };
+   if (state.is) {
+     // STAFF: arrancar con "TODAS" (puedes cambiar a 'ops' si prefieres)
+     state.alertsUI.filter = state.alertsUI.filter ?? 'all';
+   } else {
+     // NO STAFF: arrancar con "NO LEÍDAS"
+     state.alertsUI.filter = 'unread';
+   }
+
+
      // PANEL ALERTAS
      await window.renderGlobalAlertsV2();
 
