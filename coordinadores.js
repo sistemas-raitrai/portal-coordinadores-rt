@@ -2263,18 +2263,33 @@ OBSERVACIONES:
   const $txt  = document.getElementById('rtMailBody');
   const $fin  = document.getElementById('rtFinalizar');
 
+   // tras crear const $fin = document.getElementById('rtFinalizar');
+   (() => {
+     const actKey = slug(act.actividad || 'actividad');
+     const ya = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
+     if (ya && $fin) { $fin.disabled = false; $fin.removeAttribute('title'); }
+   })();
+
+
   // 5.a) Abrir mailto (no cambia estado)
-  document.getElementById('rtOpenMail').onclick = () => {
-    const to = ($to.value||'').trim();
-    if (!to) { alert('INGRESA UN DESTINATARIO (PARA).'); return; }
-    const mailto = buildMailto({
-      to,
-      cc: ($cc.value||'').trim(),
-      subject: ($subj.value||'').trim(),
-      htmlBody: ($txt.value||'').trim()
-    });
-    window.location.href = mailto;
-  };
+   document.getElementById('rtOpenMail').onclick = () => {
+     const to = ($to.value||'').trim();
+     if (!to) { alert('INGRESA UN DESTINATARIO (PARA).'); return; }
+     const mailto = buildMailto({
+       to,
+       cc: ($cc.value||'').trim(),
+       subject: ($subj.value||'').trim(),
+       htmlBody: ($txt.value||'').trim()
+     });
+     const a = document.createElement('a');
+     a.href = mailto;
+     a.style.display = 'none';
+     document.body.appendChild(a);
+     a.click();
+     a.remove();
+     showFlash('ABRÍ TU CORREO, LUEGO MARCA “ENVIADA”');
+   };
+
 
   // 5.b) Marcar como ENVIADA → guarda en Firestore + log + alerta
   document.getElementById('rtMarkSent').onclick = async () => {
@@ -2402,10 +2417,12 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
     </div>
   `;
 
-   // === MAIL PATCH START ===
+   // === MAIL PATCH START (reemplazo del onclick) ===
    document.getElementById('rtSendMail').onclick = async () => {
      console.group('[MAIL] Enviar');
      const btn = document.getElementById('rtSendMail');
+     if (btn.dataset.busy === '1') return;      // anti doble-click
+     btn.dataset.busy = '1';
      btn.disabled = true;
    
      try {
@@ -2433,22 +2450,19 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
           <p><b>Observaciones:</b><br>${nota ? nota.replace(/\n/g,'<br>') : '—'}</p>
           <p>— Enviado por Administración RT.</p>`;
    
-       // visual
        const oldTxt = btn.textContent;
        btn.textContent = 'ENVIANDO…';
    
-       // Llamada robusta a GAS
-       const payload = {
+       // — Intento vía GAS (servidor)
+       console.time('[MAIL] fetch');
+       const out = await sendMailViaGAS({
          key: GAS_KEY,
          to,
          cc: 'operaciones@raitrai.cl',
          subject: asunto,
          htmlBody,
          replyTo: 'operaciones@raitrai.cl'
-       };
-   
-       console.time('[MAIL] fetch');
-       const out = await sendMailViaGAS(payload, { retries: 0 });
+       }, { retries: 0 });
        console.timeEnd('[MAIL] fetch');
        console.log('[MAIL] OK:', out);
    
@@ -2457,43 +2471,53 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
      } catch (e) {
        console.error('[MAIL] ERROR', e);
    
-       // Fallback: abrir cliente de correo del usuario
-       const useMailto = confirm('No se pudo enviar por servidor.\n¿Quieres abrir tu correo para enviarlo manualmente?');
-       if (useMailto) {
-         const mailto = buildMailto({
-           to: (proveedorEmail || '').trim(),
-           cc: 'operaciones@raitrai.cl',
-           subject: document.querySelector('#modalBody .meta:nth-child(3)')?.textContent?.replace('ASUNTO: ','') || 'CONFIRMACIÓN DE ASISTENCIA',
-           htmlBody: document.querySelector('#modalBody .meta + textarea') ? 
-             // rehacemos el mismo cuerpo si hace falta
-             (()=>{
-               const nota = (document.getElementById('rt-nota-extra').value || '').trim();
-               return (
-                 `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
-                  <p>Confirmamos la asistencia para el servicio indicado:</p>
-                  <ul>
-                    <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
-                    <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
-                    <li><b>Grupo:</b> ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})</li>
-                    <li><b>Destino / Programa:</b> ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}</li>
-                    <li><b>Pax asistentes:</b> ${getSavedAsistencia(grupo, fechaISO, act.actividad)?.paxFinal ?? '—'}</li>
-                  </ul>
-                  <p><b>Observaciones:</b><br>${nota ? nota.replace(/\n/g,'<br>') : '—'}</p>
-                  <p>— Enviado por Administración RT.</p>`
-               );
-             })() : ''
-         });
-         window.location.href = mailto;
-       } else {
-         alert('No se pudo enviar el correo.');
-       }
+       // — Fallback: abre cliente de correo del usuario SIEMPRE con asunto/cuerpo correctos
+       const nota = (document.getElementById('rt-nota-extra').value || '').trim();
+       const fallbackSubject =
+         `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})`;
+   
+       const fallbackBody =
+   `ESTIMADOS ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:
+   
+   CONFIRMAMOS LA ASISTENCIA PARA EL SERVICIO INDICADO:
+   
+   • ACTIVIDAD: ${(act.actividad||'').toString().toUpperCase()}
+   • FECHA: ${dmy(fechaISO)}
+   • GRUPO: ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})
+   • DESTINO / PROGRAMA: ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}
+   • PAX ASISTENTES: ${getSavedAsistencia(grupo, fechaISO, act.actividad)?.paxFinal ?? '—'}
+   • COORDINADOR(A): ${(grupo.coordinadorNombre || '—').toString().toUpperCase()}
+   
+   OBSERVACIONES:
+   ${nota || '—'}
+   
+   — ENVIADO POR ADMINISTRACIÓN RT.`;
+   
+       const mailto = buildMailto({
+         to: (proveedorEmail || '').trim(),
+         cc: 'operaciones@raitrai.cl',
+         subject: fallbackSubject,
+         htmlBody: fallbackBody
+       });
+   
+       // evitar que SPA intercepte: usamos un <a> temporal
+       const a = document.createElement('a');
+       a.href = mailto;
+       a.style.display = 'none';
+       document.body.appendChild(a);
+       a.click();
+       a.remove();
+   
+       showFlash('ABRÍ TU CORREO PARA ENVIARLO');
      } finally {
-       btn.disabled = false;
        btn.textContent = 'ENVIAR';
+       btn.disabled = false;
+       btn.dataset.busy = '0';
        console.groupEnd();
      }
    };
    // === MAIL PATCH END ===
+
 }
 
 /* === IMPRESIÓN — helpers de formato === */
