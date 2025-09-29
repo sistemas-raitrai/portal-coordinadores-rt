@@ -350,33 +350,46 @@ if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', ev => console.error('[PROMISE REJECTION]', ev.reason));
 }
 
-/* ===== ALERTAS PAGINADAS + BUSCADOR + ORDEN (REEMPLAZA TU STUB DE renderGlobalAlerts) ===== */
+/* ===== ALERTAS PAGINADAS + BUSCADOR + ORDEN + FILTROS + LEÍDO ===== */
 (() => {
-  const ALERTS_PAGE_1 = 10;
-  const ALERTS_PAGE_MORE = 20;
+  const PAGE_1 = 10;
+  const PAGE_MORE = 20;
 
-  const normTxt = (s='') => s.toString()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-    .toLowerCase();
+  // Correos que consideramos de "Operaciones"
+  const OPS_SENDERS = new Set([
+    'operaciones@raitrai.cl',
+    'aleoperaciones@raitrai.cl',
+    'sistemas@raitrai.cl',
+  ]);
 
-  if (!state.alertsUI) {
-    state.alertsUI = {
-      items: [],
-      lastDoc: null,
-      totalLoaded: 0,
-      q: '',
-      sort: 'desc',
-      loading: false,
-      inited: false,
-    };
-  }
+  const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 
+  // Estado UI (reutiliza si ya existe)
+  state.alertsUI ||= {
+    items: [],
+    lastDoc: null,
+    totalLoaded: 0,
+    q: '',
+    sort: 'desc',          // 'desc'|'asc'
+    filter: 'all',         // 'all'|'unread'|'read'|'ops'|'mine'
+    loading: false,
+    inited: false,
+  };
+
+  // --- Panel base + controles
   function ensureAlertsPanel(){
-    const p = ensurePanel('alertsPanel');
-    if (!p.innerHTML.trim()){
-      p.innerHTML = `
+    const host = ensurePanel('alertsPanel');
+    if (!host.innerHTML.trim()){
+      host.innerHTML = `
         <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
           <input id="alQ" type="text" placeholder="BUSCAR EN ALERTAS..." style="flex:1;min-width:240px"/>
+          <select id="alFilter" title="Filtro">
+            <option value="all">TODAS</option>
+            <option value="unread">NO LEÍDAS</option>
+            <option value="read">LEÍDAS</option>
+            <option value="ops">SOLO OPERACIONES</option>
+            <option value="mine">SOLO MÍAS</option>
+          </select>
           <select id="alSort" title="Orden">
             <option value="desc">NUEVAS → ANTIGUAS</option>
             <option value="asc">ANTIGUAS → NUEVAS</option>
@@ -389,78 +402,58 @@ if (typeof window !== 'undefined') {
         </div>
         <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
       `;
+      const $q = host.querySelector('#alQ');
+      const $filter = host.querySelector('#alFilter');
+      const $sort = host.querySelector('#alSort');
 
-      const $q = p.querySelector('#alQ');
-      const $sort = p.querySelector('#alSort');
-      const $refresh = p.querySelector('#alRefresh');
-      const $more = p.querySelector('#alMore');
+      let t=null;
+      $q.oninput = () => { clearTimeout(t); t=setTimeout(()=>{ state.alertsUI.q = norm($q.value||''); renderAlertsPanel(); }, 150); };
+      $filter.onchange = () => { state.alertsUI.filter = $filter.value; renderAlertsPanel(); };
+      $sort.onchange   = () => { state.alertsUI.sort   = $sort.value;   renderAlertsPanel(); };
 
-      let tmr=null;
-      $q.oninput = () => {
-        clearTimeout(tmr);
-        tmr = setTimeout(() => {
-          state.alertsUI.q = normTxt($q.value||'');
-          renderAlertsPanel();
-        }, 150);
-      };
-
-      $sort.onchange = () => {
-        state.alertsUI.sort = $sort.value || 'desc';
-        renderAlertsPanel();
-      };
-
-      $refresh.onclick = async () => {
-        state.alertsUI.items = [];
-        state.alertsUI.totalLoaded = 0;
-        state.alertsUI.lastDoc = null;
-        await fetchAlertsPage({ initial:true });
-      };
-
-      $more.onclick = async () => {
-        await fetchAlertsPage({ initial:false });
-      };
+      host.querySelector('#alRefresh').onclick = async () => { resetAlertsCache(); await fetchAlertsPage(true); };
+      host.querySelector('#alMore').onclick    = async () => { await fetchAlertsPage(false); };
     }
-    return p;
+    return host;
   }
 
-  async function fetchAlertsPage({ initial=false } = {}){
+  function resetAlertsCache(){
+    state.alertsUI.items = [];
+    state.alertsUI.totalLoaded = 0;
+    state.alertsUI.lastDoc = null;
+  }
+
+  // --- Carga paginada (Firestore)
+  async function fetchAlertsPage(initial){
     if (state.alertsUI.loading) return;
     state.alertsUI.loading = true;
     try{
       const base = collection(db,'alertas');
-      let qFs = query(
-        base,
-        orderBy('createdAt','desc'),
-        limit(initial ? ALERTS_PAGE_1 : ALERTS_PAGE_MORE)
-      );
+      let qFs = query(base, orderBy('createdAt','desc'), limit(initial ? PAGE_1 : PAGE_MORE));
       if (!initial && state.alertsUI.lastDoc){
-        qFs = query(
-          base,
-          orderBy('createdAt','desc'),
-          startAfter(state.alertsUI.lastDoc),
-          limit(ALERTS_PAGE_MORE)
-        );
+        qFs = query(base, orderBy('createdAt','desc'), startAfter(state.alertsUI.lastDoc), limit(PAGE_MORE));
       }
-
       const snap = await getDocs(qFs);
-      if (!snap.size){
-        showFlash('NO HAY MÁS ALERTAS', 'info');
-        return;
-      }
+      if (!snap.size){ showFlash('NO HAY MÁS ALERTAS', 'info'); return; }
 
       const batch = [];
       snap.forEach(d => {
         const x = d.data() || {};
+        const ts = x.createdAt?.seconds ? new Date(x.createdAt.seconds*1000) : (x.createdAt?.toDate?.() || null);
+        const byEmail = (x?.createdBy?.email || '').toLowerCase();
+        const readBy  = x.readBy || {};       // { uid: true, ... }
         batch.push({
           id: d.id,
-          mensaje: (x.mensaje || '').toString(),
-          audience: (x.audience || '').toString(),
-          createdAt: x.createdAt?.seconds ? new Date(x.createdAt.seconds*1000) : null,
-          createdBy: x.createdBy || null,
+          mensaje: String(x.mensaje || ''),
+          audience: String(x.audience || ''),
+          createdAt: ts,
+          createdByEmail: byEmail,
+          readBy,
           groupInfo: x.groupInfo || null,
-          _q: normTxt([
+          _q: norm([
             x.mensaje,
             x.audience,
+            byEmail,
             x?.groupInfo?.actividad,
             x?.groupInfo?.destino,
             x?.groupInfo?.nombre,
@@ -473,49 +466,91 @@ if (typeof window !== 'undefined') {
       state.alertsUI.lastDoc = snap.docs[snap.docs.length - 1];
 
       renderAlertsPanel();
-    }catch(e){
+    } catch (e){
       console.error('[ALERTAS] fetch', e);
       showFlash('ERROR AL CARGAR ALERTAS', 'err');
-    }finally{
+    } finally {
       state.alertsUI.loading = false;
     }
   }
 
+  // --- Render list + filtros + orden + marcar leído
   function renderAlertsPanel(){
-    ensurePanel('alertsPanel');
-    const p = document.getElementById('alertsPanel');
+    ensureAlertsPanel();
+    const p    = document.getElementById('alertsPanel');
     const list = p.querySelector('#alList');
     const meta = p.querySelector('#alMeta');
+
+    const meUid   = state?.user?.uid || '';
+    const meEmail = (state?.user?.email || '').toLowerCase();
 
     const q = state.alertsUI.q;
     let arr = state.alertsUI.items.slice();
 
-    // ejemplo de filtro por audiencia (activalo si corresponde)
-    // if (!state.is) arr = arr.filter(a => a.audience !== 'staff_only');
-
+    // BUSCADOR
     if (q) arr = arr.filter(a => a._q.includes(q));
 
+    // FILTRO
+    const f = state.alertsUI.filter;
+    if (f === 'unread') arr = arr.filter(a => !a.readBy?.[meUid]);
+    if (f === 'read')   arr = arr.filter(a =>  a.readBy?.[meUid]);
+    if (f === 'ops')    arr = arr.filter(a => OPS_SENDERS.has(a.createdByEmail));
+    if (f === 'mine')   arr = arr.filter(a => a.createdByEmail === meEmail);
+
+    // ORDEN (fallback si falta fecha)
     arr.sort((a,b) => {
       const ta = a.createdAt ? a.createdAt.getTime() : 0;
       const tb = b.createdAt ? b.createdAt.getTime() : 0;
       return (state.alertsUI.sort === 'desc') ? (tb - ta) : (ta - tb);
     });
 
+    // DIBUJO
     if (!arr.length){
-      list.innerHTML = '<div class="muted">SIN ALERTAS (USA “REFRESCAR” O “CARGAR 20 MÁS”).</div>';
+      list.innerHTML = '<div class="muted">SIN ALERTAS PARA ESTE CRITERIO.</div>';
     } else {
       const frag = document.createDocumentFragment();
       arr.forEach(a => {
         const box = document.createElement('div');
+        const unread = !a.readBy?.[meUid];
         box.className = 'act';
         const cuando = a.createdAt
           ? new Intl.DateTimeFormat('es-CL',{ dateStyle:'short', timeStyle:'short' }).format(a.createdAt).toUpperCase()
           : '—';
+
+        // puntito si no leída
+        const dot = unread ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;margin-right:6px;vertical-align:middle"></span>' : '';
+
         box.innerHTML = `
-          <div class="meta"><strong>${(a.mensaje||'').toString().toUpperCase()}</strong></div>
-          <div class="meta muted">FECHA: ${cuando}${a.audience ? ' · AUDIENCIA: '+a.audience.toUpperCase() : ''}</div>
+          <div class="meta"><strong>${dot}${(a.mensaje||'').toUpperCase()}</strong></div>
+          <div class="meta muted">FECHA: ${cuando}${a.audience ? ' · AUDIENCIA: '+a.audience.toUpperCase() : ''}${a.createdByEmail ? ' · POR: '+a.createdByEmail : ''}</div>
           ${a.groupInfo ? `<div class="meta">GRUPO: ${(a.groupInfo.nombre||'—').toString().toUpperCase()} · ACT: ${(a.groupInfo.actividad||'—').toString().toUpperCase()} · DEST: ${(a.groupInfo.destino||'—').toString().toUpperCase()}</div>` : ''}
+          <div class="rowflex" style="gap:.4rem;margin-top:.35rem">
+            <button class="btn sec btnMark">${unread ? 'MARCAR LEÍDA' : 'MARCAR NO LEÍDA'}</button>
+          </div>
         `;
+
+        // toggle leído
+        box.querySelector('.btnMark').onclick = async () => {
+          try{
+            const path = doc(db,'alertas', a.id);
+            const payload = {};
+            if (unread){
+              payload[`readBy.${meUid}`] = true;
+            } else {
+              // quitar marca (deleteField)
+              payload[`readBy.${meUid}`] = deleteField();
+            }
+            await updateDoc(path, payload);
+            // espejo local
+            if (unread) (a.readBy ||= {})[meUid] = true;
+            else if (a.readBy) delete a.readBy[meUid];
+            renderAlertsPanel();
+          } catch(e){
+            console.error(e);
+            showFlash('NO SE PUDO ACTUALIZAR LECTURA', 'err');
+          }
+        };
+
         frag.appendChild(box);
       });
       list.innerHTML = '';
@@ -524,20 +559,24 @@ if (typeof window !== 'undefined') {
 
     meta.textContent =
       `MOSTRANDO ${arr.length} / CARGADAS ${state.alertsUI.totalLoaded} — ` +
-      `BUSCA PARA FILTRAR O “CARGAR 20 MÁS” PARA HISTÓRICO.`;
+      `USA BUSCADOR, FILTRO Y “CARGAR 20 MÁS”.`;
   }
 
+  // API pública
   window.renderGlobalAlerts = async () => {
     ensureAlertsPanel();
-    if (!state.alertsUI.inited) {
+    if (!state.alertsUI.inited){
       state.alertsUI.inited = true;
-      await fetchAlertsPage({ initial:true });
+      resetAlertsCache();
+      await fetchAlertsPage(true);
     } else {
-      state.alertsUI.items = [];
-      state.alertsUI.totalLoaded = 0;
-      state.alertsUI.lastDoc = null;
-      await fetchAlertsPage({ initial:true });
+      resetAlertsCache();
+      await fetchAlertsPage(true);
     }
+
+    // (defensa) oculta algún panel legacy si existiera
+    const legacy = document.getElementById('alerts'); // por si hay uno viejo con otra ID
+    if (legacy) legacy.style.display = 'none';
   };
 })();
 
