@@ -4077,7 +4077,7 @@ async function renderFinanzas(g, pane){
       <div class="lab">GASTOS</div>
       <div>CLP ${fmtCL(totGa.CLP||0)} · USD ${fmtCL(totGa.USD||0)} · BRL ${fmtCL(totGa.BRL||0)} · ARS ${fmtCL(totGa.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(gaCLP.CLPconv)}</strong></div>
       <div class="lab">SALDO</div>
-      <div><strong>${saldoCLP>=0?'A FAVOR COORD.':'A FAVOR EMPRESA'}: CLP ${fmtCL(saldoCLP)}</strong></div>
+      <div><strong>${saldoCLP>=0?'TRANSFERIR A EMPRESA:':'PETICIÓN DE TRASNFERENCIA A COORDINADOR(A):'}: CLP ${fmtCL(saldoCLP)}</strong></div>
     </div>
   `;
   wrap.appendChild(resum);
