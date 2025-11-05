@@ -337,12 +337,6 @@ const state = {
   }
 };
 
-// === Backdrop del modal (fix ReferenceError 'back') ===
-const $backdrop = () => document.getElementById('modalBack');
-function showBackdrop(){ const el = $backdrop(); if (el) el.style.display = 'flex'; }
-function hideBackdrop(){ const el = $backdrop(); if (el) el.style.display = 'none'; }
-
-
 // ——— GASTOS: resolver coordinador activo evitando "__ALL__"
 function getActiveCoordIdForGastos(){
   // Si el selector tiene un coordinador concreto, úsalo
@@ -658,7 +652,7 @@ if (typeof window !== 'undefined') {
 window.renderFinanzas ??= async ()=>0;
 window.setEstadoServicio ??= async ()=> showFlash('ESTADO ACTUALIZADO');
 window.openActividadModal ??= async ()=>{};
-window.staffResetInicio = async (g) => staffReopenInicio(g);
+window.staffResetInicio ??= async ()=>{};
 
 /* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
@@ -685,29 +679,34 @@ onAuthStateChanged(auth, async (user) => {
    const legacyNewAlert = document.getElementById('btnNewAlert');
    if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
-   // 🔽 crea hoja de impresión oculta (una vez)
-   ensurePrintDOM();
-   
-   // === Preferencias iniciales del panel de alertas según rol
+     // 🔽 crea hoja de impresión oculta
+     ensurePrintDOM();
+
+   // === Preferencias iniciales del panel de alertas según rol ===
    state.alertsUI ||= { filter:'all' };
    if (state.is) {
-     state.alertsUI.filter = state.alertsUI.filter ?? 'all';   // STAFF: TODAS
+     // STAFF: arrancar con "TODAS" (puedes cambiar a 'ops' si prefieres)
+     state.alertsUI.filter = state.alertsUI.filter ?? 'all';
    } else {
-     state.alertsUI.filter = 'unread';                         // COORD: NO LEÍDAS
+     // NO STAFF: arrancar con "NO LEÍDAS"
+     state.alertsUI.filter = 'unread';
    }
-   
-   // PANEL ALERTAS
-   await window.renderGlobalAlertsV2();
-   
-   // matar timers antiguos (defensivo) y crear auto-refresco 60s
-   try { if (state.alertsTimer)     { clearInterval(state.alertsTimer);     state.alertsTimer = null; } } catch(_) {}
-   try { if (window.rtAlertsTimer)  { clearInterval(window.rtAlertsTimer);  window.rtAlertsTimer  = null; } } catch(_) {}
-   try { if (window.alertsTimer)    { clearInterval(window.alertsTimer);    window.alertsTimer    = null; } } catch(_) {}
-   
-   if (!state.alertsTimer){
-     state.alertsTimer = setInterval(window.renderGlobalAlertsV2, 60000);
-     window.rtAlertsTimer = state.alertsTimer; // espejo legacy
-   }
+
+
+     // PANEL ALERTAS
+     await window.renderGlobalAlertsV2();
+
+      // matar cualquier timer viejo de versiones anteriores
+      try { if (state.alertsTimer)     { clearInterval(state.alertsTimer);     state.alertsTimer = null; } } catch(_) {}
+      try { if (window.rtAlertsTimer)  { clearInterval(window.rtAlertsTimer);  window.rtAlertsTimer  = null; } } catch(_) {}
+      try { if (window.alertsTimer)    { clearInterval(window.alertsTimer);    window.alertsTimer    = null; } } catch(_) {}
+      
+      // AUTO-REFRESCO CADA 60S (solo alertas, sin reordenar paneles)
+      if (!state.alertsTimer){
+        state.alertsTimer = setInterval(window.renderGlobalAlertsV2, 60000);
+        // opcional: espejo para legacy que miraba window.*
+        window.rtAlertsTimer = state.alertsTimer;
+      }
 });
 
 /* ====== CARGAS FIRESTORE ====== */
@@ -1012,26 +1011,27 @@ function renderNavBar(){
     else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; await renderOneGroup(state.ordenados[state.idx]); }
   };
 
-   if (state.is){
-     const btn = document.getElementById('btnPrintVch');
-     if (btn){
-       btn.textContent = 'IMPRIMIR DESPACHO';
-       btn.onclick = async () => {
-         try{
-           const g = state.ordenados[state.idx];
-           await preparePrintForGroup(g);   // deja listo #print-block
-           window.print();
-         }catch(e){
-           console.error('[PRINT] error', e);
-           alert('No se pudo preparar el despacho para imprimir.');
-         }
-       };
-     }
-   } else {
-     const btn = document.getElementById('btnPrintVch');
-     if (btn) btn.style.display = 'none';
-   }
-
+  // Botón imprimir sólo visible a STAFF
+  if (state.is){
+    const btn = document.getElementById('btnPrintVch');
+    if (btn){
+      btn.textContent = 'IMPRIMIR DESPACHO';
+      btn.onclick = async () => {
+        try{
+          const g = state.ordenados[state.idx];
+          await preparePrintForGroup(g);   // deja listo #print-block
+          window.print();
+        }catch(e){
+          console.error('[PRINT] error', e);
+          alert('No se pudo preparar el despacho para imprimir.');
+        }
+      };
+    }
+  } else {
+    const btn = document.getElementById('btnPrintVch');
+    if (btn) btn.style.display = 'none';
+  }
+}
 
 /* ====== VISTA GRUPO ====== */
 async function renderOneGroup(g, preferDate){
@@ -1123,7 +1123,7 @@ async function renderOneGroup(g, preferDate){
    
    // RESTABLECER (antes "Restablecer inicio")
    const btnR0 = header.querySelector('#btnResetInicio');
-   if (btnR0) btnR0.onclick = async () => { await staffReopenInicio(g); };
+   if (btnR0) btnR0.onclick = async () => { await staffResetInicio(g); };
 
    const histBox = header.querySelector('#viajeHistoryBox');
    renderViajeHistory(g, histBox);
@@ -2180,11 +2180,11 @@ async function openInicioViajeModal(g){
        console.warn('renderOneGroup después de inicio falló (no bloquea):', e?.code, e);
      }
    };
-
+   // === HASTA AQUÍ ===
 
 
   document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
-  showBackdrop();
+  back.style.display = 'flex';
 }
 
 async function ensureFinanzasSummary(groupId){
@@ -2246,7 +2246,7 @@ async function openTerminoViajeModal(g){
   };
 
   document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
-  showBackdrop();
+  back.style.display = 'flex';
 }
 
 // Reversión (solo STAFF)
@@ -2607,25 +2607,21 @@ OBSERVACIONES:
 
   // 5.b) Marcar como ENVIADA → guarda en Firestore + log + alerta
   document.getElementById('rtMarkSent').onclick = async () => {
-    const to = ($to.value || '').trim();
+    const to = ($to.value||'').trim();
     if (!to) { alert('COMPLETA EL CORREO DEL PROVEEDOR.'); return; }
-
     try {
-      const refGrupo = doc(db, 'grupos', g.id);
+      const refGrupo = doc(db,'grupos', g.id);
       const payload  = {};
-      payload[`serviciosEstado.${fechaISO}.${actKey}.correo`] = {
-        estado: 'ENVIADA',
-        enviadaAt: serverTimestamp()
-      };
+      payload[`serviciosEstado.${fechaISO}.${actKey}.correo`] = { estado:'ENVIADA', enviadaAt: serverTimestamp() };
       await updateDoc(refGrupo, payload);
 
       // espejo local
       (g.serviciosEstado ||= {});
       (g.serviciosEstado[fechaISO] ||= {});
       (g.serviciosEstado[fechaISO][actKey] ||= {});
-      g.serviciosEstado[fechaISO][actKey].correo = { estado: 'ENVIADA', enviadaAt: new Date() };
+      g.serviciosEstado[fechaISO][actKey].correo = { estado:'ENVIADA', enviadaAt: new Date() };
 
-      // log + alerta (no bloqueantes)
+      // log + alerta
       try {
         await appendViajeLog(
           g.id,
@@ -2633,26 +2629,24 @@ OBSERVACIONES:
           `DECLARACIÓN ENVIADA — ${actividadTX} — ${fechaTX} — PAX:${paxTX}`,
           { actividad: actividadTX, fecha: fechaTX, pax: paxTX }
         );
-
-        await addDoc(collection(db, 'alertas'), {
-          audience: '',
+        await addDoc(collection(db,'alertas'),{
+          audience:'',
           mensaje: `DECLARACIÓN ENVIADA — ${actividadTX} — ${fechaTX} — PAX:${paxTX}`,
           createdAt: serverTimestamp(),
-          createdBy: { uid: state.user.uid, email: (state.user.email || '').toLowerCase() },
-          readBy: {},
-          groupInfo: {
-            grupoId: g.id,
-            nombre: (g.nombreGrupo || g.aliasGrupo || g.id),
-            code: (g.numeroNegocio || '') + (g.identificador ? ('-' + g.identificador) : ''),
-            destino: (g.destino || null),
-            programa: (g.programa || null),
-            fechaActividad: fechaISO,
+          createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() },
+          readBy:{},
+          groupInfo:{
+            grupoId:g.id,
+            nombre:(g.nombreGrupo||g.aliasGrupo||g.id),
+            code: (g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):''),
+            destino:(g.destino||null),
+            programa:(g.programa||null),
+            fechaActividad:fechaISO,
             actividad: actividadTX
           }
         });
-
         await window.renderGlobalAlertsV2();
-      } catch (_) { /* sin bloqueo */ }
+      } catch (_) {}
 
       showFlash('CORREO MARCADO COMO ENVIADO');
       if ($fin) { $fin.disabled = false; $fin.removeAttribute('title'); }
@@ -2662,36 +2656,21 @@ OBSERVACIONES:
     }
   };
 
-  // 5.c) Finalizar / Pendiente
-  // - "Finalizar actividad" queda habilitado sólo tras marcar ENVIADA.
-  // - "Dejar pendiente" disponible siempre.
-  document.getElementById('vchPend').onclick = async () => {
-    try {
-      await setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
-      showFlash('ACTIVIDAD MARCADA PENDIENTE', 'info');
-      document.getElementById('modalBack').style.display = 'none';
-    } catch (e) {
-      console.error('Pendiente actividad', e);
-      alert('NO SE PUDO MARCAR PENDIENTE.');
-    }
+  // 5.c) Finalizar actividad (requiere PAX y correo ENVIADA)
+  document.getElementById('rtFinalizar').onclick = async () => {
+    const paxOk    = (getSavedAsistencia(g, fechaISO, act.actividad)?.paxFinal ?? null) != null;
+    const correoOk = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
+    if (!paxOk)  { alert('FALTA DECLARAR LA ASISTENCIA (PAX).'); return; }
+    if (!correoOk) { alert('PRIMERO MARCA EL CORREO COMO ENVIADO.'); return; }
+    await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
+    document.getElementById('modalBack').style.display='none';
   };
 
-  if ($fin) {
-    $fin.onclick = async () => {
-      try {
-        await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
-        showFlash('ACTIVIDAD FINALIZADA', 'ok');
-        document.getElementById('modalBack').style.display = 'none';
-         await reloadGroupAndRender(g.id);
-      } catch (e) {
-        console.error('Finalizar actividad', e);
-        alert('NO SE PUDO FINALIZAR LA ACTIVIDAD.');
-      }
-    };
-  }
+  // 5.d) Dejar PENDIENTE explícitamente
+  document.getElementById('vchPend').onclick = () =>
+    setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
 
-} // ← cierre de: else if (tipo === 'CORREO') {
-
+  } else {
     // ELECTRÓNICO (clave / NFC)
     const clave=(servicio?.clave||'').toString();
     body.innerHTML= `${voucherHTML}
@@ -2723,7 +2702,7 @@ OBSERVACIONES:
   }
 
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
-  showBackdrop();
+  back.style.display='flex';
 }
 
 async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
@@ -3453,7 +3432,7 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
   };
 
   document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
-  showBackdrop();
+  back.style.display='flex';
   await loadPage();
 }
 
@@ -3605,7 +3584,7 @@ async function openCreateAlertModal(){
     await window.renderGlobalAlertsV2();
   };
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
-  showBackdrop();
+  back.style.display='flex';
 }
 
 // ====== PANEL GLOBAL DE ALERTAS (COMPLETO) ======
@@ -4317,7 +4296,7 @@ async function openAbonoEditor(g, abono, onSaved){
   };
 
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
-  showBackdrop();
+  back.style.display='flex';
 }
 
 async function getTasas(){
@@ -4391,7 +4370,7 @@ function openPrintVouchersModal(){
     const w=window.open('','_blank','width=900,height=700'); w.document.write(html); w.document.close(); w.focus(); w.print();
   };
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
-  showBackdrop();
+  back.style.display='flex';
 }
 async function buildPrintableVouchers(list){
   let rows='';
