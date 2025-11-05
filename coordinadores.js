@@ -679,34 +679,29 @@ onAuthStateChanged(auth, async (user) => {
    const legacyNewAlert = document.getElementById('btnNewAlert');
    if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
-     // 🔽 crea hoja de impresión oculta
-     ensurePrintDOM();
-
-   // === Preferencias iniciales del panel de alertas según rol ===
+   // 🔽 crea hoja de impresión oculta (una vez)
+   ensurePrintDOM();
+   
+   // === Preferencias iniciales del panel de alertas según rol
    state.alertsUI ||= { filter:'all' };
    if (state.is) {
-     // STAFF: arrancar con "TODAS" (puedes cambiar a 'ops' si prefieres)
-     state.alertsUI.filter = state.alertsUI.filter ?? 'all';
+     state.alertsUI.filter = state.alertsUI.filter ?? 'all';   // STAFF: TODAS
    } else {
-     // NO STAFF: arrancar con "NO LEÍDAS"
-     state.alertsUI.filter = 'unread';
+     state.alertsUI.filter = 'unread';                         // COORD: NO LEÍDAS
    }
-
-
-     // PANEL ALERTAS
-     await window.renderGlobalAlertsV2();
-
-      // matar cualquier timer viejo de versiones anteriores
-      try { if (state.alertsTimer)     { clearInterval(state.alertsTimer);     state.alertsTimer = null; } } catch(_) {}
-      try { if (window.rtAlertsTimer)  { clearInterval(window.rtAlertsTimer);  window.rtAlertsTimer  = null; } } catch(_) {}
-      try { if (window.alertsTimer)    { clearInterval(window.alertsTimer);    window.alertsTimer    = null; } } catch(_) {}
-      
-      // AUTO-REFRESCO CADA 60S (solo alertas, sin reordenar paneles)
-      if (!state.alertsTimer){
-        state.alertsTimer = setInterval(window.renderGlobalAlertsV2, 60000);
-        // opcional: espejo para legacy que miraba window.*
-        window.rtAlertsTimer = state.alertsTimer;
-      }
+   
+   // PANEL ALERTAS
+   await window.renderGlobalAlertsV2();
+   
+   // matar timers antiguos (defensivo) y crear auto-refresco 60s
+   try { if (state.alertsTimer)     { clearInterval(state.alertsTimer);     state.alertsTimer = null; } } catch(_) {}
+   try { if (window.rtAlertsTimer)  { clearInterval(window.rtAlertsTimer);  window.rtAlertsTimer  = null; } } catch(_) {}
+   try { if (window.alertsTimer)    { clearInterval(window.alertsTimer);    window.alertsTimer    = null; } } catch(_) {}
+   
+   if (!state.alertsTimer){
+     state.alertsTimer = setInterval(window.renderGlobalAlertsV2, 60000);
+     window.rtAlertsTimer = state.alertsTimer; // espejo legacy
+   }
 });
 
 /* ====== CARGAS FIRESTORE ====== */
@@ -1011,27 +1006,26 @@ function renderNavBar(){
     else if(v.startsWith('trip:')){ state.idx=Number(v.slice(5))||0; await renderOneGroup(state.ordenados[state.idx]); }
   };
 
-  // Botón imprimir sólo visible a STAFF
-  if (state.is){
-    const btn = document.getElementById('btnPrintVch');
-    if (btn){
-      btn.textContent = 'IMPRIMIR DESPACHO';
-      btn.onclick = async () => {
-        try{
-          const g = state.ordenados[state.idx];
-          await preparePrintForGroup(g);   // deja listo #print-block
-          window.print();
-        }catch(e){
-          console.error('[PRINT] error', e);
-          alert('No se pudo preparar el despacho para imprimir.');
-        }
-      };
-    }
-  } else {
-    const btn = document.getElementById('btnPrintVch');
-    if (btn) btn.style.display = 'none';
-  }
-}
+   if (state.is){
+     const btn = document.getElementById('btnPrintVch');
+     if (btn){
+       btn.textContent = 'IMPRIMIR DESPACHO';
+       btn.onclick = async () => {
+         try{
+           const g = state.ordenados[state.idx];
+           await preparePrintForGroup(g);   // deja listo #print-block
+           window.print();
+         }catch(e){
+           console.error('[PRINT] error', e);
+           alert('No se pudo preparar el despacho para imprimir.');
+         }
+       };
+     }
+   } else {
+     const btn = document.getElementById('btnPrintVch');
+     if (btn) btn.style.display = 'none';
+   }
+
 
 /* ====== VISTA GRUPO ====== */
 async function renderOneGroup(g, preferDate){
@@ -2139,50 +2133,47 @@ async function openInicioViajeModal(g){
 
    // === REEMPLAZA DESDE AQUÍ ===
    body.querySelector('#ivSave').onclick = async () => {
-// === REEMPLAZA DESDE AQUÍ ===
-body.querySelector('#ivSave').onclick = async () => {
-  const A = Math.max(0, Number($A.value||0));
-  const E = Math.max(0, Number($E.value||0));
-  const total = A + E;
-
-  // Si no es el día de inicio y NO es STAFF, pedimos confirmación
-  if (!isToday(g.fechaInicio) && !state.is){
-    const ok = confirm('No es el día de inicio. ¿Confirmar de todas formas?');
-    if (!ok) return;
-  }
-
-  const path = doc(db,'grupos',g.id);
-
-  // 1) Guardado principal (si falla, aborta)
-  try {
-    await updateDoc(path, {
-      paxViajando: { A, E, total, by:(state.user.email||'').toLowerCase(), updatedAt: serverTimestamp() },
-      viaje: { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase() } }
-    });
-  } catch (e) {
-    console.error('INICIO: updateDoc FAILED', e?.code, e);
-    alert('No fue posible guardar el inicio del viaje. ' + (e?.code || ''));
-    return; // aborta si falló el guardado principal
-  }
-
-  // 2) Log inmutable (si falla, no bloquea)
-  try {
-    await appendViajeLog(g.id, 'INICIO', `INICIO DE VIAJE — A:${A} · E:${E} · TOTAL:${total}`, { A, E, total });
-  } catch (e) {
-    console.warn('appendViajeLog falló (no bloquea):', e?.code, e);
-  }
-
-  // 3) Refresco local + re-render (si falla, no bloquea)
-  try {
-    g.paxViajando = { A, E, total };
-    g.viaje = { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at:new Date(), by:(state.user.email||'').toLowerCase() } };
-    document.getElementById('modalBack').style.display='none';
-    await renderOneGroup(g);
-  } catch (e) {
-    console.warn('renderOneGroup después de inicio falló (no bloquea):', e?.code, e);
-  }
-};
-// === HASTA AQUÍ ===
+     const A = Math.max(0, Number($A.value||0));
+     const E = Math.max(0, Number($E.value||0));
+     const total = A + E;
+   
+     // Si no es el día de inicio y NO es STAFF, pedimos confirmación
+     if (!isToday(g.fechaInicio) && !state.is){
+       const ok = confirm('No es el día de inicio. ¿Confirmar de todas formas?');
+       if (!ok) return;
+     }
+   
+     const path = doc(db,'grupos',g.id);
+   
+     // 1) Guardado principal (si falla, aborta)
+     try {
+       await updateDoc(path, {
+         paxViajando: { A, E, total, by:(state.user.email||'').toLowerCase(), updatedAt: serverTimestamp() },
+         viaje: { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase() } }
+       });
+     } catch (e) {
+       console.error('INICIO: updateDoc FAILED', e?.code, e);
+       alert('No fue posible guardar el inicio del viaje. ' + (e?.code || ''));
+       return; // aborta si falló el guardado principal
+     }
+   
+     // 2) Log inmutable (si falla, no bloquea)
+     try {
+       await appendViajeLog(g.id, 'INICIO', `INICIO DE VIAJE — A:${A} · E:${E} · TOTAL:${total}`, { A, E, total });
+     } catch (e) {
+       console.warn('appendViajeLog falló (no bloquea):', e?.code, e);
+     }
+   
+     // 3) Refresco local + re-render (si falla, no bloquea)
+     try {
+       g.paxViajando = { A, E, total };
+       g.viaje = { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at:new Date(), by:(state.user.email||'').toLowerCase() } };
+       document.getElementById('modalBack').style.display='none';
+       await renderOneGroup(g);
+     } catch (e) {
+       console.warn('renderOneGroup después de inicio falló (no bloquea):', e?.code, e);
+     }
+   };
 
 
 
