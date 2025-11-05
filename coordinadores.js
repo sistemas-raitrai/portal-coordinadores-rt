@@ -337,6 +337,12 @@ const state = {
   }
 };
 
+// === Backdrop del modal (fix ReferenceError 'back') ===
+const $backdrop = () => document.getElementById('modalBack');
+function showBackdrop(){ const el = $backdrop(); if (el) el.style.display = 'flex'; }
+function hideBackdrop(){ const el = $backdrop(); if (el) el.style.display = 'none'; }
+
+
 // ——— GASTOS: resolver coordinador activo evitando "__ALL__"
 function getActiveCoordIdForGastos(){
   // Si el selector tiene un coordinador concreto, úsalo
@@ -2178,7 +2184,7 @@ async function openInicioViajeModal(g){
 
 
   document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
-  back.style.display = 'flex';
+  showBackdrop();
 }
 
 async function ensureFinanzasSummary(groupId){
@@ -2240,7 +2246,7 @@ async function openTerminoViajeModal(g){
   };
 
   document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
-  back.style.display = 'flex';
+  showBackdrop();
 }
 
 // Reversión (solo STAFF)
@@ -2717,7 +2723,7 @@ OBSERVACIONES:
   }
 
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
-  back.style.display='flex';
+  showBackdrop();
 }
 
 async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
@@ -3447,7 +3453,7 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
   };
 
   document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
-  back.style.display='flex';
+  showBackdrop();
   await loadPage();
 }
 
@@ -3599,7 +3605,7 @@ async function openCreateAlertModal(){
     await window.renderGlobalAlertsV2();
   };
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
-  back.style.display='flex';
+  showBackdrop();
 }
 
 // ====== PANEL GLOBAL DE ALERTAS (COMPLETO) ======
@@ -4311,7 +4317,7 @@ async function openAbonoEditor(g, abono, onSaved){
   };
 
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
-  back.style.display='flex';
+  showBackdrop();
 }
 
 async function getTasas(){
@@ -4385,7 +4391,7 @@ function openPrintVouchersModal(){
     const w=window.open('','_blank','width=900,height=700'); w.document.write(html); w.document.close(); w.focus(); w.print();
   };
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
-  back.style.display='flex';
+  showBackdrop();
 }
 async function buildPrintableVouchers(list){
   let rows='';
