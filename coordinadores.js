@@ -3897,32 +3897,34 @@ try {
   console.warn('Toggle ALERTAS no pudo inicializarse:', e);
 }
 
-
-  // Hook del botón (en caso de que el DOM se haya recreado)
+  // Crear alerta (STAFF)
   const btnCreate = box.querySelector('#btnCreateAlert');
   if (btnCreate) btnCreate.onclick = openCreateAlertModal;
-}
 
-  // Hook botón plegar/desplegar (recuerda estado entre recargas)
-  const foldBtn2 = box.querySelector('#btnToggleAlerts');
-  if (foldBtn2){
+  // Plegar / Desplegar panel de alertas
+  // OJO: 'area' es el contenedor que construimos más arriba con las secciones “Para mí” y “Operaciones”.
+  const foldBtn = box.querySelector('#btnToggleAlerts');
+  if (foldBtn) {
     const keyPref = 'rt__alerts_fold';
-    const area = box.querySelector(':scope > div:nth-of-type(2)'); // el contenedor que armamos con las listas
-    const apply = (fold)=>{
+
+    const apply = (fold) => {
       if (area) area.style.display = fold ? 'none' : '';
-      foldBtn2.textContent = fold ? '► MOSTRAR' : '▼ OCULTAR';
-      foldBtn2.setAttribute('aria-expanded', String(!fold));
+      foldBtn.textContent = fold ? '► MOSTRAR' : '▼ OCULTAR';
+      foldBtn.setAttribute('aria-expanded', String(!fold));
     };
-    // estado inicial desde localStorage
+
+    // Estado inicial desde localStorage
     const startFold = (localStorage.getItem(keyPref) === '1');
     apply(startFold);
-    // toggle + persistencia
-    foldBtn2.onclick = ()=>{
+
+    // Toggle + persistencia
+    foldBtn.onclick = () => {
       const nextFold = area ? (area.style.display !== 'none') : true;
       localStorage.setItem(keyPref, nextFold ? '1' : '0');
       apply(nextFold);
     };
   }
+} // <- cierre de renderGlobalAlerts
 
 /* ====== GASTOS ====== */
 async function renderGastos(g, pane){
