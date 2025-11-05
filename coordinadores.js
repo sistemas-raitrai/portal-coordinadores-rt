@@ -3594,6 +3594,51 @@ async function renderGlobalAlerts(){
   const box = document.getElementById('alertsPanel');
   if (!box) return;
 
+// === AGREGA DEBAJO DE ESA LÍNEA ===
+ensureAlertsFoldStrip(); // ← NUEVO: crea el panel/strip plegable si no existe
+
+// === BLOQUE NUEVO (ADICIÓN) ===
+function ensureAlertsFoldStrip(){
+  const panel = document.getElementById('alertsPanel');
+  if (!panel) return;
+
+  // si ya existe, no lo duplicamos
+  if (document.getElementById('alertsFoldStrip')) return;
+
+  // tira plegable
+  const strip = document.createElement('div');
+  strip.id = 'alertsFoldStrip';
+  strip.style.cssText = 'display:flex;align-items:center;justify-content:flex-start;margin:.35rem 0;';
+  strip.innerHTML = `
+    <button id="btnFoldAlerts" class="btn sec" aria-expanded="true">▼ OCULTAR ALERTAS</button>
+  `;
+
+  // insertar la tira ANTES del panel de alertas
+  panel.parentNode.insertBefore(strip, panel);
+
+  const btn = strip.querySelector('#btnFoldAlerts');
+
+  // estado recordado (1 = plegado) en localStorage
+  const loadPref = localStorage.getItem('rt__alerts_fold') === '1';
+
+  const apply = (fold)=>{
+    panel.style.display = fold ? 'none' : '';
+    btn.textContent = fold ? '► MOSTRAR ALERTAS' : '▼ OCULTAR ALERTAS';
+    btn.setAttribute('aria-expanded', String(!fold));
+  };
+
+  // aplicar preferencia al cargar
+  apply(loadPref);
+
+  // toggle y persistencia
+  btn.onclick = ()=>{
+    const foldNext = panel.style.display !== 'none'; // si está visible, ahora plegamos
+    localStorage.setItem('rt__alerts_fold', foldNext ? '1' : '0');
+    apply(foldNext);
+  };
+}
+
+
   // Estado inicial (evita parpadeo)
   box.innerHTML = `
     <div class="alert-head" style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
