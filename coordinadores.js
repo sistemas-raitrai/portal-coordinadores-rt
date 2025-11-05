@@ -2686,11 +2686,6 @@ OBSERVACIONES:
 
 } // ← cierre de: else if (tipo === 'CORREO') {
 
-  // 5.d) Dejar PENDIENTE explícitamente
-  document.getElementById('vchPend').onclick = () =>
-    setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
-
-  } else {
     // ELECTRÓNICO (clave / NFC)
     const clave=(servicio?.clave||'').toString();
     body.innerHTML= `${voucherHTML}
