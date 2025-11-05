@@ -3032,14 +3032,14 @@ async function collectItinLines(grupo){
         const provTxt  = (provDoc?.proveedor || provNom || '—').toString().toUpperCase();
         const estado   = (grupo?.serviciosEstado?.[f]?.[slug(actName)]?.estado || '').toString().toUpperCase();
 
-        out.push({
-          fechaISO: f,
-          hora: '',
-          actividad: actName.toUpperCase(),
-          proveedor: provTxt,
-          contacto: [contacto, telefono, correo].filter(Boolean).join(' · '),
-          estado
-        });
+         out.push({
+           fechaISO: f,
+           hora: (a?.horaInicio || '--:--'),
+           actividad: actName.toUpperCase(),
+           proveedor: provTxt,
+           contacto: [contacto, telefono, correo].filter(Boolean).join(' · '),
+           estado
+         });
       }catch(_){}
     }
   }
@@ -3175,14 +3175,16 @@ async function openPrintDespacho(g, w){
     <div class="small">VIAJE: ${fechasTxt} · DESTINO: ${(g.destino||'—').toString().toUpperCase()} · PROGRAMA: ${(g.programa||'—').toString().toUpperCase()}</div>
   `;
 
-  const itinRows = (itin||[]).map(x => `
-    <tr>
-      <td>${dmy(x.fechaISO)}</td>
-      <td>${(x.actividad||'').toString().toUpperCase()}</td>
-      <td>${(x.proveedor||'').toString().toUpperCase()}</td>
-      <td>${x.contacto||'—'}</td>
-      <td>${(x.estado||'').toString().toUpperCase()}</td>
-    </tr>`).join('');
+   const itinRows = (itin||[]).map(x => `
+     <tr>
+       <td>${dmy(x.fechaISO)}</td>
+       <td>${(x.hora || '--:--')}</td>
+       <td>${(x.actividad||'').toString().toUpperCase()}</td>
+       <td>${(x.proveedor||'').toString().toUpperCase()}</td>
+       <td>${x.contacto || '—'}</td>
+       <td>${(x.estado||'').toString().toUpperCase()}</td>
+     </tr>`).join('');
+
 
   const itinerario = `
     <h2>ITINERARIO</h2>
@@ -3190,7 +3192,7 @@ async function openPrintDespacho(g, w){
       <thead>
         <tr><th>FECHA</th><th>HORA</th><th>ACTIVIDAD</th><th>PROVEEDOR</th><th>CONTACTO</th><th>ESTADO</th></tr>
       </thead>
-      <tbody>${itinRows || '<tr><td colspan="5" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
+      <tbody>${itinRows || '<tr><td colspan="6" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
     </table>
   `;
 
