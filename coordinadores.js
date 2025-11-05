@@ -652,7 +652,7 @@ if (typeof window !== 'undefined') {
 window.renderFinanzas ??= async ()=>0;
 window.setEstadoServicio ??= async ()=> showFlash('ESTADO ACTUALIZADO');
 window.openActividadModal ??= async ()=>{};
-window.staffResetInicio ??= async ()=>{};
+window.staffResetInicio = async (g) => staffReopenInicio(g);
 
 /* ====== ARRANQUE ====== */
 onAuthStateChanged(auth, async (user) => {
@@ -1123,7 +1123,7 @@ async function renderOneGroup(g, preferDate){
    
    // RESTABLECER (antes "Restablecer inicio")
    const btnR0 = header.querySelector('#btnResetInicio');
-   if (btnR0) btnR0.onclick = async () => { await staffResetInicio(g); };
+   if (btnR0) btnR0.onclick = async () => { await staffReopenInicio(g); };
 
    const histBox = header.querySelector('#viajeHistoryBox');
    renderViajeHistory(g, histBox);
@@ -2139,48 +2139,51 @@ async function openInicioViajeModal(g){
 
    // === REEMPLAZA DESDE AQUÍ ===
    body.querySelector('#ivSave').onclick = async () => {
-     const A = Math.max(0, Number($A.value||0));
-     const E = Math.max(0, Number($E.value||0));
-     const total = A + E;
-   
-     // Si no es el día de inicio y NO es STAFF, pedimos confirmación
-     if (!isToday(g.fechaInicio) && !state.is){
-       const ok = confirm('No es el día de inicio. ¿Confirmar de todas formas?');
-       if (!ok) return;
-     }
-   
-     const path = doc(db,'grupos',g.id);
-   
-     // 1) Guardado principal (si falla, aborta)
-     try {
-       await updateDoc(path, {
-         paxViajando: { A, E, total, by:(state.user.email||'').toLowerCase(), updatedAt: serverTimestamp() },
-         viaje: { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase() } }
-       });
-     } catch (e) {
-       console.error('INICIO: updateDoc FAILED', e?.code, e);
-       alert('No fue posible guardar el inicio del viaje. ' + (e?.code || ''));
-       return; // aborta si falló el guardado principal
-     }
-   
-     // 2) Log inmutable (si falla, no bloquea)
-     try {
-       await appendViajeLog(g.id, 'INICIO', `INICIO DE VIAJE — A:${A} · E:${E} · TOTAL:${total}`, { A, E, total });
-     } catch (e) {
-       console.warn('appendViajeLog falló (no bloquea):', e?.code, e);
-     }
-   
-     // 3) Refresco local + re-render (si falla, no bloquea)
-     try {
-       g.paxViajando = { A, E, total };
-       g.viaje = { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at:new Date(), by:(state.user.email||'').toLowerCase() } };
-       document.getElementById('modalBack').style.display='none';
-       await renderOneGroup(g);
-     } catch (e) {
-       console.warn('renderOneGroup después de inicio falló (no bloquea):', e?.code, e);
-     }
-   };
-   // === HASTA AQUÍ ===
+// === REEMPLAZA DESDE AQUÍ ===
+body.querySelector('#ivSave').onclick = async () => {
+  const A = Math.max(0, Number($A.value||0));
+  const E = Math.max(0, Number($E.value||0));
+  const total = A + E;
+
+  // Si no es el día de inicio y NO es STAFF, pedimos confirmación
+  if (!isToday(g.fechaInicio) && !state.is){
+    const ok = confirm('No es el día de inicio. ¿Confirmar de todas formas?');
+    if (!ok) return;
+  }
+
+  const path = doc(db,'grupos',g.id);
+
+  // 1) Guardado principal (si falla, aborta)
+  try {
+    await updateDoc(path, {
+      paxViajando: { A, E, total, by:(state.user.email||'').toLowerCase(), updatedAt: serverTimestamp() },
+      viaje: { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at: serverTimestamp(), by:(state.user.email||'').toLowerCase() } }
+    });
+  } catch (e) {
+    console.error('INICIO: updateDoc FAILED', e?.code, e);
+    alert('No fue posible guardar el inicio del viaje. ' + (e?.code || ''));
+    return; // aborta si falló el guardado principal
+  }
+
+  // 2) Log inmutable (si falla, no bloquea)
+  try {
+    await appendViajeLog(g.id, 'INICIO', `INICIO DE VIAJE — A:${A} · E:${E} · TOTAL:${total}`, { A, E, total });
+  } catch (e) {
+    console.warn('appendViajeLog falló (no bloquea):', e?.code, e);
+  }
+
+  // 3) Refresco local + re-render (si falla, no bloquea)
+  try {
+    g.paxViajando = { A, E, total };
+    g.viaje = { ...(g.viaje||{}), estado:'EN_CURSO', inicio:{ at:new Date(), by:(state.user.email||'').toLowerCase() } };
+    document.getElementById('modalBack').style.display='none';
+    await renderOneGroup(g);
+  } catch (e) {
+    console.warn('renderOneGroup después de inicio falló (no bloquea):', e?.code, e);
+  }
+};
+// === HASTA AQUÍ ===
+
 
 
   document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
@@ -2607,21 +2610,25 @@ OBSERVACIONES:
 
   // 5.b) Marcar como ENVIADA → guarda en Firestore + log + alerta
   document.getElementById('rtMarkSent').onclick = async () => {
-    const to = ($to.value||'').trim();
+    const to = ($to.value || '').trim();
     if (!to) { alert('COMPLETA EL CORREO DEL PROVEEDOR.'); return; }
+
     try {
-      const refGrupo = doc(db,'grupos', g.id);
+      const refGrupo = doc(db, 'grupos', g.id);
       const payload  = {};
-      payload[`serviciosEstado.${fechaISO}.${actKey}.correo`] = { estado:'ENVIADA', enviadaAt: serverTimestamp() };
+      payload[`serviciosEstado.${fechaISO}.${actKey}.correo`] = {
+        estado: 'ENVIADA',
+        enviadaAt: serverTimestamp()
+      };
       await updateDoc(refGrupo, payload);
 
       // espejo local
       (g.serviciosEstado ||= {});
       (g.serviciosEstado[fechaISO] ||= {});
       (g.serviciosEstado[fechaISO][actKey] ||= {});
-      g.serviciosEstado[fechaISO][actKey].correo = { estado:'ENVIADA', enviadaAt: new Date() };
+      g.serviciosEstado[fechaISO][actKey].correo = { estado: 'ENVIADA', enviadaAt: new Date() };
 
-      // log + alerta
+      // log + alerta (no bloqueantes)
       try {
         await appendViajeLog(
           g.id,
@@ -2629,24 +2636,26 @@ OBSERVACIONES:
           `DECLARACIÓN ENVIADA — ${actividadTX} — ${fechaTX} — PAX:${paxTX}`,
           { actividad: actividadTX, fecha: fechaTX, pax: paxTX }
         );
-        await addDoc(collection(db,'alertas'),{
-          audience:'',
+
+        await addDoc(collection(db, 'alertas'), {
+          audience: '',
           mensaje: `DECLARACIÓN ENVIADA — ${actividadTX} — ${fechaTX} — PAX:${paxTX}`,
           createdAt: serverTimestamp(),
-          createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() },
-          readBy:{},
-          groupInfo:{
-            grupoId:g.id,
-            nombre:(g.nombreGrupo||g.aliasGrupo||g.id),
-            code: (g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):''),
-            destino:(g.destino||null),
-            programa:(g.programa||null),
-            fechaActividad:fechaISO,
+          createdBy: { uid: state.user.uid, email: (state.user.email || '').toLowerCase() },
+          readBy: {},
+          groupInfo: {
+            grupoId: g.id,
+            nombre: (g.nombreGrupo || g.aliasGrupo || g.id),
+            code: (g.numeroNegocio || '') + (g.identificador ? ('-' + g.identificador) : ''),
+            destino: (g.destino || null),
+            programa: (g.programa || null),
+            fechaActividad: fechaISO,
             actividad: actividadTX
           }
         });
+
         await window.renderGlobalAlertsV2();
-      } catch (_) {}
+      } catch (_) { /* sin bloqueo */ }
 
       showFlash('CORREO MARCADO COMO ENVIADO');
       if ($fin) { $fin.disabled = false; $fin.removeAttribute('title'); }
@@ -2656,15 +2665,35 @@ OBSERVACIONES:
     }
   };
 
-  // 5.c) Finalizar actividad (requiere PAX y correo ENVIADA)
-  document.getElementById('rtFinalizar').onclick = async () => {
-    const paxOk    = (getSavedAsistencia(g, fechaISO, act.actividad)?.paxFinal ?? null) != null;
-    const correoOk = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
-    if (!paxOk)  { alert('FALTA DECLARAR LA ASISTENCIA (PAX).'); return; }
-    if (!correoOk) { alert('PRIMERO MARCA EL CORREO COMO ENVIADO.'); return; }
-    await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
-    document.getElementById('modalBack').style.display='none';
+  // 5.c) Finalizar / Pendiente
+  // - "Finalizar actividad" queda habilitado sólo tras marcar ENVIADA.
+  // - "Dejar pendiente" disponible siempre.
+  document.getElementById('vchPend').onclick = async () => {
+    try {
+      await setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
+      showFlash('ACTIVIDAD MARCADA PENDIENTE', 'info');
+      document.getElementById('modalBack').style.display = 'none';
+    } catch (e) {
+      console.error('Pendiente actividad', e);
+      alert('NO SE PUDO MARCAR PENDIENTE.');
+    }
   };
+
+  if ($fin) {
+    $fin.onclick = async () => {
+      try {
+        await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
+        showFlash('ACTIVIDAD FINALIZADA', 'ok');
+        document.getElementById('modalBack').style.display = 'none';
+         await reloadGroupAndRender(g.id);
+      } catch (e) {
+        console.error('Finalizar actividad', e);
+        alert('NO SE PUDO FINALIZAR LA ACTIVIDAD.');
+      }
+    };
+  }
+
+} // ← cierre de: else if (tipo === 'CORREO') {
 
   // 5.d) Dejar PENDIENTE explícitamente
   document.getElementById('vchPend').onclick = () =>
