@@ -3776,6 +3776,16 @@ function ensureAlertsFoldStrip(){
   left.innerHTML = '<h4 style="margin:0">ALERTAS</h4>';
 
   const right = document.createElement('div');
+
+  // Botón plegar/desplegar alertas (siempre visible)
+  const foldBtn = document.createElement('button');
+  foldBtn.id = 'btnToggleAlerts';
+  foldBtn.className = 'btn sec';
+  foldBtn.setAttribute('aria-expanded', 'true');
+  foldBtn.textContent = '▼ OCULTAR';
+  right.appendChild(foldBtn);
+
+  // Botón crear alerta (solo STAFF)
   if (state.is){
     const btn = document.createElement('button');
     btn.id = 'btnCreateAlert';
@@ -3787,6 +3797,7 @@ function ensureAlertsFoldStrip(){
 
   head.appendChild(left);
   head.appendChild(right);
+
 
   const area = document.createElement('div');
 
@@ -3891,6 +3902,28 @@ try {
   const btnCreate = box.querySelector('#btnCreateAlert');
   if (btnCreate) btnCreate.onclick = openCreateAlertModal;
 }
+
+  // Hook botón plegar/desplegar (recuerda estado entre recargas)
+  const foldBtn2 = box.querySelector('#btnToggleAlerts');
+  if (foldBtn2){
+    const keyPref = 'rt__alerts_fold';
+    const area = box.querySelector(':scope > div:nth-of-type(2)'); // el contenedor que armamos con las listas
+    const apply = (fold)=>{
+      if (area) area.style.display = fold ? 'none' : '';
+      foldBtn2.textContent = fold ? '► MOSTRAR' : '▼ OCULTAR';
+      foldBtn2.setAttribute('aria-expanded', String(!fold));
+    };
+    // estado inicial desde localStorage
+    const startFold = (localStorage.getItem(keyPref) === '1');
+    apply(startFold);
+    // toggle + persistencia
+    foldBtn2.onclick = ()=>{
+      const nextFold = area ? (area.style.display !== 'none') : true;
+      localStorage.setItem(keyPref, nextFold ? '1' : '0');
+      apply(nextFold);
+    };
+  }
+
 /* ====== GASTOS ====== */
 async function renderGastos(g, pane){
   pane.innerHTML='';
