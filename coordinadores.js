@@ -3782,6 +3782,66 @@ async function renderGlobalAlerts(){
 
   box.appendChild(area);
 
+   // === ADICIÓN: hacer colapsable el panel de ALERTAS y añadir botón junto a "Refrescar" ===
+try {
+  // 1) Darle un id al contenedor de contenido y respetar estado previo
+  area.id = 'alertsContent';
+  if (window.__alertsCollapsed) area.style.display = 'none';
+
+  // 2) Crear (si no existe) el botón de toggle con chevron
+  const makeToggleBtn = () => {
+    const b = document.createElement('button');
+    b.id = 'btnToggleAlerts';
+    b.className = 'btn sec';
+    b.title = 'Mostrar/Ocultar alertas';
+    b.textContent = window.__alertsCollapsed ? '▸ ALERTAS' : '▾ ALERTAS';
+    b.onclick = () => {
+      const cont = document.getElementById('alertsContent');
+      if (!cont) return;
+      const willCollapse = cont.style.display !== 'none';
+      cont.style.display = willCollapse ? 'none' : '';
+      window.__alertsCollapsed = willCollapse;
+      b.textContent = willCollapse ? '▸ ALERTAS' : '▾ ALERTAS';
+    };
+    return b;
+  };
+
+  // 3) Intentar colocarlo DESPUÉS del botón "Refrescar"
+  let placed = false;
+  const refreshBtn =
+      document.getElementById('btnRefresh') ||
+      document.querySelector('[data-role="refresh"]') ||
+      Array.from(document.querySelectorAll('button')).find(x => /refrescar/i.test((x.textContent||'').trim()));
+
+  if (refreshBtn) {
+    let tgl = document.getElementById('btnToggleAlerts');
+    if (!tgl) {
+      tgl = makeToggleBtn();
+      refreshBtn.insertAdjacentElement('afterend', tgl);
+    } else {
+      tgl.textContent = window.__alertsCollapsed ? '▸ ALERTAS' : '▾ ALERTAS';
+    }
+    placed = true;
+  }
+
+  // 4) Fallback: si no hay "Refrescar", lo ponemos en el header de ALERTAS
+  if (!placed) {
+    // head está en este mismo scope
+    let tgl = document.getElementById('btnToggleAlerts');
+    if (!tgl) {
+      tgl = makeToggleBtn();
+      // Preferimos la derecha del header si existe botón CREAR ALERTA
+      const right = head.querySelector('#btnCreateAlert')?.parentElement || head;
+      right.prepend(tgl);
+    } else {
+      tgl.textContent = window.__alertsCollapsed ? '▸ ALERTAS' : '▾ ALERTAS';
+    }
+  }
+} catch (e) {
+  console.warn('Toggle ALERTAS no pudo inicializarse:', e);
+}
+
+
   // Hook del botón (en caso de que el DOM se haya recreado)
   const btnCreate = box.querySelector('#btnCreateAlert');
   if (btnCreate) btnCreate.onclick = openCreateAlertModal;
