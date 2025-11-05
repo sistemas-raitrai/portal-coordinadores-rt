@@ -3901,29 +3901,29 @@ try {
   const btnCreate = box.querySelector('#btnCreateAlert');
   if (btnCreate) btnCreate.onclick = openCreateAlertModal;
 
-  // Plegar / Desplegar panel de alertas
-  // OJO: 'area' es el contenedor que construimos más arriba con las secciones “Para mí” y “Operaciones”.
-  const foldBtn = box.querySelector('#btnToggleAlerts');
-  if (foldBtn) {
-    const keyPref = 'rt__alerts_fold';
-
-    const apply = (fold) => {
-      if (area) area.style.display = fold ? 'none' : '';
-      foldBtn.textContent = fold ? '► MOSTRAR' : '▼ OCULTAR';
-      foldBtn.setAttribute('aria-expanded', String(!fold));
-    };
-
-    // Estado inicial desde localStorage
-    const startFold = (localStorage.getItem(keyPref) === '1');
-    apply(startFold);
-
-    // Toggle + persistencia
-    foldBtn.onclick = () => {
-      const nextFold = area ? (area.style.display !== 'none') : true;
-      localStorage.setItem(keyPref, nextFold ? '1' : '0');
-      apply(nextFold);
-    };
-  }
+   // Plegar / Desplegar panel de alertas (usa el foldBtn creado arriba)
+   if (foldBtn) {
+     const keyPref = 'rt__alerts_fold';
+   
+     const apply = (fold) => {
+       if (area) area.style.display = fold ? 'none' : '';
+       // Texto del botón y accesibilidad
+       foldBtn.textContent = fold ? '► MOSTRAR' : '▼ OCULTAR';
+       foldBtn.setAttribute('aria-expanded', String(!fold));
+     };
+   
+     // Estado inicial desde localStorage
+     const startFold = localStorage.getItem(keyPref) === '1';
+     apply(startFold);
+   
+     // Toggle + persistencia
+     foldBtn.onclick = () => {
+       const isHidden = area && area.style.display === 'none';
+       const nextFold = !isHidden; // si está oculto => mostrar (fold=false); si está visible => ocultar (fold=true)
+       localStorage.setItem(keyPref, nextFold ? '1' : '0');
+       apply(nextFold);
+     };
+   }
 } // <- cierre de renderGlobalAlerts
 
 /* ====== GASTOS ====== */
