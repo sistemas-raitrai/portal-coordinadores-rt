@@ -3598,333 +3598,108 @@ async function renderGlobalAlerts(){
 ensureAlertsFoldStrip(); // ← NUEVO: crea el panel/strip plegable si no existe
 
 // === BLOQUE NUEVO (ADICIÓN) ===
+// Crea una tirita antes del panel de alertas con un botón para plegar/desplegar.
+// Persiste estado en localStorage ('rt__alerts_fold': '1' = plegado)
 function ensureAlertsFoldStrip(){
   const panel = document.getElementById('alertsPanel');
   if (!panel) return;
 
-  // si ya existe, no lo duplicamos
+  // No dupliques la tira si ya existe
   if (document.getElementById('alertsFoldStrip')) return;
 
-  // tira plegable
   const strip = document.createElement('div');
   strip.id = 'alertsFoldStrip';
   strip.style.cssText = 'display:flex;align-items:center;justify-content:flex-start;margin:.35rem 0;';
-  strip.innerHTML = `
-    <button id="btnFoldAlerts" class="btn sec" aria-expanded="true">▼ OCULTAR ALERTAS</button>
-  `;
+  strip.innerHTML = `<button id="btnFoldAlerts" class="btn sec" aria-expanded="true">▼ OCULTAR ALERTAS</button>`;
 
-  // insertar la tira ANTES del panel de alertas
+  // Inserta la tira antes del panel
   panel.parentNode.insertBefore(strip, panel);
 
   const btn = strip.querySelector('#btnFoldAlerts');
-
-  // estado recordado (1 = plegado) en localStorage
   const loadPref = localStorage.getItem('rt__alerts_fold') === '1';
 
-  const apply = (fold)=>{
+  const apply = (fold) => {
     panel.style.display = fold ? 'none' : '';
     btn.textContent = fold ? '► MOSTRAR ALERTAS' : '▼ OCULTAR ALERTAS';
     btn.setAttribute('aria-expanded', String(!fold));
   };
 
-  // aplicar preferencia al cargar
+  // Aplicar preferencia inicial
   apply(loadPref);
 
-  // toggle y persistencia
-  btn.onclick = ()=>{
-    const foldNext = panel.style.display !== 'none'; // si está visible, ahora plegamos
-    localStorage.setItem('rt__alerts_fold', foldNext ? '1' : '0');
-    apply(foldNext);
+  // Toggle + persistencia
+  btn.onclick = () => {
+    const willFold = panel.style.display !== 'none'; // si está visible → plegamos
+    localStorage.setItem('rt__alerts_fold', willFold ? '1' : '0');
+    apply(willFold);
   };
 }
 
+// ===== Header del panel + contenido =====
+box.innerHTML = ''; // limpiar el contenedor del panel
 
-  // Estado inicial (evita parpadeo)
-  box.innerHTML = `
-    <div class="alert-head" style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
-      <h4 style="margin:0">ALERTAS</h4>
-      ${state.is ? '<button id="btnCreateAlert" class="btn ok" id="btnCreateAlert">CREAR ALERTA</button>' : ''}
-    </div>
-    <div class="muted">CARGANDO…</div>
-  `;
+const head = document.createElement('div');
+head.className = 'alert-head';
+head.style.cssText = 'display:flex;align-items:center;gap:.5rem;justify-content:space-between';
 
-  // Cargar todas las alertas
-  let all = [];
-  try{
-    const qs = await getDocs(collection(db,'alertas'));
-    qs.forEach(d => all.push({ id:d.id, ...d.data() }));
-  }catch(e){
-    console.error(e);
-    box.innerHTML = '<div class="muted">NO SE PUDIERON CARGAR LAS ALERTAS.</div>';
-    return;
-  }
+const left = document.createElement('div');
+left.innerHTML = '<h4 style="margin:0">ALERTAS</h4>';
 
-  // Coord actual (para filtrar "para mí")
-  const myCoordId = state.is
-    ? (state.viewingCoordId || (state.coordinadores.find(c => (c.email||'').toLowerCase() === (state.user.email||'').toLowerCase())?.id || 'self'))
-    : (state.coordinadores.find(c => (c.email||'').toLowerCase() === (state.user.email||'').toLowerCase())?.id || 'self');
-
-  // Dos listas: a) “para mí” (audience !== '' y me incluye), b) “ops” (audience === '' → Operaciones)
-  const paraMi = all.filter(a => (a.audience !== '') && Array.isArray(a.forCoordIds) && a.forCoordIds.includes(myCoordId));
-  const ops    = state.is ? all.filter(a => a.audience === '') : [];
-
-  // Renderizador de listas con pestañas "No leídas / Leídas"
-  const renderList = (arr, scope) => {
-    const readerKey = (scope === 'ops') ? `:${(state.user.email||'').toLowerCase()}` : `coord:${myCoordId}`;
-
-    const isRead = (a) => {
-      const rb = a.readBy || {};
-      if (scope === 'ops') {
-        // para ops marcamos lectura por email con prefijo ':'
-        return Object.keys(rb||{}).some(k => k.startsWith(':'));
-      }
-      return !!rb[readerKey];
-    };
-
-    const unread = arr.filter(a => !isRead(a));
-    const read   = arr.filter(a =>  isRead(a));
-
-    const mkReadersLine = (a) => {
-      const rb = a.readBy || {};
-      const entries = Object.entries(rb).map(([k,v]) => {
-        const who  = (k || '').toString().toUpperCase();
-        const when = (v?.seconds) ? new Date(v.seconds*1000).toLocaleString('es-CL').toUpperCase() : '';
-        return `${who}${when ? (' · ' + when) : ''}`;
-      });
-      return entries.length ? `<div class="meta"><strong>LEÍDO POR:</strong> ${entries.join(' · ')}</div>` : '';
-    };
-
-    const mkCard = (a) => {
-      const li = document.createElement('div');
-      li.className = 'alert-card';
-
-      const fecha = a.createdAt?.seconds ? new Date(a.createdAt.seconds*1000).toLocaleDateString('es-CL').toUpperCase() : '';
-      const autorEmail  = (a.createdBy?.email || '').toUpperCase();
-      const autorNombre = upperNameByEmail(a.createdBy?.email || '');
-      const gi = a.groupInfo || null;
-
-      const cab = (scope === 'ops') ? 'NUEVO COMENTARIO' : 'NOTIFICACIÓN';
-      const tipoCoord = (scope !== 'ops')
-        ? (Array.isArray(a.forCoordIds) && a.forCoordIds.length > 1 ? 'GLOBAL' : 'PERSONAL')
-        : null;
-
-      li.innerHTML = `
-        <div class="alert-title">${cab}${tipoCoord ? ` · ${tipoCoord}` : ''}</div>
-        <div class="meta">FECHA: ${fecha} · AUTOR: ${autorNombre} (${autorEmail})</div>
-        ${gi ? `
-          <div class="meta">GRUPO: ${(gi.nombre||'').toString().toUpperCase()} (${(gi.code||'').toString().toUpperCase()}) · DESTINO: ${(gi.destino||'').toString().toUpperCase()} · PROGRAMA: ${(gi.programa||'').toString().toUpperCase()}</div>
-          <div class="meta">FECHA ACTIVIDAD: ${dmy(gi.fechaActividad||'')} · ACTIVIDAD: ${(gi.actividad||'').toString().toUpperCase()}</div>
-        ` : ''}
-        <div style="margin:.45rem 0">${(a.mensaje||'').toString().toUpperCase()}</div>
-        ${mkReadersLine(a)}
-        <div class="rowflex"><button class="btn ok btnRead">CONFIRMAR LECTURA</button></div>
-      `;
-
-      li.querySelector('.btnRead').onclick = async () => {
-        try{
-          const path = doc(db,'alertas', a.id);
-          const payload = {};
-          if (scope === 'ops') {
-            payload[`readBy.:${(state.user.email||'').toLowerCase()}`] = serverTimestamp();
-          } else {
-            payload[`readBy.coord:${myCoordId}`] = serverTimestamp();
-          }
-          await updateDoc(path, payload);
-          await window.renderGlobalAlertsV2();
-        }catch(e){
-          console.error(e);
-          alert('NO SE PUDO CONFIRMAR.');
-        }
-      };
-
-      return li;
-    };
-
-    const wrap = document.createElement('div');
-    const tabs = document.createElement('div'); tabs.className = 'tabs';
-    const t1 = document.createElement('div'); t1.className = 'tab active'; t1.textContent = `NO LEÍDAS (${unread.length})`;
-    const t2 = document.createElement('div'); t2.className = 'tab';         t2.textContent = `LEÍDAS (${read.length})`;
-    tabs.appendChild(t1); tabs.appendChild(t2); wrap.appendChild(tabs);
-
-    const cont = document.createElement('div'); wrap.appendChild(cont);
-
-    const renderTab = (which) => {
-      cont.innerHTML = '';
-      t1.classList.toggle('active', which === 'unread');
-      t2.classList.toggle('active', which === 'read');
-      const arr2 = (which === 'unread') ? unread : read;
-      if (!arr2.length) {
-        cont.innerHTML = '<div class="muted">SIN MENSAJES.</div>';
-        return;
-      }
-      arr2.forEach(a => cont.appendChild(mkCard(a)));
-    };
-
-    t1.onclick = () => renderTab('unread');
-    t2.onclick = () => renderTab('read');
-    renderTab('unread');
-
-    return { ui: wrap, unreadCount: unread.length, readCount: read.length };
-  };
-
-  // Construcción final del panel
-  const head = document.createElement('div');
-  head.className = 'alert-head';
-  head.style.cssText = 'display:flex;align-items:center;gap:.5rem;justify-content:space-between';
-
-  const left = document.createElement('div');
-  left.innerHTML = '<h4 style="margin:0">ALERTAS</h4>';
-
-  const right = document.createElement('div');
-
-  // Botón plegar/desplegar alertas (siempre visible)
-  const foldBtn = document.createElement('button');
-  foldBtn.id = 'btnToggleAlerts';
-  foldBtn.className = 'btn sec';
-  foldBtn.setAttribute('aria-expanded', 'true');
-  foldBtn.textContent = '▼ OCULTAR';
-  right.appendChild(foldBtn);
-
-  // Botón crear alerta (solo STAFF)
-  if (state.is){
-    const btn = document.createElement('button');
-    btn.id = 'btnCreateAlert';
-    btn.className = 'btn ok';
-    btn.textContent = 'CREAR ALERTA';
-    btn.onclick = openCreateAlertModal;
-    right.appendChild(btn);
-  }
-
-  head.appendChild(left);
-  head.appendChild(right);
-
-
-  const area = document.createElement('div');
-
-  const mi = renderList(paraMi, 'mi');
-  const op = state.is ? renderList(ops, 'ops') : null;
-
-  // Limpia y compone
-  box.innerHTML = '';
-  box.appendChild(head);
-
-  // Sección "Para mí"
-  const secMi = document.createElement('div');
-  secMi.className = 'act';
-  secMi.innerHTML = `<h4>PARA MÍ</h4>`;
-  secMi.appendChild(mi ? mi.ui : document.createTextNode(''));
-  if (!mi || (mi.unreadCount + mi.readCount) === 0){
-    const empty = document.createElement('div');
-    empty.className = 'muted';
-    empty.textContent = 'SIN ALERTAS.';
-    secMi.appendChild(empty);
-  }
-  area.appendChild(secMi);
-
-  // Sección "Operaciones" (solo STAFF)
-  if (state.is){
-    const secOp = document.createElement('div');
-    secOp.className = 'act';
-    secOp.innerHTML = `<h4>OPERACIONES</h4>`;
-    secOp.appendChild(op ? op.ui : document.createTextNode(''));
-    if (!op || (op.unreadCount + op.readCount) === 0){
-      const empty2 = document.createElement('div');
-      empty2.className = 'muted';
-      empty2.textContent = 'SIN MENSAJES PARA OPERACIONES.';
-      secOp.appendChild(empty2);
-    }
-    area.appendChild(secOp);
-  }
-
-  box.appendChild(area);
-
-   // === ADICIÓN: hacer colapsable el panel de ALERTAS y añadir botón junto a "Refrescar" ===
-try {
-  // 1) Darle un id al contenedor de contenido y respetar estado previo
-  area.id = 'alertsContent';
-  if (window.__alertsCollapsed) area.style.display = 'none';
-
-  // 2) Crear (si no existe) el botón de toggle con chevron
-  const makeToggleBtn = () => {
-    const b = document.createElement('button');
-    b.id = 'btnToggleAlerts';
-    b.className = 'btn sec';
-    b.title = 'Mostrar/Ocultar alertas';
-    b.textContent = window.__alertsCollapsed ? '▸ ALERTAS' : '▾ ALERTAS';
-    b.onclick = () => {
-      const cont = document.getElementById('alertsContent');
-      if (!cont) return;
-      const willCollapse = cont.style.display !== 'none';
-      cont.style.display = willCollapse ? 'none' : '';
-      window.__alertsCollapsed = willCollapse;
-      b.textContent = willCollapse ? '▸ ALERTAS' : '▾ ALERTAS';
-    };
-    return b;
-  };
-
-  // 3) Intentar colocarlo DESPUÉS del botón "Refrescar"
-  let placed = false;
-  const refreshBtn =
-      document.getElementById('btnRefresh') ||
-      document.querySelector('[data-role="refresh"]') ||
-      Array.from(document.querySelectorAll('button')).find(x => /refrescar/i.test((x.textContent||'').trim()));
-
-  if (refreshBtn) {
-    let tgl = document.getElementById('btnToggleAlerts');
-    if (!tgl) {
-      tgl = makeToggleBtn();
-      refreshBtn.insertAdjacentElement('afterend', tgl);
-    } else {
-      tgl.textContent = window.__alertsCollapsed ? '▸ ALERTAS' : '▾ ALERTAS';
-    }
-    placed = true;
-  }
-
-  // 4) Fallback: si no hay "Refrescar", lo ponemos en el header de ALERTAS
-  if (!placed) {
-    // head está en este mismo scope
-    let tgl = document.getElementById('btnToggleAlerts');
-    if (!tgl) {
-      tgl = makeToggleBtn();
-      // Preferimos la derecha del header si existe botón CREAR ALERTA
-      const right = head.querySelector('#btnCreateAlert')?.parentElement || head;
-      right.prepend(tgl);
-    } else {
-      tgl.textContent = window.__alertsCollapsed ? '▸ ALERTAS' : '▾ ALERTAS';
-    }
-  }
-} catch (e) {
-  console.warn('Toggle ALERTAS no pudo inicializarse:', e);
+const right = document.createElement('div');
+// Botón crear alerta — SOLO STAFF
+if (state.is){
+  const btn = document.createElement('button');
+  btn.id = 'btnCreateAlert';
+  btn.className = 'btn ok';
+  btn.textContent = 'CREAR ALERTA';
+  btn.onclick = openCreateAlertModal;
+  right.appendChild(btn);
 }
 
-  // Crear alerta (STAFF)
-  const btnCreate = box.querySelector('#btnCreateAlert');
-  if (btnCreate) btnCreate.onclick = openCreateAlertModal;
+head.appendChild(left);
+head.appendChild(right);
+box.appendChild(head);
 
-   // Plegar / Desplegar panel de alertas (usa el foldBtn creado arriba)
-   if (foldBtn) {
-     const keyPref = 'rt__alerts_fold';
-   
-     const apply = (fold) => {
-       if (area) area.style.display = fold ? 'none' : '';
-       // Texto del botón y accesibilidad
-       foldBtn.textContent = fold ? '► MOSTRAR' : '▼ OCULTAR';
-       foldBtn.setAttribute('aria-expanded', String(!fold));
-     };
-   
-     // Estado inicial desde localStorage
-     const startFold = localStorage.getItem(keyPref) === '1';
-     apply(startFold);
-   
-     // Toggle + persistencia
-     foldBtn.onclick = () => {
-       const isHidden = area && area.style.display === 'none';
-       const nextFold = !isHidden; // si está oculto => mostrar (fold=false); si está visible => ocultar (fold=true)
-       localStorage.setItem(keyPref, nextFold ? '1' : '0');
-       apply(nextFold);
-     };
-   }
-} // <- cierre de renderGlobalAlerts
+// Contenedor de listas ("Para mí" / "Operaciones")
+const area = document.createElement('div');
+area.id = 'alertsContent';
+box.appendChild(area);
+
+// Construcción de listas ya calculadas arriba: paraMi / ops
+const mi = renderList(paraMi, 'mi');
+const op = state.is ? renderList(ops, 'ops') : null;
+
+// Sección "Para mí"
+const secMi = document.createElement('div');
+secMi.className = 'act';
+secMi.innerHTML = `<h4>PARA MÍ</h4>`;
+secMi.appendChild(mi ? mi.ui : document.createTextNode(''));
+if (!mi || (mi.unreadCount + mi.readCount) === 0){
+  const empty = document.createElement('div');
+  empty.className = 'muted';
+  empty.textContent = 'SIN ALERTAS.';
+  secMi.appendChild(empty);
+}
+area.appendChild(secMi);
+
+// Sección "Operaciones" (solo STAFF)
+if (state.is){
+  const secOp = document.createElement('div');
+  secOp.className = 'act';
+  secOp.innerHTML = `<h4>OPERACIONES</h4>`;
+  secOp.appendChild(op ? op.ui : document.createTextNode(''));
+  if (!op || (op.unreadCount + op.readCount) === 0){
+    const empty2 = document.createElement('div');
+    empty2.className = 'muted';
+    empty2.textContent = 'SIN MENSAJES PARA OPERACIONES.';
+    secOp.appendChild(empty2);
+  }
+  area.appendChild(secOp);
+}
+
+// Inserta la tira plegable (y aplica el estado guardado)
+ensureAlertsFoldStrip();
+
 
 /* ====== GASTOS ====== */
 async function renderGastos(g, pane){
