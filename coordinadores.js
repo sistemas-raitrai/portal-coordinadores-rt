@@ -4229,17 +4229,178 @@ function ensureAlertsFoldStrip(){
   };
 }
 
-// ====== PANEL GLOBAL DE ALERTAS (COMPLETO) ======
-async function renderGlobalAlerts(){
-  const box = document.getElementById('alertsPanel');
-  if (!box) return;
+// ====== PANEL GLOBAL DE ALERTAS (COMPLETO) — V2 AUTOSUFICIENTE ======
+async function renderGlobalAlertsV2(){
+  const panel = document.getElementById('alertsPanel');
+  if (!panel) return;
 
-  // Inserta/asegura la tira plegable (strip) antes del panel
+  // ---------- helpers ----------
+  const meEmail = (state?.user?.email || (auth?.currentUser?.email) || '').toLowerCase();
+  const coordMapByEmail = new Map((state?.coordinadores || []).map(c => [String(c.email||'').toLowerCase(), c.id]));
+  const activeCoordId = (()=>{
+    // Si eres STAFF y estás “viendo” un coordinador concreto, úsalo;
+    // si estás en __ALL__, caemos al coordinador por email (si existe).
+    if (state?.is) {
+      const vid = state?.viewingCoordId;
+      if (vid && vid !== '__ALL__') return vid;
+    }
+    return coordMapByEmail.get(meEmail) || null;
+  })();
+
+  const tsToDate = (ts)=>{
+    if (!ts) return null;
+    if (typeof ts.toDate === 'function') return ts.toDate();
+    if (typeof ts.seconds === 'number') return new Date(ts.seconds*1000);
+    return null;
+  };
+
+  const fmtDateTimeCL = (d)=>{
+    if (!d) return '';
+    try{ return d.toLocaleString('es-CL', { dateStyle:'short', timeStyle:'short' }); }
+    catch(_){ return d.toISOString().slice(0,16).replace('T',' '); }
+  };
+
+  function ensureAlertsFoldStrip(){
+    if (!panel) return;
+    if (document.getElementById('alertsFoldStrip')) return; // no duplicar
+
+    const strip = document.createElement('div');
+    strip.id = 'alertsFoldStrip';
+    strip.style.cssText = 'display:flex;align-items:center;justify-content:flex-start;margin:.35rem 0;';
+    strip.innerHTML = `<button id="btnFoldAlerts" class="btn sec" aria-expanded="true">▼ OCULTAR ALERTAS</button>`;
+    panel.parentNode.insertBefore(strip, panel);
+
+    const btn = strip.querySelector('#btnFoldAlerts');
+    const savedFold = localStorage.getItem('rt__alerts_fold') === '1';
+
+    const apply = (fold) => {
+      panel.style.display = fold ? 'none' : '';
+      btn.textContent = fold ? '► MOSTRAR ALERTAS' : '▼ OCULTAR ALERTAS';
+      btn.setAttribute('aria-expanded', String(!fold));
+    };
+    apply(savedFold);
+
+    btn.onclick = () => {
+      const willFold = panel.style.display !== 'none';
+      localStorage.setItem('rt__alerts_fold', willFold ? '1' : '0');
+      apply(willFold);
+    };
+  }
+
+  async function markAsRead(alertId, coordId){
+    if (!coordId) return;
+    try{
+      await updateDoc(doc(db,'alertas', alertId), { [`readBy.${coordId}`]: serverTimestamp() });
+    }catch(e){ console.warn('markAsRead', e); }
+  }
+
+  function buildListUI(items, kind, coordId){
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:grid;gap:.4rem';
+
+    if (!items || !items.length){
+      const empty = document.createElement('div');
+      empty.className = 'muted';
+      empty.textContent = kind === 'mi' ? 'SIN ALERTAS.' : 'SIN MENSAJES PARA OPERACIONES.';
+      wrap.appendChild(empty);
+      return { ui: wrap, unreadCount: 0, readCount: 0 };
+    }
+
+    let unread = 0;
+    items.forEach(a=>{
+      const card = document.createElement('div');
+      card.className = 'card';
+      const read = !!a.read;
+      if (!read) unread++;
+
+      card.innerHTML = `
+        <div class="meta" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+          ${!read ? `<span title="No leída" style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block"></span>` : ''}
+          <strong>${(a.mensaje||'').toString().toUpperCase()}</strong>
+        </div>
+        <div class="meta">CREADA: ${fmtDateTimeCL(a.createdAt)}</div>
+        ${a.metaTxt ? `<div class="meta">${a.metaTxt}</div>` : ''}
+      `;
+
+      card.style.cursor = 'pointer';
+      card.onclick = async ()=>{
+        if (!a.read){
+          await markAsRead(a.id, coordId);
+          a.read = true;
+          // feedback visual simple
+          card.querySelector('span[title="No leída"]')?.remove();
+        }
+      };
+
+      wrap.appendChild(card);
+    });
+
+    return { ui: wrap, unreadCount: unread, readCount: items.length - unread };
+  }
+
+  async function fetchAlertsForMe(coordId){
+    if (!coordId) return [];
+    try{
+      const q1 = query(
+        collection(db,'alertas'),
+        where('audience','==','coord'),
+        where('forCoordIds','array-contains', coordId),
+        orderBy('createdAt','desc'),
+        limit(100)
+      );
+      const snap = await getDocs(q1);
+      const list = [];
+      snap.forEach(d=>{
+        const x = d.data() || {};
+        list.push({
+          id: d.id,
+          mensaje: String(x.mensaje||''),
+          createdAt: tsToDate(x.createdAt),
+          read: !!(x.readBy && x.readBy[coordId]),
+          metaTxt: (x.meta && x.meta.filtros)
+            ? `FILTROS: ${(x.meta.filtros.destinos||[]).join(', ')} ${x.meta.filtros.rango?('· RANGO: '+x.meta.filtros.rango):''}`
+            : ''
+        });
+      });
+      return list;
+    }catch(e){
+      console.warn('fetchAlertsForMe', e);
+      return [];
+    }
+  }
+
+  async function fetchAlertsOps(){
+    if (!state?.is) return [];
+    try{
+      const q2 = query(
+        collection(db,'alertas'),
+        where('audience','==','ops'),
+        orderBy('createdAt','desc'),
+        limit(100)
+      );
+      const snap = await getDocs(q2);
+      const list = [];
+      snap.forEach(d=>{
+        const x = d.data() || {};
+        list.push({
+          id: d.id,
+          mensaje: String(x.mensaje||''),
+          createdAt: tsToDate(x.createdAt),
+          read: false,
+          metaTxt: ''
+        });
+      });
+      return list;
+    }catch(e){
+      console.warn('fetchAlertsOps', e);
+      return [];
+    }
+  }
+
+  // ---------- UI ----------
   ensureAlertsFoldStrip();
 
-  // Header del panel + contenido
-  box.innerHTML = ''; // limpiar el contenedor del panel
-
+  panel.innerHTML = '';
   const head = document.createElement('div');
   head.className = 'alert-head';
   head.style.cssText = 'display:flex;align-items:center;gap:.5rem;justify-content:space-between';
@@ -4248,443 +4409,53 @@ async function renderGlobalAlerts(){
   left.innerHTML = '<h4 style="margin:0">ALERTAS</h4>';
 
   const right = document.createElement('div');
-  // Botón crear alerta — SOLO STAFF
-  if (state.is){
+  if (state?.is){
     const btn = document.createElement('button');
     btn.id = 'btnCreateAlert';
     btn.className = 'btn ok';
     btn.textContent = 'CREAR ALERTA';
-    btn.onclick = openCreateAlertModal;
+    btn.onclick = openCreateAlertModal; // ya la tienes definida arriba
     right.appendChild(btn);
   }
 
   head.appendChild(left);
   head.appendChild(right);
-  box.appendChild(head);
+  panel.appendChild(head);
 
-  // Contenedor de listas ("Para mí" / "Operaciones")
   const area = document.createElement('div');
   area.id = 'alertsContent';
-  box.appendChild(area);
+  panel.appendChild(area);
 
-  // Construcción de listas ya calculadas arriba: paraMi / ops
-  // OJO: asume que arriba en tu flujo ya calculaste paraMi / ops y tienes renderList()
-  const mi = (typeof renderList==='function') ? renderList(paraMi, 'mi') : null;
-  const op = (state.is && typeof renderList==='function') ? renderList(ops, 'ops') : null;
+  // Cargas paralelas
+  const [miList, opsList] = await Promise.all([
+    fetchAlertsForMe(activeCoordId),
+    fetchAlertsOps()
+  ]);
 
-  // Sección "Para mí"
+  // PARÁ MI
   const secMi = document.createElement('div');
   secMi.className = 'act';
-  secMi.innerHTML = `<h4>PARA MÍ</h4>`;
-  secMi.appendChild(mi ? mi.ui : document.createTextNode(''));
-  if (!mi || (mi.unreadCount + mi.readCount) === 0){
-    const empty = document.createElement('div');
-    empty.className = 'muted';
-    empty.textContent = 'SIN ALERTAS.';
-    secMi.appendChild(empty);
-  }
+  secMi.innerHTML = `<h4>PARA MÍ${!activeCoordId ? ' <span class="muted">(selecciona coordinador)</span>' : ''}</h4>`;
+  const mi = buildListUI(miList, 'mi', activeCoordId);
+  secMi.appendChild(mi.ui);
   area.appendChild(secMi);
 
-  // Sección "Operaciones" (solo STAFF)
-  if (state.is){
+  // OPERACIONES (solo STAFF)
+  if (state?.is){
     const secOp = document.createElement('div');
     secOp.className = 'act';
     secOp.innerHTML = `<h4>OPERACIONES</h4>`;
-    secOp.appendChild(op ? op.ui : document.createTextNode(''));
-    if (!op || (op.unreadCount + op.readCount) === 0){
-      const empty2 = document.createElement('div');
-      empty2.className = 'muted';
-      empty2.textContent = 'SIN MENSAJES PARA OPERACIONES.';
-      secOp.appendChild(empty2);
-    }
+    const op = buildListUI(opsList, 'ops', activeCoordId);
+    secOp.appendChild(op.ui);
     area.appendChild(secOp);
   }
-
-  // Reaplicar el estado guardado (por si se re-renderiza)
-  ensureAlertsFoldStrip();
-}
-// Alias para llamadas internas previas
-window.renderGlobalAlertsV2 = renderGlobalAlerts;
-
-/* ====== GASTOS ====== */
-async function renderGastos(g, pane){
-  pane.innerHTML='';
-  const form=document.createElement('div'); form.className='act';
-  form.innerHTML=`
-    <h4>REGISTRAR GASTO</h4>
-    <div class="rowflex" style="margin:.4rem 0">
-      <input id="spAsunto" type="text" placeholder="ASUNTO"/>
-    </div>
-    <div class="rowflex" style="margin:.4rem 0">
-      <select id="spMoneda">
-        <option value="CLP">CLP</option><option value="USD">USD</option><option value="BRL">BRL</option><option value="ARS">ARS</option>
-      </select>
-      <input id="spValor" type="number" min="0" inputmode="numeric" placeholder="VALOR"/>
-      <input id="spImg" type="file" accept="image/*" capture="environment"/>
-      <button id="spSave" class="btn ok">GUARDAR GASTO</button>
-    </div>`;
-  pane.appendChild(form);
-
-  const listBox=document.createElement('div'); listBox.className='act';
-  listBox.innerHTML='<h4>GASTOS DEL GRUPO</h4><div class="muted">CARGANDO…</div>';
-  pane.appendChild(listBox);
-
-  // ⛔️ Si el STAFF está en "TODOS", no consultamos subcolecciones inválidas
-  if (state.is && state.viewingCoordId === '__ALL__'){
-    form.style.display = 'none';
-    listBox.innerHTML = '<h4>GASTOS DEL GRUPO</h4><div class="muted">SELECCIONA UN COORDINADOR EN EL SELECTOR PARA VER/REGISTRAR GASTOS.</div>';
-    return 0;
-  }
-
-  const coordId = (typeof getActiveCoordIdForGastos==='function') ? getActiveCoordIdForGastos() : (state.viewingCoordId||null);
-
-  form.querySelector('#spSave').onclick=async ()=>{
-    const btn=form.querySelector('#spSave');
-    try{
-      const asunto=(form.querySelector('#spAsunto').value||'').trim();
-      const moneda=form.querySelector('#spMoneda').value;
-      const valor =Number(form.querySelector('#spValor').value||0);
-      const file  =form.querySelector('#spImg').files[0]||null;
-      if(!asunto || !valor){ alert('ASUNTO Y VALOR OBLIGATORIOS.'); return; }
-
-      btn.disabled=true;
-      let imgUrl=null, imgPath=null;
-      if(file){
-        if (file.size > 10*1024*1024){ alert('LA IMAGEN SUPERA 10MB.'); btn.disabled=false; return; }
-        const safe = file.name.replace(/[^a-z0-9.\-_]/gi,'_');
-        const uid  = (auth?.currentUser && auth.currentUser.uid) || state.user?.uid || 'anon';
-        const path = `gastos/${uid}/${Date.now()}_${safe}`;
-        const r    = sRef(storage, path);
-        await uploadBytes(r, file, { contentType: file.type || 'image/jpeg' });
-        imgUrl  = await getDownloadURL(r); imgPath = path;
-      }
-
-      await addDoc(collection(db,'coordinadores',coordId,'gastos'),{
-        asunto, moneda, valor, imgUrl, imgPath,
-        grupoId:g.id, numeroNegocio:g.numeroNegocio, identificador:g.identificador||null,
-        grupoNombre:g.nombreGrupo||g.aliasGrupo||g.id, destino:g.destino||null, programa:g.programa||null,
-      fechaInicio:g.fechaInicio||null, fechaFin:g.fechaFin||null,
-        byUid: state.user?.uid || null, byEmail:(state.user?.email||'').toLowerCase(),
-        createdAt: serverTimestamp()
-      });
-      form.querySelector('#spAsunto').value=''; form.querySelector('#spValor').value=''; form.querySelector('#spImg').value='';
-      await loadGastosList(g, listBox, coordId);
-    }catch(e){ console.error(e); alert('NO FUE POSIBLE GUARDAR EL GASTO.'); }
-    finally{ btn.disabled=false; }
-  };
-
-  const hits = await loadGastosList(g, listBox, coordId);
-  return hits;
 }
 
-/* ===================== FINANZAS ===================== */
+// Compatibilidad: deja el nombre antiguo apuntando a V2
+async function renderGlobalAlerts(){ return renderGlobalAlertsV2(); }
 
-function toNumber(n){ return Number(n||0); }
-function fmtCL(n){ return toNumber(n).toLocaleString('es-CL'); }
-
-/* ===== TASAS DESDE FIRESTORE: Config/Finanzas (USD como pivote) =====
-   Esperado en Config/Finanzas:
-     - tcUSD: CLP por 1 USD
-     - tcBRL: BRL por 1 USD
-     - tcARS: ARS por 1 USD
-   Guardamos en cache: state.cache.tasasPerUSD
-*/
-async function loadTasasFinanzas(){
-  if (state.cache?.tasasPerUSD) return state.cache.tasasPerUSD;
-  try{
-    const snap = await getDoc(doc(db,'Config','Finanzas'));
-    if (snap.exists()){
-      const x = snap.data() || {};
-      const perUSD = {
-        USD: 1,
-        CLP: Number(x.tcUSD || 945),   // CLP por USD
-        BRL: Number(x.tcBRL || 5.5),   // BRL por USD
-        ARS: Number(x.tcARS || 1370),  // ARS por USD
-      };
-      state.cache = state.cache || {};
-      state.cache.tasasPerUSD = { __from:'Config/Finanzas', perUSD };
-      return state.cache.tasasPerUSD;
-    }
-  }catch(_){}
-  const perUSD = { USD:1, CLP:945, BRL:5.5, ARS:1370 };
-  state.cache = state.cache || {};
-  state.cache.tasasPerUSD = { __from:'fallback', perUSD };
-  return state.cache.tasasPerUSD;
-}
-
-/* Conversión genérica usando USD como pivote */
-async function convertirMoneda(monto, from='USD', to='CLP'){
-  const { perUSD } = await loadTasasFinanzas();
-  const f = String(from||'').toUpperCase();
-  const t = String(to||'').toUpperCase();
-  const val = Number(monto||0);
-  if (!val || !perUSD[f] || !perUSD[t]) return 0;
-  if (f === t) return val;
-  // convertir via USD:
-  // 1) de 'from' a USD → amount_in_USD = val / perUSD[from]
-  // 2) de USD a 'to'   → amount_in_to = amount_in_USD * perUSD[to]
-  return (val / perUSD[f]) * perUSD[t];
-}
-
-/* Suma todo a CLP
-   - Si tasasOpt.perUSD existe → usamos perUSD.
-   - Si tasasOpt tiene USD/BRL/ARS como "CLP por unidad" → usamos directo.
-   - Si no hay tasasOpt → derivamos de loadTasasFinanzas.
-*/
-async function sumCLPByMoneda(montos, tasasOpt){
-  let toCLP;
-  if (tasasOpt && tasasOpt.perUSD){
-    const perUSD = tasasOpt.perUSD;
-    const clpPerUSD = perUSD.CLP;
-    const clpPerBRL = perUSD.CLP / perUSD.BRL;
-    const clpPerARS = perUSD.CLP / perUSD.ARS;
-    toCLP = (amount, code) => {
-      const c = String(code||'CLP').toUpperCase();
-      if (c==='CLP') return Number(amount||0);
-      if (c==='USD') return Number(amount||0) * clpPerUSD;
-      if (c==='BRL') return Number(amount||0) * clpPerBRL;
-      if (c==='ARS') return Number(amount||0) * clpPerARS;
-      return 0;
-    };
-  } else if (tasasOpt && (tasasOpt.USD || tasasOpt.BRL || tasasOpt.ARS)) {
-    // tasasOpt como CLP por unidad
-    toCLP = (amount, code) => Number(amount||0) * Number(tasasOpt[String(code||'').toUpperCase()] || 0);
-  } else {
-    const { perUSD } = await loadTasasFinanzas();
-    const clpPerUSD = perUSD.CLP;
-    const clpPerBRL = perUSD.CLP / perUSD.BRL;
-    const clpPerARS = perUSD.CLP / perUSD.ARS;
-    toCLP = (amount, code) => {
-      const c = String(code||'CLP').toUpperCase();
-      if (c==='CLP') return Number(amount||0);
-      if (c==='USD') return Number(amount||0) * clpPerUSD;
-      if (c==='BRL') return Number(amount||0) * clpPerBRL;
-      if (c==='ARS') return Number(amount||0) * clpPerARS;
-      return 0;
-    };
-  }
-
-  const CLP = Number(montos.CLP||0);
-  const USD = toCLP(montos.USD, 'USD');
-  const BRL = toCLP(montos.BRL, 'BRL');
-  const ARS = toCLP(montos.ARS, 'ARS');
-  return { CLP, USD, BRL, ARS, CLPconv: CLP + USD + BRL + ARS };
-}
-
-// -------- ABONOS CRUD  (grupos/{gid}/finanzas_abonos) ----------
-async function loadAbonos(gid){
-  const qs = await getDocs(collection(db,'grupos', gid, 'finanzas_abonos'));
-  const list = [];
-  qs.forEach(d => list.push({ id:d.id, ...(d.data()||{}) }));
-  list.sort((a,b)=> String(b.fecha||'').localeCompare(String(a.fecha||'')));
-  return list;
-}
-
-async function saveAbono(gid, abono){
-  const { id, ...raw } = abono || {};
-  const data = Object.fromEntries(
-    Object.entries(raw).filter(([_, v]) => v !== undefined)
-  );
-
-  if (id){
-    const ref = doc(db,'grupos', gid, 'finanzas_abonos', id);
-    await setDoc(ref, {
-      ...data,
-      updatedAt: serverTimestamp(),
-      updatedBy: { uid: state.user?.uid || null, email: (state.user?.email||'').toLowerCase() }
-    }, { merge:true });
-    return id;
-  } else {
-    const ref = await addDoc(collection(db,'grupos', gid, 'finanzas_abonos'), {
-      ...data,
-      createdAt: serverTimestamp(),
-      createdBy: { uid: state.user?.uid || null, email: (state.user?.email||'').toLowerCase() }
-    });
-    return ref.id;
-  }
-}
-
-async function deleteAbono(gid, abonoId){
-  await deleteDoc(doc(db,'grupos', gid, 'finanzas_abonos', abonoId));
-}
-
-// -------- Sugerencias (CONAF / CERO GRADOS) ----------
-function precioUnitarioFromServicio(svc){
-  const cands = [ svc?.precioPax, svc?.precio, svc?.tarifa, svc?.tarifaPax, svc?.valorPax,
-                  (svc?.precios && svc.precios.pax), (svc?.valores && svc.valores.pax) ];
-  for (const c of cands){
-    const n = Number(c);
-    if (!isNaN(n) && n>0) return n;
-  }
-  return 0;
-}
-function isProveedorWhitelisted(name=''){
-  const s = String(name||'').trim().toUpperCase();
-  return (s.includes('CONAF') || s.includes('CERO GRADOS') || s.includes('CERO-GRADOS') || s.includes('CERO_GRADOS'));
-}
-async function suggestAbonosFromItin(grupo){
-  const destino = (grupo?.destino||'').toString().toUpperCase();
-  const paxPlan = Number(grupo?.cantidadgrupo || 0);
-  if (!paxPlan) return [];
-
-  const it = grupo?.itinerario || {};
-  const out = [];
-
-  for (const [fechaISO, arr] of Object.entries(it)){
-    const acts = Array.isArray(arr) ? arr : Object.values(arr||{});
-    for (const a of acts){
-      const actName = (a?.actividad||'').toString();
-      if (!actName) continue;
-
-      const svc = (typeof findServicio==='function') ? await findServicio(destino, actName).catch(()=>null) : null;
-      const proveedor = (svc?.proveedor || a?.proveedor || '').toString();
-      if (!isProveedorWhitelisted(proveedor)) continue;
-
-      const unit = precioUnitarioFromServicio(svc);
-      if (!unit) continue;
-
-      const totalSug = unit * paxPlan;
-      out.push({
-        asunto: `ABONO ${proveedor} — ${actName.toUpperCase()} ${dmy(fechaISO)}`,
-        comentarios: `Sugerido por sistema: ${paxPlan} PAX × ${unit.toLocaleString('es-CL')} CLP`,
-        moneda: 'CLP',
-        valor: totalSug,
-        fecha: fechaISO,
-        medio: 'CTA CTE',
-        autoCalc: true,
-        provWhitelistHit: proveedor.toUpperCase(),
-        refActs: [{ fechaISO, actividad: actName, paxUsado: paxPlan, precioUnitario: unit, totalSug }]
-      });
-    }
-  }
-  return out;
-}
-
-// -------- Totales de gastos (reusa colec. coordinadores/{id}/gastos) ----------
-async function sumGastosPorMonedaDelGrupo(g, qNorm=''){
-  const coordId = (typeof getActiveCoordIdForGastos==='function') ? getActiveCoordIdForGastos() : (state.viewingCoordId||null);
-  const qs=await getDocs(query(collection(db,'coordinadores',coordId,'gastos'), orderBy('createdAt','desc')));
-  const list=[]; qs.forEach(d=>{ const x=d.data()||{}; if(x.grupoId===g.id) list.push({id:d.id,...x}); });
-
-  if(qNorm){
-    return list
-      .filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(qNorm))
-      .reduce((acc,x)=>{ const m=String(x.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(x.valor||0); return acc; },{});
-  }
-  return list.reduce((acc,x)=>{ const m=String(x.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(x.valor||0); return acc; },{});
-}
-
-// -------- Summary / Cierre finanzas ----------
-async function updateFinanzasSummary(gid, patch){
-  await setDoc(doc(db,'grupos',gid,'finanzas','summary'), {
-    ...patch,
-    updatedAt: serverTimestamp(),
-    updatedBy:{ uid:state.user?.uid || null, email:(state.user?.email||'').toLowerCase() }
-  }, { merge:true });
-}
-
-async function closeFinanzas(g){
-  await updateFinanzasSummary(g.id, { closed:true, closedAt: serverTimestamp(), closedBy:{ uid:state.user?.uid || null, email:(state.user?.email||'').toLowerCase() } });
-  await updateDoc(doc(db,'grupos',g.id), {
-    'viaje.fin.rendicionOk': true,
-    'viaje.fin.boletaOk': true
-  });
-  if (typeof showFlash==='function') showFlash('FINANZAS CERRADAS', 'ok');
-}
-
-async function renderFinanzas(g, pane){
-  pane.innerHTML='<div class="muted">CARGANDO…</div>';
-  const qNorm = norm(state.groupQ||'');
-
-  // Tasas en CLP por unidad (USD/BRL/ARS) derivadas de Config/Finanzas
-  const tasas = await getTasas();
-
-  const abonos = await loadAbonos(g.id);
-  const totAb = abonos.reduce((acc,a)=>{ const m=String(a.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(a.valor||0); return acc; },{CLP:0,USD:0,BRL:0,ARS:0});
-  const totGa = await sumGastosPorMonedaDelGrupo(g, qNorm);
-
-  const abCLP = await sumCLPByMoneda(totAb, tasas);
-  const gaCLP = await sumCLPByMoneda(totGa, tasas);
-  const saldoCLP = abCLP.CLPconv - gaCLP.CLPconv;
-
-  const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML=''; pane.appendChild(wrap);
-
-  // RESUMEN
-  const resum=document.createElement('div'); resum.className='act';
-  resum.innerHTML = `
-    <h4>RESUMEN FINANZAS</h4>
-    <div class="grid-mini">
-      <div class="lab">ABONOS</div>
-      <div>CLP ${fmtCL(totAb.CLP||0)} · USD ${fmtCL(totAb.USD||0)} · BRL ${fmtCL(totAb.BRL||0)} · ARS ${fmtCL(totAb.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(abCLP.CLPconv)}</strong></div>
-      <div class="lab">GASTOS</div>
-      <div>CLP ${fmtCL(totGa.CLP||0)} · USD ${fmtCL(totGa.USD||0)} · BRL ${fmtCL(totGa.BRL||0)} · ARS ${fmtCL(totGa.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(gaCLP.CLPconv)}</strong></div>
-      <div class="lab">SALDO</div>
-      <div><strong>${saldoCLP>=0?'TRANSFERIR A EMPRESA:':'PETICIÓN DE TRANSFERENCIA A COORDINADOR(A):'} CLP ${fmtCL(saldoCLP)}</strong></div>
-    </div>
-  `;
-  wrap.appendChild(resum);
-
-  // ABONOS (STAFF edita)
-  const boxAb=document.createElement('div'); boxAb.className='act';
-  boxAb.innerHTML = `
-    <h4>ABONOS ${state.is?'<span class="muted">(STAFF PUEDE EDITAR)</span>':''}</h4>
-    ${state.is ? `
-      <div class="rowflex" style="margin:.4rem 0">
-        <button id="btnNewAbono"  class="btn ok">NUEVO ABONO</button>
-      </div>` : ''}
-    <div id="abonosList" style="display:grid;gap:.4rem"></div>
-  `;
-  wrap.appendChild(boxAb);
-
-  const renderAbonosList = (items)=>{
-    const cont = boxAb.querySelector('#abonosList');
-    cont.innerHTML = '';
-    if (!items.length){ cont.innerHTML = '<div class="muted">SIN ABONOS.</div>'; return; }
-    items.forEach(a=>{
-      const card=document.createElement('div'); card.className='card';
-      card.innerHTML = `
-        <div class="meta"><strong>${(a.asunto||'ABONO').toString().toUpperCase()}</strong></div>
-        <div class="meta">FECHA: ${dmy(a.fecha||'')}</div>
-        <div class="meta">MONEDA/VALOR: ${(a.moneda||'CLP').toUpperCase()} ${fmtCL(a.valor||0)}</div>
-        <div class="meta">MEDIO: ${(a.medio||'').toString().toUpperCase()}</div>
-        ${a.comentarios?`<div class="meta" style="white-space:pre-wrap">${(a.comentarios||'').toString().toUpperCase()}</div>`:''}
-        ${a.autoCalc?`<div class="badge" style="background:#334155;color:#fff">SUGERIDO</div>`:''}
-        ${state.is?`
-          <div class="rowflex" style="margin-top:.4rem;gap:.4rem;flex-wrap:wrap">
-            <button class="btn sec btnEdit">EDITAR</button>
-            <button class="btn warn btnDel">ELIMINAR</button>
-          </div>`:''}
-      `;
-      if (state.is){
-        const bE = card.querySelector('.btnEdit');
-        if (bE) bE.onclick = async ()=>{
-          await openAbonoEditor(g, a, (updated)=>{ Object.assign(a,updated); renderAbonosList(items); });
-        };
-        const bD = card.querySelector('.btnDel');
-        if (bD) bD.onclick = async ()=>{
-          if (!confirm('¿Eliminar abono?')) return;
-          await deleteAbono(g.id, a.id);
-          const i = items.findIndex(x=>x.id===a.id);
-          if (i>=0) items.splice(i,1);
-          renderAbonosList(items);
-          await renderFinanzas(g, pane);
-        };
-      }
-      cont.appendChild(card);
-    });
-  };
-
-  if (state.is){
-    const btnNew = boxAb.querySelector('#btnNewAbono');
-    if (btnNew) btnNew.onclick = async ()=>{
-      await openAbonoEditor(g, null, async (saved)=>{
-        abonos.unshift(saved);
-        renderAbonosList(abonos);
-        await renderFinanzas(g, pane);
-      });
-    };
-  }
-  renderAbonosList(abonos);
+// expone para que otros bloques (p.ej., openCreateAlertModal) puedan refrescar
+window.renderGlobalAlertsV2 = renderGlobalAlertsV2;
 
   // GASTOS
   const paneGastos=document.createElement('div');
