@@ -530,7 +530,7 @@ if (typeof window !== 'undefined') {
     console.error('[GLOBAL ERROR]', ev.message, ev.error),
   );
   window.addEventListener('unhandledrejection', (ev) =>
-    console.error('[PROMISE REJECTION]', ev.reason),
+    console.error('[PROMISE REJECTION]', ev.reason);
   );
 }
 
