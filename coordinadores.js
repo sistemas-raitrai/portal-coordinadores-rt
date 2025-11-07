@@ -4458,9 +4458,9 @@ async function renderGlobalAlerts(){ return renderGlobalAlertsV2(); }
 window.renderGlobalAlertsV2 = renderGlobalAlertsV2;
 
   // GASTOS
-  const paneGastos=document.createElement('div');
-  const ghits = await renderGastos(g, paneGastos);
-  wrap.appendChild(paneGastos);
+const paneGastos=document.createElement('div');
+const ghits = await renderGastos(g, paneGastos);
+wrap.appendChild(paneGastos);
 
   // CIERRE FINANCIERO
   const cierre=document.createElement('div'); cierre.className='act';
@@ -4554,7 +4554,6 @@ window.renderGlobalAlertsV2 = renderGlobalAlertsV2;
     .filter(a => norm([a.asunto,a.comentarios,a.medio,String(a.valor||0)].join(' ')).includes(qNorm))
     .length : 0;
   return hitsAb + (ghits||0);
-}
 }
 
 /* ===== Tasas “simples” para UI: CLP por USD/BRL/ARS (derivadas de perUSD) =====
