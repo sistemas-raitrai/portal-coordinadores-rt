@@ -4661,6 +4661,39 @@ async function renderFinanzas(g, pane){
   return hitsAb + (ghits||0);
 }
 
+/* ===== TASAS DESDE FIRESTORE: Config/Finanzas (USD como pivote) =====
+   ADICIÓN: helpers que usa getTasas()
+   Lee Config/Finanzas y arma perUSD (CLP/BRL/ARS por 1 USD). Guarda en cache.
+*/
+async function loadTasasFinanzas(){
+  // Usa cache si ya se cargó desde Config/Finanzas
+  if (state.cache && state.cache.tasas && state.cache.tasas.__from === 'Config/Finanzas') {
+    return state.cache.tasas;
+  }
+
+  try{
+    const snap = await getDoc(doc(db,'Config','Finanzas'));
+    if (snap.exists()){
+      const x = snap.data() || {};
+      const perUSD = {
+        USD: 1,
+        CLP: Number(x.tcUSD || 945),   // CLP por USD
+        BRL: Number(x.tcBRL || 5.5),   // BRL por USD
+        ARS: Number(x.tcARS || 1370),  // ARS por USD
+      };
+      state.cache = state.cache || {};
+      state.cache.tasas = { __from:'Config/Finanzas', perUSD };
+      return state.cache.tasas;
+    }
+  }catch(_e){ /* noop: usaremos fallback abajo */ }
+
+  // Fallback razonable si no hay doc Config/Finanzas
+  const perUSD = { USD:1, CLP:945, BRL:5.5, ARS:1370 };
+  state.cache = state.cache || {};
+  state.cache.tasas = { __from:'fallback', perUSD };
+  return state.cache.tasas;
+}
+
 /* ===== Tasas “simples” para UI: CLP por USD/BRL/ARS (derivadas de perUSD) =====
    Se usa en loadGastosList() para el EQUIV. CLP
 */
