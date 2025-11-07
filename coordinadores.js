@@ -16,8 +16,9 @@ import {
   deleteField,
   deleteDoc,
   startAfter,
+  
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
-import { ref as sRef, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
+import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
 // === CORREO POR GAS (CONFIG) ===
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwRMaUfZ0gJq015HIJ0yKyqu6_rkfmBkOp3oQH0wh4RSpjNxYTxmAf55Pv9pXQ64fUy/exec';
@@ -839,6 +840,15 @@ if (typeof window !== 'undefined') {
 })();
 
 window.renderFinanzas ??= async () => 0;
+// --- HOTFIX: evitar crash si aún no definimos loadAbonos / loadGastos ---
+window.loadAbonos ??= async function loadAbonos(/* g o groupId, filtros, etc. */) {
+  // Devuelve estructura mínima esperada por renderFinanzas
+  return { items: [], total: 0 };
+};
+window.loadGastos ??= async function loadGastos(/* g o groupId, filtros, etc. */) {
+  return { items: [], total: 0 };
+};
+
 window.setEstadoServicio ??= async () => showFlash('ESTADO ACTUALIZADO');
 window.openActividadModal ??= async () => {};
 window.staffResetInicio ??= async () => {};
@@ -4191,42 +4201,6 @@ async function openCreateAlertModal(){
   };
   document.getElementById('modalClose').onclick=()=>{ back.style.display='none'; };
   back.style.display='flex';
-}
-
-/** Tira plegable arriba del panel + persistencia (localStorage: 'rt__alerts_fold') */
-function ensureAlertsFoldStrip(){
-  const panel = document.getElementById('alertsPanel');
-  if (!panel) return;
-
-  // Evita duplicar
-  if (document.getElementById('alertsFoldStrip')) return;
-
-  const strip = document.createElement('div');
-  strip.id = 'alertsFoldStrip';
-  strip.style.cssText = 'display:flex;align-items:center;justify-content:flex-start;margin:.35rem 0;';
-  strip.innerHTML = `<button id="btnFoldAlerts" class="btn sec" aria-expanded="true">▼ OCULTAR ALERTAS</button>`;
-
-  // Inserta la tira antes del panel
-  panel.parentNode.insertBefore(strip, panel);
-
-  const btn = strip.querySelector('#btnFoldAlerts');
-  const loadPref = localStorage.getItem('rt__alerts_fold') === '1';
-
-  const apply = (fold) => {
-    panel.style.display = fold ? 'none' : '';
-    btn.textContent = fold ? '► MOSTRAR ALERTAS' : '▼ OCULTAR ALERTAS';
-    btn.setAttribute('aria-expanded', String(!fold));
-  };
-
-  // Aplicar preferencia inicial
-  apply(loadPref);
-
-  // Toggle + persistencia
-  btn.onclick = () => {
-    const willFold = panel.style.display !== 'none'; // si está visible → plegamos
-    localStorage.setItem('rt__alerts_fold', willFold ? '1' : '0');
-    apply(willFold);
-  };
 }
 
 // ====== PANEL GLOBAL DE ALERTAS (COMPLETO) — V2 AUTOSUFICIENTE ======
