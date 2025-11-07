@@ -4457,10 +4457,115 @@ async function renderGlobalAlerts(){ return renderGlobalAlertsV2(); }
 // expone para que otros bloques (p.ej., openCreateAlertModal) puedan refrescar
 window.renderGlobalAlertsV2 = renderGlobalAlertsV2;
 
+// ====== FINANZAS: FUNCIÓN PRINCIPAL (REEMPLAZO COMPLETO) ======
+async function renderFinanzas(g, pane){
+  pane.innerHTML = '<div class="muted">CARGANDO…</div>';
+
+  const qNorm = norm(state.groupQ||'');
+  const tasas = await getTasas();
+
+  const abonos = await loadAbonos(g.id);
+  const totAb  = abonos.reduce((acc,a)=>{
+    const m = String(a.moneda||'CLP').toUpperCase();
+    acc[m] = (acc[m]||0) + Number(a.valor||0);
+    return acc;
+  }, { CLP:0, USD:0, BRL:0, ARS:0 });
+
+  const totGa  = await sumGastosPorMonedaDelGrupo(g, qNorm);
+
+  const abCLP  = await sumCLPByMoneda(totAb,  tasas);
+  const gaCLP  = await sumCLPByMoneda(totGa,  tasas);
+  const saldoCLP = abCLP.CLPconv - gaCLP.CLPconv;
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText='display:grid;gap:.8rem';
+  pane.innerHTML=''; 
+  pane.appendChild(wrap);
+
+  // ===== RESUMEN =====
+  const resum=document.createElement('div'); 
+  resum.className='act';
+  resum.innerHTML = `
+    <h4>RESUMEN FINANZAS</h4>
+    <div class="grid-mini">
+      <div class="lab">ABONOS</div>
+      <div>CLP ${fmtCL(totAb.CLP||0)} · USD ${fmtCL(totAb.USD||0)} · BRL ${fmtCL(totAb.BRL||0)} · ARS ${fmtCL(totAb.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(abCLP.CLPconv)}</strong></div>
+      <div class="lab">GASTOS</div>
+      <div>CLP ${fmtCL(totGa.CLP||0)} · USD ${fmtCL(totGa.USD||0)} · BRL ${fmtCL(totGa.BRL||0)} · ARS ${fmtCL(totGa.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(gaCLP.CLPconv)}</strong></div>
+      <div class="lab">SALDO</div>
+      <div><strong>${saldoCLP>=0?'TRANSFERIR A EMPRESA:':'PETICIÓN DE TRANSFERENCIA A COORDINADOR(A):'}: CLP ${fmtCL(saldoCLP)}</strong></div>
+    </div>
+  `;
+  wrap.appendChild(resum);
+
+  // ===== ABONOS =====
+  const boxAb=document.createElement('div'); 
+  boxAb.className='act';
+  boxAb.innerHTML = `
+    <h4>ABONOS ${state.is?'<span class="muted">(STAFF PUEDE EDITAR)</span>':''}</h4>
+    ${state.is ? `
+      <div class="rowflex" style="margin:.4rem 0">
+        <button id="btnNewAbono"  class="btn ok">NUEVO ABONO</button>
+      </div>` : ''}
+    <div id="abonosList" style="display:grid;gap:.4rem"></div>
+  `;
+  wrap.appendChild(boxAb);
+
+  const renderAbonosList = (items)=>{
+    const cont = boxAb.querySelector('#abonosList');
+    cont.innerHTML = '';
+    if (!items.length){ cont.innerHTML = '<div class="muted">SIN ABONOS.</div>'; return; }
+    items.forEach(a=>{
+      const card=document.createElement('div'); 
+      card.className='card';
+      card.innerHTML = `
+        <div class="meta"><strong>${(a.asunto||'ABONO').toString().toUpperCase()}</strong></div>
+        <div class="meta">FECHA: ${dmy(a.fecha||'')}</div>
+        <div class="meta">MONEDA/VALOR: ${(a.moneda||'CLP').toUpperCase()} ${fmtCL(a.valor||0)}</div>
+        <div class="meta">MEDIO: ${(a.medio||'').toString().toUpperCase()}</div>
+        ${a.comentarios?`<div class="meta" style="white-space:pre-wrap">${(a.comentarios||'').toString().toUpperCase()}</div>`:''}
+        ${a.autoCalc?`<div class="badge" style="background:#334155;color:#fff">SUGERIDO</div>`:''}
+        ${state.is?`
+          <div class="rowflex" style="margin-top:.4rem;gap:.4rem;flex-wrap:wrap">
+            <button class="btn sec btnEdit">EDITAR</button>
+            <button class="btn warn btnDel">ELIMINAR</button>
+          </div>`:''}
+      `;
+      if (state.is){
+        const bE = card.querySelector('.btnEdit');
+        if (bE) bE.onclick = async ()=>{
+          await openAbonoEditor(g, a, (updated)=>{ Object.assign(a,updated); renderAbonosList(items); });
+        };
+        const bD = card.querySelector('.btnDel');
+        if (bD) bD.onclick = async ()=>{
+          if (!confirm('¿Eliminar abono?')) return;
+          await deleteAbono(g.id, a.id);
+          const i = items.findIndex(x=>x.id===a.id);
+          if (i>=0) items.splice(i,1);
+          renderAbonosList(items);
+          await renderFinanzas(g, pane);
+        };
+      }
+      cont.appendChild(card);
+    });
+  };
+
+  if (state.is){
+    const btnNew = boxAb.querySelector('#btnNewAbono');
+    if (btnNew) btnNew.onclick = async ()=>{
+      await openAbonoEditor(g, null, async (saved)=>{
+        abonos.unshift(saved);
+        renderAbonosList(abonos);
+        await renderFinanzas(g, pane);
+      });
+    };
+  }
+  renderAbonosList(abonos);
+
   // GASTOS
-const paneGastos=document.createElement('div');
-const ghits = await renderGastos(g, paneGastos);
-wrap.appendChild(paneGastos);
+  const paneGastos=document.createElement('div');
+  const ghits = await renderGastos(g, paneGastos);
+  wrap.appendChild(paneGastos);
 
   // CIERRE FINANCIERO
   const cierre=document.createElement('div'); cierre.className='act';
