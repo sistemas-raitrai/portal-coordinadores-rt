@@ -4555,6 +4555,7 @@ window.renderGlobalAlertsV2 = renderGlobalAlertsV2;
     .length : 0;
   return hitsAb + (ghits||0);
 }
+}
 
 /* ===== Tasas “simples” para UI: CLP por USD/BRL/ARS (derivadas de perUSD) =====
    Se usa en loadGastosList() para el EQUIV. CLP
