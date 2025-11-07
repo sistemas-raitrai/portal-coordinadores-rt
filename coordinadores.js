@@ -531,7 +531,7 @@ if (typeof window !== 'undefined') {
   );
   window.addEventListener('unhandledrejection', (ev) =>
     console.error('[PROMISE REJECTION]', ev.reason);
-  );
+  });
 }
 
 /* ===== ALERTAS PAGINADAS + BUSCADOR + ORDEN + FILTROS + LEÍDO ===== */
