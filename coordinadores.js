@@ -4231,7 +4231,7 @@ function _fmtWhen(ts){
 // Filtrado por destinos/fechas escaneando grupos
 // Devuelve Set de coordIds destino del mensaje
 // ------------------------
-async function recipientsFromFilters(destinosList, rangoStr){
+async function recipientsFromFilters(destinosList, rangoStr)
   const wantedDest = (destinosList||[]).map(d=>norm(d)).filter(Boolean);
   let A=null,B=null;
   const raw = (rangoStr||'').trim();
