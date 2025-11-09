@@ -1,9 +1,4 @@
-/* COORDINADORES.JS — PORTAL COORDINADORES RT
-   — VERSIÓN: ALERTAS MEJORADAS + MOBILE + TODO EN MAYÚSCULAS EN LA UI
-   — Cambios: orden de actividades por hora, botón “Crear Alerta” en Alertas,
-              contadores de búsqueda por pestaña, menos parpadeo en auto-refresco.
-   — + VIAJE: Inicio/Termino, paxViajando, reversibles por STAFF, PAX tachado.
-*/
+/* COORDINADORES.JS — PORTAL COORDINADORES RT */
 
 import { app, db, auth, storage } from './firebase-init-portal.js';
 import { onAuthStateChanged, signOut }
@@ -313,7 +308,7 @@ function emailsOf(g){ const out=new Set(), push=e=>{if(e) out.add(String(e).toLo
 }
 function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); };
   push(g?.coordinadorId); arrify(g?.coordinadoresIds).forEach(push);
-  const mapEmailToId = new Map(state.coordinadores.map(c => [String(c.email || '').toLowerCase(), c.id]));
+  const mapEmailToId = new Map((state.coordinadores || []).map(c => [String(c.email || '').toLowerCase(), c.id]));
   emailsOf(g).forEach(e=>{ if(mapEmailToId.has(e)) out.add(mapEmailToId.get(e)); });
   return [...out];
 }
@@ -3522,7 +3517,7 @@ async function recipientsFromFilters(destinosList, rangoStr){
   if(!wantedDest.length && !A) return new Set();
 
   const r = new Set();
-  const mapEmailToId = new Map(state.coordinadores.map(c=>[(c.email||'').toLowerCase(), c.id]));
+  const mapEmailToId = new Map((state.coordinadores || []).map(c => [String(c.email || '').toLowerCase(), c.id]));
   const snap=await getDocs(collection(db,'grupos'));
   snap.forEach(d=>{
     const g={id:d.id, ...(d.data()||{})};
@@ -3533,7 +3528,10 @@ async function recipientsFromFilters(destinosList, rangoStr){
     }
     if(destOk && dateOk){
       const ids = coordDocIdsOf(g); ids.forEach(id=>r.add(String(id)));
-      emailsOf(g).forEach(e=>{ if(mapEmailToId.has(e)) r.add(mapEmailToId.get(e)); });
+      emailsOf(g).forEach(e => {
+        const key = String(e || '').toLowerCase();
+        if (mapEmailToId.has(key)) r.add(mapEmailToId.get(key));
+      });
     }
   });
   return r;
@@ -3542,7 +3540,7 @@ async function recipientsFromFilters(destinosList, rangoStr){
 /** MODAL: CREAR ALERTA () */
 async function openCreateAlertModal(){
   const back=document.getElementById('modalBack'), body=document.getElementById('modalBody'), title=document.getElementById('modalTitle');
-  title.textContent='CREAR ALERTA ()';
+  title.textContent='CREAR ALERTA';
   const coordOpts=state.coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${(c.email||'').toUpperCase()}</option>`).join('');
   body.innerHTML=`
    <div class="rowflex">
@@ -3596,7 +3594,7 @@ async function renderGlobalAlerts(){
   box.innerHTML = `
     <div class="alert-head" style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
       <h4 style="margin:0">ALERTAS</h4>
-      ${state.is ? '<button id="btnCreateAlert" class="btn ok" id="btnCreateAlert">CREAR ALERTA</button>' : ''}
+      ${state.is ? '<button id="btnCreateAlert" class="btn ok">CREAR ALERTA</button>' : ''}
     </div>
     <div class="muted">CARGANDO…</div>
   `;
