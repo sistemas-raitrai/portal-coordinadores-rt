@@ -3599,6 +3599,12 @@ async function renderGlobalAlerts(){
     <div class="muted">CARGANDO…</div>
   `;
 
+  // ADICIÓN: engancha el botón del HTML inicial (si existe y si es STAFF)
+  if (state.is) {
+    const btn = document.getElementById('btnCreateAlert');
+    if (btn) btn.onclick = openCreateAlertModal;
+  }
+
   // Cargar todas las alertas
   let all = [];
   try{
