@@ -3534,7 +3534,6 @@ async function recipientsFromFilters(destinosList, rangoStr){
       });
     }
   });
-  return r;
 }
 
 /** MODAL: CREAR ALERTA () */
