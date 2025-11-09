@@ -4203,338 +4203,389 @@ async function openCreateAlertModal(){
   back.style.display='flex';
 }
 
-// ====== PANEL GLOBAL DE ALERTAS (COMPLETO) — V2 AUTOSUFICIENTE ======
-async function renderGlobalAlertsV2(){
-  const panel = document.getElementById('alertsPanel');
-  if (!panel) return;
+// ====== PANEL GLOBAL DE ALERTAS (COMPLETO) ======
+// Requisitos externos que ya tienes en el file:
+// - Firestore: db, collection, getDocs, getDoc, doc, setDoc, addDoc, updateDoc, serverTimestamp, query, orderBy, limit
+// - Helpers que ya existen en tu app: norm(str), ymdFromDMY('DD-MM-AAAA'), toISO(any), emailsOf(grupo), coordDocIdsOf(grupo)
+// - Estado global: state.user {uid,email}, state.coordinadores[], state.is (STAFF? true/false), state.viewingCoordId seleccionado
+// - En el HTML existe <div id="alertsPanelV2" class="panel"></div>
 
-  // ---------- helpers ----------
-  const meEmail = (state?.user?.email || (auth?.currentUser?.email) || '').toLowerCase();
-  const coordMapByEmail = new Map((state?.coordinadores || []).map(c => [String(c.email||'').toLowerCase(), c.id]));
-  const activeCoordId = (()=>{
-    // Si eres STAFF y estás “viendo” un coordinador concreto, úsalo;
-    // si estás en __ALL__, caemos al coordinador por email (si existe).
-    if (state?.is) {
-      const vid = state?.viewingCoordId;
-      if (vid && vid !== '__ALL__') return vid;
-    }
-    return coordMapByEmail.get(meEmail) || null;
-  })();
+// ------------------------
+// Utilitarios locales
+// ------------------------
+function _byCreatedAtDesc(a, b){
+  const ax = a?.createdAt?.seconds || a?.createdAt?._seconds || 0;
+  const bx = b?.createdAt?.seconds || b?.createdAt?._seconds || 0;
+  return bx - ax;
+}
+function _fmtWhen(ts){
+  try{
+    const d = ts?.seconds ? new Date(ts.seconds*1000) :
+              ts?._seconds ? new Date(ts._seconds*1000) : null;
+    if(!d) return '';
+    return d.toLocaleString('es-CL').toUpperCase();
+  }catch(_){ return ''; }
+}
 
-  const tsToDate = (ts)=>{
-    if (!ts) return null;
-    if (typeof ts.toDate === 'function') return ts.toDate();
-    if (typeof ts.seconds === 'number') return new Date(ts.seconds*1000);
-    return null;
-  };
-
-  const fmtDateTimeCL = (d)=>{
-    if (!d) return '';
-    try{ return d.toLocaleString('es-CL', { dateStyle:'short', timeStyle:'short' }); }
-    catch(_){ return d.toISOString().slice(0,16).replace('T',' '); }
-  };
-
-  function ensureAlertsFoldStrip(){
-    if (!panel) return;
-    if (document.getElementById('alertsFoldStrip')) return; // no duplicar
-
-    const strip = document.createElement('div');
-    strip.id = 'alertsFoldStrip';
-    strip.style.cssText = 'display:flex;align-items:center;justify-content:flex-start;margin:.35rem 0;';
-    strip.innerHTML = `<button id="btnFoldAlerts" class="btn sec" aria-expanded="true">▼ OCULTAR ALERTAS</button>`;
-    panel.parentNode.insertBefore(strip, panel);
-
-    const btn = strip.querySelector('#btnFoldAlerts');
-    const savedFold = localStorage.getItem('rt__alerts_fold') === '1';
-
-    const apply = (fold) => {
-      panel.style.display = fold ? 'none' : '';
-      btn.textContent = fold ? '► MOSTRAR ALERTAS' : '▼ OCULTAR ALERTAS';
-      btn.setAttribute('aria-expanded', String(!fold));
-    };
-    apply(savedFold);
-
-    btn.onclick = () => {
-      const willFold = panel.style.display !== 'none';
-      localStorage.setItem('rt__alerts_fold', willFold ? '1' : '0');
-      apply(willFold);
-    };
+// ------------------------
+// Filtrado por destinos/fechas escaneando grupos
+// Devuelve Set de coordIds destino del mensaje
+// ------------------------
+async function recipientsFromFilters(destinosList, rangoStr){
+  const wantedDest = (destinosList||[]).map(d=>norm(d)).filter(Boolean);
+  let A=null,B=null;
+  const raw = (rangoStr||'').trim();
+  if(/^\d{2}-\d{2}-\d{4}\.\.\d{2}-\d{2}-\d{4}$/.test(raw)){
+    const [a,b]=raw.split('..'); A=ymdFromDMY(a); B=ymdFromDMY(b);
+  }else if(/^\d{2}-\d{2}-\d{4}$/.test(raw)){
+    const d=ymdFromDMY(raw); A=d; B=d;
   }
 
-  async function markAsRead(alertId, coordId){
-    if (!coordId) return;
+  if(!wantedDest.length && !A) return new Set();
+
+  const r = new Set();
+  const mapEmailToId = new Map((state.coordinadores||[]).map(c=>[(c.email||'').toLowerCase(), c.id]));
+
+  const snap = await getDocs(collection(db,'grupos'));
+  snap.forEach(d=>{
+    const g = { id:d.id, ...(d.data()||{}) };
+    const destOk = !wantedDest.length
+      || wantedDest.includes(norm(g.destino||''))
+      || wantedDest.includes(norm(g.Destino||''));
+    let dateOk = true;
+    if(A){
+      const ini = toISO(g.fechaInicio||g.inicio||g.fecha_ini);
+      const fin = toISO(g.fechaFin||g.fin||g.fecha_fin);
+      // fuera del rango si fin < A  o ini > B
+      dateOk = !( (fin && fin < A) || (ini && ini > B) );
+    }
+    if(destOk && dateOk){
+      // ids de coordinadores por documento
+      if (typeof coordDocIdsOf === 'function'){
+        const ids = coordDocIdsOf(g) || [];
+        ids.forEach(id=> r.add(String(id)));
+      }
+      // emails → id
+      const emails = (typeof emailsOf === 'function') ? emailsOf(g) : [];
+      emails.forEach(e=>{
+        const id = mapEmailToId.get((e||'').toLowerCase());
+        if(id) r.add(id);
+      });
+    }
+  });
+  return r;
+}
+
+// ------------------------
+// Modal: Crear Alerta (STAFF)
+// ------------------------
+async function openCreateAlertModal(){
+  const back  = document.getElementById('modalBack');
+  const body  = document.getElementById('modalBody');
+  const title = document.getElementById('modalTitle');
+
+  title.textContent = 'CREAR ALERTA';
+  const coordOpts = (state.coordinadores||[])
+    .map(c=>`<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${(c.email||'').toUpperCase()}</option>`)
+    .join('');
+
+  body.innerHTML = `
+    <div class="rowflex">
+      <input id="alertDestinos" type="text" placeholder="DESTINOS (SEPARADOS POR COMA, OPCIONAL)"/>
+      <input id="alertRango" type="text" placeholder="RANGO DD-MM-AAAA..DD-MM-AAAA O FECHA ÚNICA"/>
+    </div>
+    <div class="rowflex">
+      <label>DESTINATARIOS (COORDINADORES)</label>
+      <select id="alertCoords" multiple size="8" style="width:100%">${coordOpts}</select>
+    </div>
+    <div class="rowflex"><textarea id="alertMsg" placeholder="MENSAJE" style="width:100%"></textarea></div>
+    <div class="rowflex"><button id="alertSave" class="btn ok">ENVIAR</button></div>
+  `;
+
+  const onClose = ()=>{ document.getElementById('modalBack').style.display='none'; };
+  document.getElementById('modalClose').onclick = onClose;
+
+  document.getElementById('alertSave').onclick = async ()=>{
+    const msg = (document.getElementById('alertMsg').value||'').trim();
+    const sel = Array.from(document.getElementById('alertCoords').selectedOptions).map(o=>o.value);
+    const destinos = (document.getElementById('alertDestinos').value||'').split(',').map(x=>x.trim()).filter(Boolean);
+    const rango = (document.getElementById('alertRango').value||'').trim();
+
+    if(!msg && !destinos.length){
+      alert('ESCRIBE UN MENSAJE O USA FILTROS.'); return;
+    }
+
+    const set = new Set(sel);
     try{
-      await updateDoc(doc(db,'alertas', alertId), { [`readBy.${coordId}`]: serverTimestamp() });
-    }catch(e){ console.warn('markAsRead', e); }
-  }
+      const fromFilters = await recipientsFromFilters(destinos, rango);
+      fromFilters.forEach(id => set.add(id));
+    }catch(e){ console.error('recipientsFromFilters', e); }
 
-  function buildListUI(items, kind, coordId){
-    const wrap = document.createElement('div');
-    wrap.style.cssText = 'display:grid;gap:.4rem';
-
-    if (!items || !items.length){
-      const empty = document.createElement('div');
-      empty.className = 'muted';
-      empty.textContent = kind === 'mi' ? 'SIN ALERTAS.' : 'SIN MENSAJES PARA OPERACIONES.';
-      wrap.appendChild(empty);
-      return { ui: wrap, unreadCount: 0, readCount: 0 };
+    const forCoordIds = [...set];
+    if(!forCoordIds.length){
+      alert('NO HAY DESTINATARIOS. REVISA FILTROS/SELECCIÓN.');
+      return;
     }
 
-    let unread = 0;
-    items.forEach(a=>{
-      const card = document.createElement('div');
-      card.className = 'card';
-      const read = !!a.read;
-      if (!read) unread++;
-
-      card.innerHTML = `
-        <div class="meta" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
-          ${!read ? `<span title="No leída" style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block"></span>` : ''}
-          <strong>${(a.mensaje||'').toString().toUpperCase()}</strong>
-        </div>
-        <div class="meta">CREADA: ${fmtDateTimeCL(a.createdAt)}</div>
-        ${a.metaTxt ? `<div class="meta">${a.metaTxt}</div>` : ''}
-      `;
-
-      card.style.cursor = 'pointer';
-      card.onclick = async ()=>{
-        if (!a.read){
-          await markAsRead(a.id, coordId);
-          a.read = true;
-          // feedback visual simple
-          card.querySelector('span[title="No leída"]')?.remove();
-        }
-      };
-
-      wrap.appendChild(card);
+    await addDoc(collection(db,'alertas'),{
+      audience:'coord',           // ámbito coordinadores
+      mensaje: msg.toUpperCase(), // consistente con UI mayúsculas
+      forCoordIds,
+      meta:{ filtros:{ destinos, rango } },
+      createdAt: serverTimestamp(),
+      createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() },
+      readBy:{}                   // mapa uid→true
     });
 
-    return { ui: wrap, unreadCount: unread, readCount: items.length - unread };
-  }
-
-  async function fetchAlertsForMe(coordId){
-    if (!coordId) return [];
-    try{
-      const q1 = query(
-        collection(db,'alertas'),
-        where('audience','==','coord'),
-        where('forCoordIds','array-contains', coordId),
-        orderBy('createdAt','desc'),
-        limit(100)
-      );
-      const snap = await getDocs(q1);
-      const list = [];
-      snap.forEach(d=>{
-        const x = d.data() || {};
-        list.push({
-          id: d.id,
-          mensaje: String(x.mensaje||''),
-          createdAt: tsToDate(x.createdAt),
-          read: !!(x.readBy && x.readBy[coordId]),
-          metaTxt: (x.meta && x.meta.filtros)
-            ? `FILTROS: ${(x.meta.filtros.destinos||[]).join(', ')} ${x.meta.filtros.rango?('· RANGO: '+x.meta.filtros.rango):''}`
-            : ''
-        });
-      });
-      return list;
-    }catch(e){
-      console.warn('fetchAlertsForMe', e);
-      return [];
+    onClose();
+    if (typeof window.renderGlobalAlertsV2 === 'function'){
+      await window.renderGlobalAlertsV2();
     }
+  };
+
+  back.style.display = 'flex';
+}
+
+// ------------------------
+// Renderizador de lista (unread/read) — retorna {ui, unreadCount, readCount}
+// ------------------------
+function _renderList(list, scopeKey){
+  const wrap = document.createElement('div');
+  let unread = 0, read = 0;
+
+  if(!Array.isArray(list) || !list.length){
+    wrap.innerHTML = `<div class="muted">SIN ALERTAS.</div>`;
+    return { ui: wrap, unreadCount:0, readCount:0 };
   }
 
-  async function fetchAlertsOps(){
-    if (!state?.is) return [];
-    try{
-      const q2 = query(
-        collection(db,'alertas'),
-        where('audience','==','ops'),
-        orderBy('createdAt','desc'),
-        limit(100)
-      );
-      const snap = await getDocs(q2);
-      const list = [];
-      snap.forEach(d=>{
-        const x = d.data() || {};
-        list.push({
-          id: d.id,
-          mensaje: String(x.mensaje||''),
-          createdAt: tsToDate(x.createdAt),
-          read: false,
-          metaTxt: ''
-        });
-      });
-      return list;
-    }catch(e){
-      console.warn('fetchAlertsOps', e);
-      return [];
-    }
-  }
+  const userId = state?.user?.uid || 'anon';
+  const byTab = {
+    unread: list.filter(x => !(x.readBy && x.readBy[userId])),
+    read:   list.filter(x =>  (x.readBy && x.readBy[userId]))
+  };
+  unread = byTab.unread.length;
+  read   = byTab.read.length;
 
-  // ---------- UI ----------
-  ensureAlertsFoldStrip();
+  // Tabs
+  const tabs = document.createElement('div');
+  tabs.className = 'tabs';
 
-  panel.innerHTML = '';
+  const tabUnread = document.createElement('div');
+  tabUnread.className = 'tab active';
+  tabUnread.innerHTML = `NO LEÍDAS <span class="badge">${unread}</span>`;
+
+  const tabRead = document.createElement('div');
+  tabRead.className = 'tab';
+  tabRead.innerHTML = `LEÍDAS <span class="badge">${read}</span>`;
+
+  tabs.appendChild(tabUnread);
+  tabs.appendChild(tabRead);
+
+  const content = document.createElement('div');
+
+  const paint = (which)=>{
+    content.innerHTML = '';
+    const arr = which==='read' ? byTab.read : byTab.unread;
+    (arr||[]).forEach(a=>{
+      const card = document.createElement('div');
+      card.className = 'alert-card';
+      const when = _fmtWhen(a.createdAt);
+      const metaFiltro = a?.meta?.filtros;
+      card.innerHTML = `
+        <div class="alert-title">${(a.mensaje||'').toString().toUpperCase()}</div>
+        ${metaFiltro ? `<div class="meta">FILTROS: ${(metaFiltro.destinos||[]).join(', ')} ${metaFiltro.rango?('· ' + metaFiltro.rango):''}</div>` : ''}
+        ${when ? `<div class="meta">${when}</div>` : ''}
+        ${state.is ? `<div class="meta">PARA: ${(a.forCoordIds||[]).length} COORD.</div>` : ''}
+      `;
+
+      // Marcar como leído al hacer click (simple)
+      card.onclick = async ()=>{
+        try{
+          a.readBy = a.readBy || {};
+          if(!a.readBy[userId]){
+            a.readBy[userId] = true;
+            await setDoc(doc(db,'alertas', a.id), { readBy: a.readBy }, { merge:true });
+            // refresca rápido sin reseleccionar pestaña
+            paint(which);
+            // y actualiza contadores de tabs
+            const nu = Math.max(0, (which==='unread'?arr.length-1:byTab.unread.length));
+            const nr = (which==='unread'?byTab.read.length+1:arr.length);
+            tabUnread.innerHTML = `NO LEÍDAS <span class="badge">${nu}</span>`;
+            tabRead.innerHTML   = `LEÍDAS <span class="badge">${nr}</span>`;
+          }
+        }catch(e){ console.warn('mark read', e); }
+      };
+
+      content.appendChild(card);
+      const sep = document.createElement('div');
+      sep.className = 'alert-sep';
+      content.appendChild(sep);
+    });
+  };
+
+  tabUnread.onclick = ()=>{
+    tabUnread.classList.add('active');
+    tabRead.classList.remove('active');
+    paint('unread');
+  };
+  tabRead.onclick = ()=>{
+    tabRead.classList.add('active');
+    tabUnread.classList.remove('active');
+    paint('read');
+  };
+
+  wrap.appendChild(tabs);
+  wrap.appendChild(content);
+  paint('unread');
+
+  return { ui: wrap, unreadCount: unread, readCount: read };
+}
+
+// ------------------------
+// Tirita para plegar/desplegar y recordar estado
+// ------------------------
+function ensureAlertsFoldStrip(panel){
+  if (!panel) return;
+  if (document.getElementById('alertsFoldStrip')) return;
+
+  const strip = document.createElement('div');
+  strip.id = 'alertsFoldStrip';
+  strip.style.cssText = 'display:flex;align-items:center;justify-content:flex-start;margin:.35rem 0;';
+  strip.innerHTML = `<button id="btnFoldAlerts" class="btn sec" aria-expanded="true">▼ OCULTAR ALERTAS</button>`;
+
+  panel.parentNode.insertBefore(strip, panel);
+
+  const btn = strip.querySelector('#btnFoldAlerts');
+  const loadPref = localStorage.getItem('rt__alerts_fold') === '1';
+
+  const apply = (fold) => {
+    panel.style.display = fold ? 'none' : '';
+    btn.textContent = fold ? '► MOSTRAR ALERTAS' : '▼ OCULTAR ALERTAS';
+    btn.setAttribute('aria-expanded', String(!fold));
+  };
+  apply(loadPref);
+
+  btn.onclick = () => {
+    const willFold = panel.style.display !== 'none';
+    localStorage.setItem('rt__alerts_fold', willFold ? '1' : '0');
+    apply(willFold);
+  };
+}
+
+// ------------------------
+// Carga y render principal (V2)
+// ------------------------
+async function renderGlobalAlertsV2(){
+  // Panel destino (V2)
+  const box = document.getElementById('alertsPanelV2');
+  if (!box) return;
+
+  // Señal de inicialización (para fallback del HTML)
+  window.state = window.state || {};
+  window.state.alertsUI = window.state.alertsUI || {};
+  window.state.alertsUI.inited = true;
+
+  box.innerHTML = `<div class="muted">CARGANDO…</div>`;
+
+  // Trae alertas
+  // Por ahora leemos las más recientes; ajusta el límite si lo necesitas.
+  let list = [];
+  try{
+    const qs = await getDocs(query(collection(db,'alertas'), orderBy('createdAt','desc'), limit(200)));
+    qs.forEach(d => list.push({ id:d.id, ...(d.data()||{}) }));
+  }catch(e){ console.error('load alertas', e); }
+
+  list.sort(_byCreatedAtDesc);
+
+  // Ambito visible para el usuario:
+  // - STAFF: ve todo (sección OPERACIONES muestra todas; "PARA MÍ" solo las dirigidas a su coord activo)
+  // - COORDINADOR: solo lo dirigido a su coord id (o por email mapeado a id)
+  const userId = state?.user?.uid || 'anon';
+  const myCoordId = (()=>{
+    // priorizamos selector activo; si no, buscamos por email mapeado
+    if (state?.viewingCoordId && state.viewingCoordId !== '__ALL__') return state.viewingCoordId;
+    const email = (state?.user?.email||'').toLowerCase();
+    const hit = (state.coordinadores||[]).find(c => (c.email||'').toLowerCase() === email);
+    return hit?.id || '__NONE__';
+  })();
+
+  // filtra "para mí"
+  const paraMi = list.filter(a => Array.isArray(a.forCoordIds) && a.forCoordIds.includes(myCoordId));
+
+  // si es staff, sección "operaciones" muestra todo el set
+  const ops = state.is ? list.slice() : [];
+
+  // HEADER
+  box.innerHTML = '';
   const head = document.createElement('div');
   head.className = 'alert-head';
-  head.style.cssText = 'display:flex;align-items:center;gap:.5rem;justify-content:space-between';
 
   const left = document.createElement('div');
-  left.innerHTML = '<h4 style="margin:0">ALERTAS</h4>';
+  left.className = 'alert-title-row';
+  left.innerHTML = `<h4>ALERTAS</h4>`;
 
   const right = document.createElement('div');
-  if (state?.is){
+  if (state.is){
     const btn = document.createElement('button');
     btn.id = 'btnCreateAlert';
     btn.className = 'btn ok';
     btn.textContent = 'CREAR ALERTA';
-    btn.onclick = openCreateAlertModal; // ya la tienes definida arriba
+    btn.onclick = openCreateAlertModal;
     right.appendChild(btn);
   }
 
   head.appendChild(left);
   head.appendChild(right);
-  panel.appendChild(head);
+  box.appendChild(head);
 
+  // CONTENEDOR
   const area = document.createElement('div');
-  area.id = 'alertsContent';
-  panel.appendChild(area);
+  box.appendChild(area);
 
-  // Cargas paralelas
-  const [miList, opsList] = await Promise.all([
-    fetchAlertsForMe(activeCoordId),
-    fetchAlertsOps()
-  ]);
-
-  // PARÁ MI
+  // RENDER SECCIÓN PARA MÍ
+  const mi = _renderList(paraMi, 'mi');
   const secMi = document.createElement('div');
   secMi.className = 'act';
-  secMi.innerHTML = `<h4>PARA MÍ${!activeCoordId ? ' <span class="muted">(selecciona coordinador)</span>' : ''}</h4>`;
-  const mi = buildListUI(miList, 'mi', activeCoordId);
+  secMi.innerHTML = `<h4>PARA MÍ</h4>`;
   secMi.appendChild(mi.ui);
   area.appendChild(secMi);
 
-  // OPERACIONES (solo STAFF)
-  if (state?.is){
+  // RENDER SECCIÓN OPERACIONES (solo STAFF)
+  if (state.is){
+    const op = _renderList(ops, 'ops');
     const secOp = document.createElement('div');
     secOp.className = 'act';
     secOp.innerHTML = `<h4>OPERACIONES</h4>`;
-    const op = buildListUI(opsList, 'ops', activeCoordId);
     secOp.appendChild(op.ui);
     area.appendChild(secOp);
   }
+
+  // Tira plegable (arriba) con persistencia
+  ensureAlertsFoldStrip(box);
+
+  // Auto-refresco suave cada 60s (sin duplicar timers)
+  if (!window.state.alertsUI.timer){
+    window.state.alertsUI.timer = setInterval(()=>{
+      // refresh sin bloquear UI
+      renderGlobalAlertsV2().catch(()=>{});
+    }, 60000);
+  }
 }
 
+// ------------------------
 // Compatibilidad: deja el nombre antiguo apuntando a V2
-async function renderGlobalAlerts(){ return renderGlobalAlertsV2(); }
+// (wrapper sin "return" suelto, dentro de la función)
+// ------------------------
+async function renderGlobalAlerts(){
+  return await renderGlobalAlertsV2();
+}
 
-// expone para que otros bloques (p.ej., openCreateAlertModal) puedan refrescar
+// expone para otros bloques (ej. openCreateAlertModal)
 window.renderGlobalAlertsV2 = renderGlobalAlertsV2;
 
-// ====== FINANZAS: FUNCIÓN PRINCIPAL (REEMPLAZO COMPLETO) ======
-async function renderFinanzas(g, pane){
-  pane.innerHTML = '<div class="muted">CARGANDO…</div>';
+// (Opcional) inicializar en load si quieres:
+document.addEventListener('DOMContentLoaded', ()=> { renderGlobalAlertsV2().catch(()=>{}); });
 
-  const qNorm = norm(state.groupQ||'');
-  const tasas = await getTasas();
-
-  const abonos = await loadAbonos(g.id);
-  const totAb  = abonos.reduce((acc,a)=>{
-    const m = String(a.moneda||'CLP').toUpperCase();
-    acc[m] = (acc[m]||0) + Number(a.valor||0);
-    return acc;
-  }, { CLP:0, USD:0, BRL:0, ARS:0 });
-
-  const totGa  = await sumGastosPorMonedaDelGrupo(g, qNorm);
-
-  const abCLP  = await sumCLPByMoneda(totAb,  tasas);
-  const gaCLP  = await sumCLPByMoneda(totGa,  tasas);
-  const saldoCLP = abCLP.CLPconv - gaCLP.CLPconv;
-
-  const wrap = document.createElement('div');
-  wrap.style.cssText='display:grid;gap:.8rem';
-  pane.innerHTML=''; 
-  pane.appendChild(wrap);
-
-  // ===== RESUMEN =====
-  const resum=document.createElement('div'); 
-  resum.className='act';
-  resum.innerHTML = `
-    <h4>RESUMEN FINANZAS</h4>
-    <div class="grid-mini">
-      <div class="lab">ABONOS</div>
-      <div>CLP ${fmtCL(totAb.CLP||0)} · USD ${fmtCL(totAb.USD||0)} · BRL ${fmtCL(totAb.BRL||0)} · ARS ${fmtCL(totAb.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(abCLP.CLPconv)}</strong></div>
-      <div class="lab">GASTOS</div>
-      <div>CLP ${fmtCL(totGa.CLP||0)} · USD ${fmtCL(totGa.USD||0)} · BRL ${fmtCL(totGa.BRL||0)} · ARS ${fmtCL(totGa.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(gaCLP.CLPconv)}</strong></div>
-      <div class="lab">SALDO</div>
-      <div><strong>${saldoCLP>=0?'TRANSFERIR A EMPRESA:':'PETICIÓN DE TRANSFERENCIA A COORDINADOR(A):'}: CLP ${fmtCL(saldoCLP)}</strong></div>
-    </div>
-  `;
-  wrap.appendChild(resum);
-
-  // ===== ABONOS =====
-  const boxAb=document.createElement('div'); 
-  boxAb.className='act';
-  boxAb.innerHTML = `
-    <h4>ABONOS ${state.is?'<span class="muted">(STAFF PUEDE EDITAR)</span>':''}</h4>
-    ${state.is ? `
-      <div class="rowflex" style="margin:.4rem 0">
-        <button id="btnNewAbono"  class="btn ok">NUEVO ABONO</button>
-      </div>` : ''}
-    <div id="abonosList" style="display:grid;gap:.4rem"></div>
-  `;
-  wrap.appendChild(boxAb);
-
-  const renderAbonosList = (items)=>{
-    const cont = boxAb.querySelector('#abonosList');
-    cont.innerHTML = '';
-    if (!items.length){ cont.innerHTML = '<div class="muted">SIN ABONOS.</div>'; return; }
-    items.forEach(a=>{
-      const card=document.createElement('div'); 
-      card.className='card';
-      card.innerHTML = `
-        <div class="meta"><strong>${(a.asunto||'ABONO').toString().toUpperCase()}</strong></div>
-        <div class="meta">FECHA: ${dmy(a.fecha||'')}</div>
-        <div class="meta">MONEDA/VALOR: ${(a.moneda||'CLP').toUpperCase()} ${fmtCL(a.valor||0)}</div>
-        <div class="meta">MEDIO: ${(a.medio||'').toString().toUpperCase()}</div>
-        ${a.comentarios?`<div class="meta" style="white-space:pre-wrap">${(a.comentarios||'').toString().toUpperCase()}</div>`:''}
-        ${a.autoCalc?`<div class="badge" style="background:#334155;color:#fff">SUGERIDO</div>`:''}
-        ${state.is?`
-          <div class="rowflex" style="margin-top:.4rem;gap:.4rem;flex-wrap:wrap">
-            <button class="btn sec btnEdit">EDITAR</button>
-            <button class="btn warn btnDel">ELIMINAR</button>
-          </div>`:''}
-      `;
-      if (state.is){
-        const bE = card.querySelector('.btnEdit');
-        if (bE) bE.onclick = async ()=>{
-          await openAbonoEditor(g, a, (updated)=>{ Object.assign(a,updated); renderAbonosList(items); });
-        };
-        const bD = card.querySelector('.btnDel');
-        if (bD) bD.onclick = async ()=>{
-          if (!confirm('¿Eliminar abono?')) return;
-          await deleteAbono(g.id, a.id);
-          const i = items.findIndex(x=>x.id===a.id);
-          if (i>=0) items.splice(i,1);
-          renderAbonosList(items);
-          await renderFinanzas(g, pane);
-        };
-      }
-      cont.appendChild(card);
-    });
-  };
-
-  if (state.is){
-    const btnNew = boxAb.querySelector('#btnNewAbono');
-    if (btnNew) btnNew.onclick = async ()=>{
-      await openAbonoEditor(g, null, async (saved)=>{
-        abonos.unshift(saved);
-        renderAbonosList(abonos);
-        await renderFinanzas(g, pane);
-      });
-    };
-  }
-  renderAbonosList(abonos);
 
   // GASTOS
   const paneGastos=document.createElement('div');
