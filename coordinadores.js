@@ -4474,6 +4474,10 @@ window.renderGlobalAlertsV2 = renderGlobalAlertsV2;
 // (Opcional) inicializar en load si quieres:
 document.addEventListener('DOMContentLoaded', ()=> { renderGlobalAlertsV2().catch(()=>{}); });
 
+async function renderFinanzas(g, pane){
+  const wrap = document.createElement('div');
+  pane.innerHTML = '';
+  pane.appendChild(wrap);
 
   // GASTOS
   const paneGastos=document.createElement('div');
