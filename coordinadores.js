@@ -518,7 +518,7 @@ if (typeof window !== 'undefined') {
       const folded = getFolded();
       panel.style.display = folded ? 'none' : '';
       btn.textContent = folded ? 'MOSTRAR ALERTAS' : 'OCULTAR ALERTAS';
-      hint.textContent = folded ? 'Panel contraído' : 'Panel visible';
+      hint.textContent = folded ? '' : '';
     };
   
     btn.onclick = () => {
