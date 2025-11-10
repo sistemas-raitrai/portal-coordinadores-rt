@@ -434,11 +434,13 @@ if (typeof window !== 'undefined') {
           <option value="unread" selected>NO LEÍDAS</option>
           <option value="read">LEÍDAS</option>
         </select>
-  
-        <select id="alScope" title="ÁMBITO">
-          <option value="ops" selected>OPERACIONES</option>
-          <option value="mine">DEL COORDINADOR(A)</option>
-        </select>
+
+        ${state.is ? `
+          <select id="alScope" title="ÁMBITO">
+            <option value="ops" selected>OPERACIONES</option>
+            <option value="mine">DEL COORDINADOR(A)</option>
+          </select>
+        ` : ``}
   
         ${state.is ? `<button id="btnCreateAlert" class="btn ok" style="width:100%;display:block">CREAR NOTIFICACIÓN</button>` : ''}
   
@@ -469,16 +471,21 @@ if (typeof window !== 'undefined') {
   
     // HOOKS: estado + ámbito
     const $state = host.querySelector('#alState');
-    $state.value = (state.alertsUI?.state === 'read') ? 'read' : 'unread';
+    $state.value = (state.alertsUI.state === 'read') ? 'read' : 'unread';
     $state.onchange = () => { state.alertsUI.state = $state.value; renderAlertsPanel(); };
-  
+    
+    // ÁMBITO solo existe para staff; si no existe, fuerza 'mine' internamente
     const $scope = host.querySelector('#alScope');
-    $scope.value = (state.alertsUI?.scope === 'mine') ? 'mine' : 'ops';
-    $scope.onchange = () => { state.alertsUI.scope = $scope.value; renderAlertsPanel(); };
-  
-    // Botones de refresco / más
+    if ($scope) {
+      $scope.value = (state.alertsUI.scope === 'mine') ? 'mine' : 'ops';
+      $scope.onchange = () => { state.alertsUI.scope = $scope.value; renderAlertsPanel(); };
+    } else {
+      state.alertsUI.scope = 'mine'; // no-staff: ver solo sus notificaciones
+    }
+    
     host.querySelector('#alRefresh').onclick = async () => { resetAlertsCache(); await fetchAlertsPage(true); };
     host.querySelector('#alMore').onclick    = async () => { await fetchAlertsPage(false); };
+
   
     return host;
   }
