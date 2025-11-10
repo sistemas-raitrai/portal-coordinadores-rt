@@ -444,12 +444,12 @@ if (typeof window !== 'undefined') {
            </select>
          `}
    
-         <button id="alRefresh" class="btn sec">ACTUALIZAR</button>
+         <button id="alRefresh" class="btn sec" style="width:100%;display:block">ACTUALIZAR</button>
        </div>
    
        <div id="alList" class="acts"></div>
        <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
-         <button id="alMore" class="btn">VER MÁS</button>
+         <button id="alMore" class="btn sec" style="width:100%;display:block">VER MÁS</button>
        </div>
        <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
      `;
