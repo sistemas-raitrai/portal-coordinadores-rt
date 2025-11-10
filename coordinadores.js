@@ -647,7 +647,7 @@ if (typeof window !== 'undefined') {
 
     // DIBUJO
     if (!arr.length){
-      list.innerHTML = '<div class="muted">SIN ALERTAS PARA ESTE CRITERIO.</div>';
+      list.innerHTML = '<div class="muted">SIN ALERTAS POR EL MOMENTO.</div>';
     } else {
       const frag = document.createDocumentFragment();
       arr.forEach(a => {
@@ -699,8 +699,7 @@ if (typeof window !== 'undefined') {
     }
 
     meta.textContent =
-      `MOSTRANDO ${arr.length} / CARGADAS ${state.alertsUI.totalLoaded} — ` +
-      `USA BUSCADOR, FILTRO Y “CARGAR 20 MÁS”.`;
+      `MOSTRANDO ${arr.length} `;
   }
 
   // API pública
