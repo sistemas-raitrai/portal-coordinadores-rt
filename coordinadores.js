@@ -4526,6 +4526,10 @@ async function renderFinanzas(g, pane){
     const wrapCash   = cierre.querySelector('#wrapCashUsd');
     if (wrapTransf) wrapTransf.style.display = needTransf ? '' : 'none';
     if (wrapCash)   wrapCash.style.display   = needCash   ? '' : 'none';
+
+    // (OPCIONAL) Ocultar “Datos de transferencia” si no hay CLP sobrante
+    const datos = cierre.querySelector('.card'); // es la tarjeta que contiene los datos de transferencia
+    if (datos) datos.style.display = needTransf ? '' : 'none';
   
     // Validaciones de requisitos
     const transfOk = !needTransf || !!sumPrev?.transfer?.done || (chTransf && chTransf.checked);
@@ -4557,6 +4561,22 @@ async function renderFinanzas(g, pane){
   }
 
   checkReady();
+
+  // === BLOQUEO DE CONTROLES DE CIERRE SI YA ESTÁ CERRADO (SOLO COORDINADOR) ===
+  const isReadOnlyFin = !!sumPrev?.closed && !state.is;
+  if (isReadOnlyFin){
+    // Deshabilita todos los controles del bloque de cierre
+    ['#chTransf','#upComp','#btnUpComp','#chCashUsd','#upCash','#btnUpCash','#upBoleta','#btnUpBoleta','#btnCloseFin']
+      .forEach(sel => {
+        const el = cierre.querySelector(sel);
+        if (el){ el.disabled = true; el.classList.add('disabled'); }
+      });
+  
+    // Mensaje claro de estado
+    const h = cierre.querySelector('#finHints');
+    if (h) h.innerHTML = '<div class="muted">VIAJE FINALIZADO · RENDICIÓN HECHA · BOLETA ENTREGADA</div>';
+  }
+
   
   // === Handlers de subida (comprobante transferencia CLP) ===
   const upCompBtn = cierre.querySelector('#btnUpComp');
@@ -4634,6 +4654,18 @@ async function renderFinanzas(g, pane){
     await renderFinanzas(g, pane); // refresca modal
   };
 
+  // === BLOQUEO TOTAL DE EDICIÓN EN EL MODAL (ABONOS + GASTOS) SI YA ESTÁ CERRADO (SOLO COORDINADOR) ===
+  if (isReadOnlyFin){
+    // Deshabilita todos los inputs/select/textarea/button del modal de finanzas
+    // (permite que los enlaces "VER" sigan funcionando)
+    pane.querySelectorAll('input, select, textarea, button').forEach(el => {
+      el.disabled = true;
+      el.classList.add('disabled');
+    });
+  
+    // Rehabilita enlaces (por si algún estilo global usa pointer-events)
+    pane.querySelectorAll('a').forEach(a => a.style.pointerEvents = 'auto');
+  }
 
   await updateFinanzasSummary(g.id, {
     totals:{
