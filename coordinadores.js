@@ -883,6 +883,8 @@ onAuthStateChanged(auth, async (user) => {
      state.alertsUI.filter = 'unread';
    }
 
+     // Fuerza panel de notificaciones contraído en cada carga
+     try { localStorage.setItem('rt__alerts_fold','1'); } catch(_) {}
 
      // PANEL ALERTAS
      await window.renderGlobalAlertsV2();
