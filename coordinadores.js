@@ -3623,32 +3623,90 @@ function upperNameByEmail(email){
 }
 
 /** DESTINATARIOS POR FILTROS (DESTINOS, RANGO/FECHA) ESCANEANDO TODOS LOS GRUPOS */
-async function recipientsFromFilters(destinosList, rangoStr){
-  const wantedDest = destinosList.map(d=>norm(d)).filter(Boolean);
-  let A=null,B=null;
-  if(/^\d{2}-\d{2}-\d{4}\.\.\d{2}-\d{2}-\d{4}$/.test((rangoStr||'').trim())){ const [a,b]=rangoStr.split('..'); A=ymdFromDMY(a); B=ymdFromDMY(b); }
-  else if(/^\d{2}-\d{2}-\d{4}$/.test((rangoStr||'').trim())){ const d=ymdFromDMY(rangoStr.trim()); A=d; B=d; }
+async function recipientsFromFilters(destinos, rango){
+  // Normaliza inputs
+  const wants = (Array.isArray(destinos) ? destinos : [])
+    .map(x => String(x || '').trim().toUpperCase())
+    .filter(Boolean);
+  const wantAll = new Set(wants); // AND: deben cumplirse todos los destinos listados
 
-  if(!wantedDest.length && !A) return new Set();
-
-  const r = new Set();
-  const mapEmailToId = new Map((state.coordinadores || []).map(c => [String(c.email || '').toLowerCase(), c.id]));
-  const snap=await getDocs(collection(db,'grupos'));
-  snap.forEach(d=>{
-    const g={id:d.id, ...(d.data()||{})};
-    const destOk = !wantedDest.length || wantedDest.includes(norm(g.destino||'')) || wantedDest.includes(norm(g.Destino||''));
-    let dateOk = true;
-    if(A){ const ini=toISO(g.fechaInicio||g.inicio||g.fecha_ini), fin=toISO(g.fechaFin||g.fin||g.fecha_fin);
-      dateOk = !( (fin && fin < A) || (ini && ini > B) );
+  // parseo de fecha/rango: "DD-MM-AAAA" o "DD-MM-AAAA.DD-MM-AAAA"
+  const parseDMY = s => {
+    const m = String(s||'').match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (!m) return null;
+    const [_, dd, mm, yyyy] = m;
+    return `${yyyy}-${mm}-${dd}`; // ISO simple
+  };
+  let sinceISO = null, untilISO = null;
+  if (rango){
+    const parts = String(rango).split('.').map(x => x.trim()).filter(Boolean);
+    if (parts.length === 2){
+      sinceISO = parseDMY(parts[0]);
+      untilISO = parseDMY(parts[1]);
+    } else if (parts.length === 1){
+      sinceISO = parseDMY(parts[0]);
+      untilISO = parseDMY(parts[0]);
     }
-    if(destOk && dateOk){
-      const ids = coordDocIdsOf(g); ids.forEach(id=>r.add(String(id)));
-      emailsOf(g).forEach(e => {
-        const key = String(e || '').toLowerCase();
-        if (mapEmailToId.has(key)) r.add(mapEmailToId.get(key));
+  }
+
+  // helper de fecha: incluye si cae dentro (inclusive); si no hay rango, no filtra
+  const dateOK = (g) => {
+    const d = String(g?.fechaActividad || g?.fecha || g?.fechaInicio || '').slice(0,10);
+    if (!sinceISO || !untilISO) return true;
+    return (d >= sinceISO && d <= untilISO);
+  };
+
+  // mapa email→coordId
+  const mapEmailToId = new Map((state.coordinadores || [])
+    .map(c => [String(c.email || '').toLowerCase(), c.id]));
+
+  // Acumulador por coordId de destinos cumplidos
+  const matchedByCoord = new Map(); // coordId -> Set(destinosCumplidos)
+
+  // Consulta grupos (puedes optimizar con filtros si tienes índices)
+  const snap = await getDocs(collection(db, 'grupos'));
+  snap.forEach(d => {
+    const g = { id: d.id, ...(d.data() || {}) };
+
+    // fecha
+    if (!dateOK(g)) return;
+
+    // destino del grupo normalizado
+    const gd = String(g.destino || g.Destino || '').toUpperCase().trim();
+    if (wantAll.size > 0 && !wantAll.has(gd)) return; // si quiero AND, solo cuenta si el grupo está en alguno de los "wants"
+
+    // coord ids del grupo
+    const ids = coordDocIdsOf ? coordDocIdsOf(g) : []; // usa tu helper existente si está definido
+    if (!ids || !ids.length){
+      // fallback por email si no hay ids
+      (emailsOf ? emailsOf(g) : []).forEach(e => {
+        const cid = mapEmailToId.get(String(e || '').toLowerCase());
+        if (cid) ids.push(cid);
       });
     }
+    if (!ids.length) return;
+
+    // marca destino cumplido para cada coord
+    ids.forEach(cid => {
+      if (!matchedByCoord.has(cid)) matchedByCoord.set(cid, new Set());
+      if (gd) matchedByCoord.get(cid).add(gd);
+    });
   });
+
+  // Devuelve solo los coordIds que cumplen TODOS los destinos solicitados (AND)
+  const out = [];
+  if (wantAll.size === 0){
+    // sin destinos: devuelve TODOS los coordinadores que tienen grupos en el rango (si rango existe)
+    matchedByCoord.forEach((_set, cid) => out.push(cid));
+  } else {
+    matchedByCoord.forEach((setD, cid) => {
+      // deben estar todos los "wants" dentro de setD
+      let ok = true;
+      for (const w of wantAll){ if (!setD.has(w)) { ok = false; break; } }
+      if (ok) out.push(cid);
+    });
+  }
+  return out;
 }
 
 /** MODAL: CREAR ALERTA () */
@@ -3657,44 +3715,137 @@ async function openCreateAlertModal(){
   title.textContent='CREAR ALERTA';
   const coordOpts=state.coordinadores.map(c=>`<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${(c.email||'').toUpperCase()}</option>`).join('');
   body.innerHTML=`
-   <div class="rowflex">
-      <input id="alertDestinos" type="text" placeholder="DESTINOS (SEPARADOS POR COMA, OPCIONAL)"/>
-      <input id="alertRango" type="text" placeholder="RANGO DD-MM-AAAA..DD-MM-AAAA O FECHA ÚNICA"/>
-    </div>
     <div class="rowflex">
-      <label>DESTINATARIOS (COORDINADORES)</label>
-      <select id="alertCoords" multiple size="8" style="width:100%">${coordOpts}</select>
+      <input id="alertDestinos" type="text" placeholder="DESTINOS (SEPARADOS POR COMA = AND)"/>
+      <input id="alertRango" type="text" placeholder="FECHA (DD-MM-AAAA) o RANGO DD-MM-AAAA.DD-MM-AAAA"/>
     </div>
+  
+    <div class="rowflex" style="align-items:center;justify-content:space-between;gap:.5rem">
+      <label style="margin:0">DESTINATARIOS (COORDINADORES)</label>
+      <label style="margin:0;font-size:.9rem">
+        <input type="checkbox" id="alertSelectAll"/> SELECCIONAR TODOS (VISIBLES)
+      </label>
+    </div>
+  
+    <div class="rowflex">
+      <select id="alertCoords" multiple size="10" style="width:100%">${coordOpts}</select>
+    </div>
+  
+    <div class="rowflex" style="justify-content:flex-end">
+      <div id="alertCount" class="muted" style="font-size:.9rem">0 encontrados</div>
+    </div>
+  
     <div class="rowflex"><textarea id="alertMsg" placeholder="MENSAJE" style="width:100%"></textarea></div>
     <div class="rowflex"><button id="alertSave" class="btn ok">ENVIAR</button></div>`;
-  document.getElementById('alertSave').onclick=async ()=>{
-    const msg=(document.getElementById('alertMsg').value||'').trim();
-    const sel=Array.from(document.getElementById('alertCoords').selectedOptions).map(o=>o.value);
-    const destinos=(document.getElementById('alertDestinos').value||'').split(',').map(x=>x.trim()).filter(Boolean);
-    const rango=(document.getElementById('alertRango').value||'').trim();
-    if(!msg && !destinos.length){ alert('ESCRIBE UN MENSAJE O USA FILTROS.'); return; }
 
-    const set=new Set(sel);
+  // cache: todos los coordinadores (no renombramos nada)
+  const _allCoords = (state.coordinadores || []).map(c => ({
+    id: c.id,
+    email: String(c.email || '').toLowerCase(),
+    nombre: (c.nombre || '').toString().toUpperCase()
+  }));
+  
+  const $dest   = document.getElementById('alertDestinos');
+  const $rango  = document.getElementById('alertRango');
+  const $sel    = document.getElementById('alertCoords');
+  const $count  = document.getElementById('alertCount');
+  const $all    = document.getElementById('alertSelectAll');
+  
+  let _lastFilterIds = null; // ids filtrados por (destinos AND + rango), para mostrar en el select
+  
+  function renderCoordOptions(ids){
+    const show = Array.isArray(ids) && ids.length ? new Set(ids) : null;
+    const opts = (show
+      ? _allCoords.filter(c => show.has(c.id))
+      : _allCoords
+    );
+  
+    $sel.innerHTML = opts.map(c =>
+      `<option value="${c.id}">${c.nombre} — ${c.email.toUpperCase()}</option>`
+    ).join('');
+    $count.textContent = `${opts.length} encontrados`;
+  }
+  
+  let _fTimer = null;
+  async function applyCoordFilter(){
+    // lee filtros de UI
+    const destinosRaw = ($dest.value || '');
+    const rangoRaw    = ($rango.value || '');
+  
     try{
-      const fromFilters = await recipientsFromFilters(destinos, rango);
-      fromFilters.forEach(id=>set.add(id));
-    }catch(e){ console.error(e); }
+      // usa tu función existente para consultar por filtros
+      const ids = await recipientsFromFilters(
+        destinosRaw.split(',').map(x => x.trim()).filter(Boolean), // coma = AND (lo reforzamos en la función abajo)
+        rangoRaw.trim()
+      );
+      _lastFilterIds = Array.isArray(ids) ? ids : [];
+    }catch(e){
+      console.error('[ALERTAS] filtro coordinadores', e);
+      _lastFilterIds = [];
+    }
+    renderCoordOptions(_lastFilterIds);
+    // si estaba activado "seleccionar todos", re-aplicamos selección
+    if ($all && $all.checked){
+      for (const opt of $sel.options) opt.selected = true;
+    }
+  }
+  
+  // eventos de filtro (con debounce simple)
+  function debouncedFilter(){
+    clearTimeout(_fTimer);
+    _fTimer = setTimeout(applyCoordFilter, 250);
+  }
+  $dest.addEventListener('input', debouncedFilter);
+  $rango.addEventListener('input', debouncedFilter);
+  
+  // seleccionar todos (visibles)
+  if ($all){
+    $all.onchange = () => {
+      const on = !!$all.checked;
+      for (const opt of $sel.options) opt.selected = on;
+    };
+  }
+  
+  // primera pasada: ya filtra si hay valores pre-cargados; si no, lista completa
+  applyCoordFilter();
 
-    const forCoordIds=[...set];
-    if(!forCoordIds.length){ alert('NO HAY DESTINATARIOS. REVISA FILTROS/SELECCIÓN.'); return; }
-
+  document.getElementById('alertSave').onclick = async () => {
+    const msg   = (document.getElementById('alertMsg').value || '').trim();
+    const sel   = Array.from(document.getElementById('alertCoords').selectedOptions).map(o => o.value);
+    const dests = (document.getElementById('alertDestinos').value || '').split(',').map(x => x.trim()).filter(Boolean);
+    const rango = (document.getElementById('alertRango').value || '').trim();
+  
+    if (!msg && !dests.length){ alert('ESCRIBE UN MENSAJE O USA FILTROS.'); return; }
+  
+    let forCoordIds = sel.slice(); // prioridad a selección manual
+    if (forCoordIds.length === 0){
+      try {
+        const fromFilters = await recipientsFromFilters(dests, rango);
+        forCoordIds = Array.isArray(fromFilters) ? fromFilters.slice() : [];
+      } catch(e) {
+        console.error(e);
+      }
+    }
+  
+    if (!forCoordIds.length){
+      alert('NO HAY DESTINATARIOS. REVISA FILTROS/SELECCIÓN.');
+      return;
+    }
+  
     await addDoc(collection(db,'alertas'),{
       audience:'coord',
       mensaje: msg.toUpperCase(),
       forCoordIds,
-      meta:{ filtros:{ destinos, rango } },
-      createdAt:serverTimestamp(),
-      createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() },
+      meta:{ filtros:{ destinos: dests, rango } },
+      createdAt: serverTimestamp(),
+      createdBy:{ uid: state.user.uid, email: (state.user.email || '').toLowerCase() },
       readBy:{}
     });
-    document.getElementById('modalBack').style.display='none';
+  
+    document.getElementById('modalBack').style.display = 'none';
     await window.renderGlobalAlertsV2();
   };
+
   document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
   back.style.display='flex';
 }
