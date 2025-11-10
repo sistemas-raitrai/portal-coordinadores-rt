@@ -4446,42 +4446,109 @@ async function renderFinanzas(g, pane){
   const cierre=document.createElement('div'); cierre.className='act';
   cierre.innerHTML=`
     <h4>CIERRE FINANCIERO</h4>
+  
+    <!-- Hints de requisitos dinámicos -->
+    <div id="finHints" class="meta muted" style="margin-bottom:.35rem"></div>
+  
     <div class="card">
       <div class="meta"><strong>DATOS DE TRANSFERENCIA</strong></div>
       <div class="meta">CUENTA CORRIENTE N° 03398-07 · BANCO DE CHILE</div>
       <div class="meta">TURISMO RAITRAI LIMITADA · RUT 78.384.230-0</div>
       <div class="meta">aleoperaciones@raitrai.cl</div>
     </div>
-    <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem">
+  
+    <!-- Devolución CLP por transferencia -->
+    <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
       <label class="meta" style="display:flex;gap:.4rem;align-items:center">
-        <input id="chTransf" type="checkbox"/> TRANSFERENCIA REALIZADA
+        <input id="chTransf" type="checkbox"/> TRANSFERENCIA REALIZADA (CLP)
       </label>
       <input id="upComp" type="file" accept="image/*,application/pdf"/>
       <button id="btnUpComp" class="btn sec">SUBIR COMPROBANTE</button>
     </div>
+  
+    <!-- Devolución USD en efectivo -->
+    <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
+      <label class="meta" style="display:flex;gap:.4rem;align-items:center">
+        <input id="chCashUsd" type="checkbox"/> EFECTIVO DEVUELTO (USD)
+      </label>
+      <input id="upCash" type="file" accept="image/*,application/pdf"/>
+      <button id="btnUpCash" class="btn sec">SUBIR CONSTANCIA</button>
+    </div>
+  
+    <!-- Boleta SIEMPRE obligatoria -->
     <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
       <a href="https://www.sii.cl" target="_blank" class="btn sec">IR A SII.CL</a>
       <input id="upBoleta" type="file" accept="image/*,application/pdf"/>
       <button id="btnUpBoleta" class="btn sec">SUBIR BOLETA</button>
     </div>
+  
     <div class="rowflex" style="margin-top:.6rem">
       <button id="btnCloseFin" class="btn ok" disabled>CERRAR FINANZAS</button>
     </div>
   `;
   wrap.appendChild(cierre);
-
+  
+  // === Estado previo guardado (summary) ===
   const sumPrev = await ensureFinanzasSummary(g.id) || {};
-  const ch = cierre.querySelector('#chTransf');
-  if (sumPrev?.transfer?.done && ch) ch.checked = true;
-
-  const checkReady = ()=>{
-    const transfOk = !!(ch && ch.checked);
-    const boletaOk = !!sumPrev?.boleta?.uploaded;
-    const btn = cierre.querySelector('#btnCloseFin');
-    if (btn) btn.disabled = !(transfOk && boletaOk);
+  const chTransf = cierre.querySelector('#chTransf');
+  const chCash   = cierre.querySelector('#chCashUsd');
+  
+  // Inicializa checks si ya había registros subidos
+  if (sumPrev?.transfer?.done && chTransf) chTransf.checked = true;
+  if (sumPrev?.cashUsd?.done && chCash)   chCash.checked   = true;
+  
+  // === Saldos por moneda (bolsillos internos, pero UI unificada) ===
+  const saldos = {
+    CLP: (totAb.CLP||0) - (totGa.CLP||0),
+    USD: (totAb.USD||0) - (totGa.USD||0),
+    BRL: (totAb.BRL||0) - (totGa.BRL||0),
+    ARS: (totAb.ARS||0) - (totGa.ARS||0),
   };
+  
+  // helper numérico tolerante (≈0 a 2 decimales)
+  const isZero = v => Math.abs(Number(v||0)) < 0.005;
+  
+  // === Requisitos dinámicos ===
+  // - Boleta SIEMPRE obligatoria
+  // - Si sobra CLP  -> Transferencia CLP con comprobante
+  // - Si sobra USD  -> Efectivo devuelto USD con constancia
+  // - BRL/ARS deben quedar en 0 (no hay devolución en esas monedas)
+  function checkReady(){
+    const needTransf = (saldos.CLP || 0) > 0;   // sobra CLP
+    const needCash   = (saldos.USD || 0) > 0;   // sobra USD
+    const brlOk      = isZero(saldos.BRL);
+    const arsOk      = isZero(saldos.ARS);
+    const restrOk    = brlOk && arsOk;
+  
+    const transfOk   = !needTransf || !!sumPrev?.transfer?.done || (chTransf && chTransf.checked);
+    const cashOk     = !needCash   || !!sumPrev?.cashUsd?.done   || (chCash   && chCash.checked);
+    const boletaOk   = !!sumPrev?.boleta?.uploaded;
+  
+    const btn        = cierre.querySelector('#btnCloseFin');
+    if (btn) btn.disabled = !(restrOk && boletaOk && transfOk && cashOk);
+  
+    // Mensajes de requisitos
+    const hints = [];
+    if (!boletaOk) hints.push('• FALTA BOLETA.');
+    if (!restrOk){
+      if (!brlOk) hints.push('• BRL debe quedar en 0 (no hay devolución en BRL).');
+      if (!arsOk) hints.push('• ARS debe quedar en 0 (no hay devolución en ARS).');
+    }
+    if (needTransf && !sumPrev?.transfer?.done && !(chTransf && chTransf.checked)){
+      hints.push('• Sobra CLP: marca TRANSFERENCIA REALIZADA (CLP) y sube comprobante.');
+    }
+    if (needCash && !sumPrev?.cashUsd?.done && !(chCash && chCash.checked)){
+      hints.push('• Sobra USD: marca EFECTIVO DEVUELTO (USD) y sube constancia.');
+    }
+  
+    const h = cierre.querySelector('#finHints');
+    h.innerHTML = hints.length
+      ? `<div class="muted">${hints.join('<br>')}</div>`
+      : '<div class="muted">TODO LISTO PARA CERRAR.</div>';
+  }
   checkReady();
-
+  
+  // === Handlers de subida (comprobante transferencia CLP) ===
   const upCompBtn = cierre.querySelector('#btnUpComp');
   if (upCompBtn) upCompBtn.onclick = async ()=>{
     const file = cierre.querySelector('#upComp').files[0]||null;
@@ -4494,34 +4561,69 @@ async function renderFinanzas(g, pane){
     const url = await getDownloadURL(r);
     await updateFinanzasSummary(g.id, { transfer:{ done:true, fecha: todayISO(), medio:'TRANSFERENCIA', comprobanteUrl:url } });
     sumPrev.transfer = { done:true, fecha: todayISO(), medio:'TRANSFERENCIA', comprobanteUrl:url };
-    if (ch) ch.checked = true;
+    if (chTransf) chTransf.checked = true;
     checkReady();
     showFlash('COMPROBANTE SUBIDO', 'ok');
   };
-
+  
+  // === Handlers de subida (constancia efectivo USD) ===
+  const upCashBtn = cierre.querySelector('#btnUpCash');
+  if (upCashBtn) upCashBtn.onclick = async ()=>{
+    const file = cierre.querySelector('#upCash').files[0]||null;
+    if (!file){ alert('Selecciona la constancia (foto/PDF).'); return; }
+    if (file.size > 15*1024*1024){ alert('Archivo supera 15MB.'); return; }
+    const safe = file.name.replace(/[^a-z0-9.\-_]/gi,'_');
+    const path = `finanzas/${g.id}/efectivo_usd/${Date.now()}_${safe}`;
+    const r = sRef(storage, path);
+    await uploadBytes(r, file, { contentType: file.type || 'application/octet-stream' });
+    const url = await getDownloadURL(r);
+    await updateFinanzasSummary(g.id, { cashUsd:{ done:true, fecha: todayISO(), medio:'EFECTIVO_USD', comprobanteUrl:url } });
+    sumPrev.cashUsd = { done:true, fecha: todayISO(), medio:'EFECTIVO_USD', comprobanteUrl:url };
+    if (chCash) chCash.checked = true;
+    checkReady();
+    showFlash('CONSTANCIA DE EFECTIVO SUBIDA', 'ok');
+  };
+  
+  // === Subida de boleta (siempre obligatoria) ===
   const upBolBtn = cierre.querySelector('#btnUpBoleta');
   if (upBolBtn) upBolBtn.onclick = async ()=>{
     const file = cierre.querySelector('#upBoleta').files[0]||null;
-    if (!file){ alert('Selecciona la boleta (imagen o PDF).'); return; }
+    if (!file){ alert('Selecciona la boleta.'); return; }
     if (file.size > 15*1024*1024){ alert('Archivo supera 15MB.'); return; }
     const safe = file.name.replace(/[^a-z0-9.\-_]/gi,'_');
     const path = `finanzas/${g.id}/boletas/${Date.now()}_${safe}`;
     const r = sRef(storage, path);
-    await uploadBytes(r, file, { contentType: file.type || 'application/pdf' });
+    await uploadBytes(r, file, { contentType: file.type || 'application/octet-stream' });
     const url = await getDownloadURL(r);
-    await updateFinanzasSummary(g.id, { boleta:{ uploaded:true, url, filename:safe } });
-    sumPrev.boleta = { uploaded:true, url, filename:safe };
+    await updateFinanzasSummary(g.id, { boleta:{ uploaded:true, fecha: todayISO(), url } });
+    sumPrev.boleta = { uploaded:true, fecha: todayISO(), url };
     checkReady();
     showFlash('BOLETA SUBIDA', 'ok');
   };
-
+  
+  // === Cerrar finanzas (bloquea edición para coordinador) ===
   const closeBtn = cierre.querySelector('#btnCloseFin');
   if (closeBtn) closeBtn.onclick = async ()=>{
-    if (!(ch && ch.checked)){ alert('Marca transferencia realizada / sube comprobante.'); return; }
-    if (!sumPrev?.boleta?.uploaded){ alert('Debes subir boleta para cerrar.'); return; }
-    await closeFinanzas(g);
-    await renderFinanzas(g, pane);
+    // Revalidación con mensajes concretos
+    const needTransf = (saldos.CLP || 0) > 0;
+    const needCash   = (saldos.USD || 0) > 0;
+    const brlOk      = isZero(saldos.BRL);
+    const arsOk      = isZero(saldos.ARS);
+    const boletaOk   = !!sumPrev?.boleta?.uploaded;
+  
+    if (!boletaOk){ alert('Debes subir boleta para cerrar.'); return; }
+    if (!brlOk || !arsOk){ alert('BRL y ARS deben quedar en 0 para cerrar.'); return; }
+    if (needTransf && !sumPrev?.transfer?.done && !(chTransf && chTransf.checked)){
+      alert('Sobra CLP: marca TRANSFERENCIA REALIZADA (CLP) y sube el comprobante.'); return;
+    }
+    if (needCash && !sumPrev?.cashUsd?.done && !(chCash && chCash.checked)){
+      alert('Sobra USD: marca EFECTIVO DEVUELTO (USD) y sube la constancia.'); return;
+    }
+  
+    await closeFinanzas(g);        // ← ya existente: marca summary.closed y flags de grupo
+    await renderFinanzas(g, pane); // refresca modal
   };
+
 
   await updateFinanzasSummary(g.id, {
     totals:{
