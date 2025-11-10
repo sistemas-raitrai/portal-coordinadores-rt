@@ -813,7 +813,7 @@ onAuthStateChanged(auth, async (user) => {
       
       // AUTO-REFRESCO CADA 60S (solo alertas, sin reordenar paneles)
       if (!state.alertsTimer){
-        state.alertsTimer = setInterval(window.renderGlobalAlertsV2, 60000);
+        state.alertsTimer = setInterval(window.renderGlobalAlertsV2, 3600000); // 60 min
         // opcional: espejo para legacy que miraba window.*
         window.rtAlertsTimer = state.alertsTimer;
       }
