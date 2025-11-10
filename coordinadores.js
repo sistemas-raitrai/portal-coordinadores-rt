@@ -399,6 +399,8 @@ if (typeof window !== 'undefined') {
     'operaciones@raitrai.cl',
     'aleoperaciones@raitrai.cl',
     'sistemas@raitrai.cl',
+    'tomas@raitrai.cl',
+    'administracion@bordeandino.cl',    
   ]);
 
   const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
@@ -427,14 +429,14 @@ if (typeof window !== 'undefined') {
      host.innerHTML = `
 
        <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
-         <input id="alQ" type="text" placeholder="BUSCAR EN ALERTAS..." style="flex:1;min-width:240px"/>
+         <input id="alQ" type="text" placeholder="BUSCAR EN NOTIFICACIONES..." style="flex:1;min-width:240px"/>
    
          ${state.is ? `
            <!-- STAFF: ÁMBITO -->
            <select id="alScope" title="ÁMBITO">
              <option value="all">TODAS</option>
-             <option value="ops">SOLO OPERACIONES</option>
-             <option value="mine">SOLO MÍAS</option>
+             <option value="ops">PARA OPERACIONES</option>
+             <option value="mine">DEL COORDINADOR(A)</option>
            </select>
          ` : `
            <!-- NO STAFF: ESTADO -->
