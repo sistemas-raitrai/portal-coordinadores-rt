@@ -449,7 +449,7 @@ if (typeof window !== 'undefined') {
    
        <div id="alList" class="acts"></div>
        <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
-         <button id="alMore" class="btn">CARGAR 20 MÁS</button>
+         <button id="alMore" class="btn">VER MÁS</button>
        </div>
        <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
      `;
