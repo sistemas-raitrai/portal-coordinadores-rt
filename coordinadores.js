@@ -4457,8 +4457,8 @@ async function renderFinanzas(g, pane){
       <div class="meta">aleoperaciones@raitrai.cl</div>
     </div>
   
-    <!-- Devolución CLP por transferencia -->
-    <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
+    <!-- Devolución CLP por transferencia (se oculta si no sobra CLP) -->
+    <div id="wrapTransf" class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
       <label class="meta" style="display:flex;gap:.4rem;align-items:center">
         <input id="chTransf" type="checkbox"/> TRANSFERENCIA REALIZADA (CLP)
       </label>
@@ -4466,14 +4466,15 @@ async function renderFinanzas(g, pane){
       <button id="btnUpComp" class="btn sec">SUBIR COMPROBANTE</button>
     </div>
   
-    <!-- Devolución USD en efectivo -->
-    <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
+    <!-- Devolución USD en efectivo (se oculta si no sobra USD) -->
+    <div id="wrapCashUsd" class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
       <label class="meta" style="display:flex;gap:.4rem;align-items:center">
         <input id="chCashUsd" type="checkbox"/> EFECTIVO DEVUELTO (USD)
       </label>
       <input id="upCash" type="file" accept="image/*,application/pdf"/>
       <button id="btnUpCash" class="btn sec">SUBIR CONSTANCIA</button>
     </div>
+
   
     <!-- Boleta SIEMPRE obligatoria -->
     <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
@@ -4520,14 +4521,22 @@ async function renderFinanzas(g, pane){
     const arsOk      = isZero(saldos.ARS);
     const restrOk    = brlOk && arsOk;
   
-    const transfOk   = !needTransf || !!sumPrev?.transfer?.done || (chTransf && chTransf.checked);
-    const cashOk     = !needCash   || !!sumPrev?.cashUsd?.done   || (chCash   && chCash.checked);
-    const boletaOk   = !!sumPrev?.boleta?.uploaded;
+    // Mostrar/ocultar bloques según necesidad
+    const wrapTransf = cierre.querySelector('#wrapTransf');
+    const wrapCash   = cierre.querySelector('#wrapCashUsd');
+    if (wrapTransf) wrapTransf.style.display = needTransf ? '' : 'none';
+    if (wrapCash)   wrapCash.style.display   = needCash   ? '' : 'none';
   
-    const btn        = cierre.querySelector('#btnCloseFin');
+    // Validaciones de requisitos
+    const transfOk = !needTransf || !!sumPrev?.transfer?.done || (chTransf && chTransf.checked);
+    const cashOk   = !needCash   || !!sumPrev?.cashUsd?.done   || (chCash   && chCash.checked);
+    const boletaOk = !!sumPrev?.boleta?.uploaded;
+  
+    // Habilitar botón Cerrar
+    const btn = cierre.querySelector('#btnCloseFin');
     if (btn) btn.disabled = !(restrOk && boletaOk && transfOk && cashOk);
   
-    // Mensajes de requisitos
+    // Mensajes
     const hints = [];
     if (!boletaOk) hints.push('• FALTA BOLETA.');
     if (!restrOk){
@@ -4546,6 +4555,7 @@ async function renderFinanzas(g, pane){
       ? `<div class="muted">${hints.join('<br>')}</div>`
       : '<div class="muted">TODO LISTO PARA CERRAR.</div>';
   }
+
   checkReady();
   
   // === Handlers de subida (comprobante transferencia CLP) ===
