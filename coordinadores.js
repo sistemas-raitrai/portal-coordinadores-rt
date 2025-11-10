@@ -621,6 +621,17 @@ if (typeof window !== 'undefined') {
       );
     }
 
+    // Calcula no leídas para el dataset visible (V2 usa readBy.<uid> = true/false)
+    const unreadCount = (arr || []).reduce((acc, a) => {
+      try {
+        const rb = a?.readBy || {};
+        const x = (rb && typeof rb[meUid] !== 'undefined') ? !!rb[meUid] : false;
+        return acc + (x ? 0 : 1);
+      } catch { return acc; }
+    }, 0);
+    
+    // Actualiza badge del botón de plegado
+    setAlertsBadge(unreadCount);
 
     // BUSCADOR
     if (q) arr = arr.filter(a => a._q.includes(q));
