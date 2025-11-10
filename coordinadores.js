@@ -567,6 +567,7 @@ if (typeof window !== 'undefined') {
           createdByEmail: byEmail,
           readBy,
           groupInfo: x.groupInfo || null,
+          forCoordIds: Array.isArray(x.forCoordIds) ? x.forCoordIds.slice() : [],
           _q: norm([
             x.mensaje,
             x.audience,
@@ -602,9 +603,24 @@ if (typeof window !== 'undefined') {
 
     const meUid   = state?.user?.uid || '';
     const meEmail = (state?.user?.email || '').toLowerCase();
+    // Intenta resolver mi coordId a partir del estado global (fallback: uid)
+    const myCoordId =
+      state?.viewingCoordId ||
+      (state?.coordinadores?.find(c => (c.email || '').toLowerCase() === meEmail)?.id) ||
+      meUid;
 
     const q = state.alertsUI.q;
     let arr = state.alertsUI.items.slice();
+
+    // Si NO es staff: ver solo las alertas dirigidas a mí (o globales que me incluyen)
+    if (!state.is) {
+      arr = arr.filter(a =>
+        a.audience !== '' &&                 // excluye mensajes para OPS
+        Array.isArray(a.forCoordIds) &&
+        a.forCoordIds.includes(myCoordId)   // yo soy destinatario
+      );
+    }
+
 
     // BUSCADOR
     if (q) arr = arr.filter(a => a._q.includes(q));
