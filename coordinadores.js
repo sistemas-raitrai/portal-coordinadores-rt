@@ -517,7 +517,7 @@ if (typeof window !== 'undefined') {
     const applyUI = () => {
       const folded = getFolded();
       panel.style.display = folded ? 'none' : '';
-      btn.textContent = folded ? 'MOSTRAR ALERTAS' : 'OCULTAR ALERTAS';
+      btn.textContent = folded ? 'DESPLEGAR NOTIFICACIONES' : 'CONTRAER NOTIFICACIONES';
       hint.textContent = folded ? '' : '';
     };
   
