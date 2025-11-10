@@ -480,45 +480,52 @@ if (typeof window !== 'undefined') {
     const panel = document.getElementById('alertsPanelV2');
     if (!panel) return;
   
-    // No duplicar
+    // Si ya existe, solo resincroniza textos/estado/badge y sal
     if (document.getElementById('alertsFoldStrip')) {
-      // Si ya existe, solo resincorniza UI con el estado guardado
       const btn = document.getElementById('btnFoldAlerts');
+      const badge = document.getElementById('alBadge');
       if (btn) {
         const folded = (localStorage.getItem('rt__alerts_fold') ?? '1') !== '0';
         panel.style.display = folded ? 'none' : '';
-        btn.textContent = folded ? 'DESPLEGAR PANEL DE ALERTAS' : 'CONTRAER PANEL DE ALERTAS';
+        btn.innerHTML = folded
+          ? 'DESPLEGAR NOTIFICACIONES <span id="alBadge" class="badge"></span>'
+          : 'CONTRAER NOTIFICACIONES <span id="alBadge" class="badge"></span>';
+        // Badge se actualizará desde renderAlertsPanel() con setAlertsBadge()
       }
       return;
     }
   
-    // Crear tira
+    // Crea tira (botón full-width + hint)
     const strip = document.createElement('div');
     strip.id = 'alertsFoldStrip';
-    strip.style.cssText = 'display:flex;align-items:center;gap:.5rem;margin:.35rem 0 .25rem 0;';
+    strip.style.cssText = 'display:flex;flex-direction:column;gap:.35rem;margin:.35rem 0 .25rem 0;';
+  
     strip.innerHTML = `
-      <button id="btnFoldAlerts" class="btn sec" style="min-width:190px"></button>
+      <button id="btnFoldAlerts" class="btn sec" style="width:100%;display:block">
+        DESPLEGAR NOTIFICACIONES <span id="alBadge" class="badge"></span>
+      </button>
       <div class="muted" id="alFoldHint" style="font-size:.85rem"></div>
     `;
   
-    // Insertar la tira justo antes del panel
+    // Inserta la tira antes del panel
     const wrap = document.querySelector('.wrap') || panel.parentElement || document.body;
     wrap.insertBefore(strip, panel);
   
-    const btn  = strip.querySelector('#btnFoldAlerts');
-    const hint = strip.querySelector('#alFoldHint');
+    const btn   = strip.querySelector('#btnFoldAlerts');
+    const hint  = strip.querySelector('#alFoldHint');
   
     const getFolded = () => {
-      // '1' = plegado (por defecto); '0' = desplegado
       const v = localStorage.getItem('rt__alerts_fold');
-      return v === null ? true : v === '1';
+      return v === null ? true : v === '1'; // por defecto plegado
     };
   
     const applyUI = () => {
       const folded = getFolded();
       panel.style.display = folded ? 'none' : '';
-      btn.textContent = folded ? 'DESPLEGAR NOTIFICACIONES' : 'CONTRAER NOTIFICACIONES';
-      hint.textContent = folded ? '' : '';
+      btn.innerHTML = folded
+        ? 'DESPLEGAR NOTIFICACIONES <span id="alBadge" class="badge"></span>'
+        : 'CONTRAER NOTIFICACIONES <span id="alBadge" class="badge"></span>';
+      hint.textContent = folded ? 'Panel contraído' : 'Panel visible';
     };
   
     btn.onclick = () => {
@@ -527,12 +534,21 @@ if (typeof window !== 'undefined') {
       applyUI();
     };
   
-    // Estado inicial (plegado por defecto)
+    // Estado inicial: PLEGADO
     if (!localStorage.getItem('rt__alerts_fold')) {
       localStorage.setItem('rt__alerts_fold', '1');
     }
     applyUI();
   }
+  
+  // Helper para actualizar el badge desde el render
+  function setAlertsBadge(n){
+    const badge = document.getElementById('alBadge');
+    if (!badge) return;
+    const v = Number(n||0);
+    badge.textContent = v > 0 ? `(${v})` : '';
+  }
+
 
   function resetAlertsCache(){
     state.alertsUI.items = [];
