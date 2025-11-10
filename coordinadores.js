@@ -444,7 +444,7 @@ if (typeof window !== 'undefined') {
            </select>
          `}
    
-         <button id="alRefresh" class="btn sec">REFRESCAR</button>
+         <button id="alRefresh" class="btn sec">ACTUALIZAR</button>
        </div>
    
        <div id="alList" class="acts"></div>
