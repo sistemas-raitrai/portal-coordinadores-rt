@@ -419,60 +419,69 @@ if (typeof window !== 'undefined') {
      inited: false,
    };
 
-   // --- Panel base + controles
-   function ensureAlertsPanel(){
-     const host = ensurePanel('alertsPanelV2');
+  function ensureAlertsPanel(){
+    const host = ensurePanel('alertsPanelV2');
   
-     // Anti-parpadeo: si está plegado, ocultar de inmediato
-     const _folded = (localStorage.getItem('rt__alerts_fold') ?? '1') !== '0';
-     host.style.display = _folded ? 'none' : '';
+    // Anti-parpadeo: si está plegado, ocultar de inmediato
+    const _folded = (localStorage.getItem('rt__alerts_fold') ?? '1') !== '0';
+    host.style.display = _folded ? 'none' : '';
   
-     host.innerHTML = `
-        <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
-          <input id="alQ" type="text" placeholder="BUSCAR EN NOTIFICACIONES..." style="flex:1;min-width:240px"/>
-        
-          <select id="alState" title="ESTADO">
-            <option value="unread" selected>NO LEÍDAS</option>
-            <option value="read">LEÍDAS</option>
-          </select>
-        
-          <select id="alScope" title="ÁMBITO">
-            <option value="ops" selected>OPERACIONES</option>
-            <option value="mine">DEL COORDINADOR(A)</option>
-          </select>
-        
-          ${state.is ? `<button id="btnCreateAlert" class="btn ok" style="width:100%;display:block">CREAR NOTIFICACIÓN</button>` : ''}
-        
-          <button id="alRefresh" class="btn sec" style="width:100%;display:block">ACTUALIZAR</button>
-        </div>
-        
-        <div id="alList" class="acts"></div>
-        <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
-          <button id="alMore" class="btn sec" style="width:100%;display:block">VER MÁS</button>
-        </div>
-        <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
-
-      `;
-   
-     const $q = host.querySelector('#alQ');
-     let t=null;
-     $q.oninput = () => { clearTimeout(t); t=setTimeout(()=>{ state.alertsUI.q = norm($q.value||''); renderAlertsPanel(); }, 150); };
-
-     const $btnCreate = host.querySelector('#btnCreateAlert');
-     if ($btnCreate) $btnCreate.onclick = openCreateAlertModal;
-
-     // === HOOKS: ESTADO / ÁMBITO / COORDINADOR ===
-     const $state = host.querySelector('#alState');
-     $state.value = (state.alertsUI.state === 'read') ? 'read' : 'unread';
-     $state.onchange = () => { state.alertsUI.state = $state.value; renderAlertsPanel(); };
-    
-     const $scope = host.querySelector('#alScope');
-     $scope.value = (state.alertsUI.scope === 'mine') ? 'mine' : 'ops';
-     $scope.onchange = () => { state.alertsUI.scope = $scope.value; renderAlertsPanel(); };
-    
-     host.querySelector('#alRefresh').onclick = async () => { resetAlertsCache(); await fetchAlertsPage(true); };
-     host.querySelector('#alMore').onclick    = async () => { await fetchAlertsPage(false); };
-
+    host.innerHTML = `
+      <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
+        <input id="alQ" type="text" placeholder="BUSCAR EN NOTIFICACIONES..." style="flex:1;min-width:240px"/>
+  
+        <select id="alState" title="ESTADO">
+          <option value="unread" selected>NO LEÍDAS</option>
+          <option value="read">LEÍDAS</option>
+        </select>
+  
+        <select id="alScope" title="ÁMBITO">
+          <option value="ops" selected>OPERACIONES</option>
+          <option value="mine">DEL COORDINADOR(A)</option>
+        </select>
+  
+        ${state.is ? `<button id="btnCreateAlert" class="btn ok" style="width:100%;display:block">CREAR NOTIFICACIÓN</button>` : ''}
+  
+        <button id="alRefresh" class="btn sec" style="width:100%;display:block">ACTUALIZAR</button>
+      </div>
+  
+      <div id="alList" class="acts"></div>
+      <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
+        <button id="alMore" class="btn sec" style="width:100%;display:block">VER MÁS</button>
+      </div>
+      <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
+    `;
+  
+    // BUSCADOR
+    const $q = host.querySelector('#alQ');
+    let t=null;
+    $q.oninput = () => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        state.alertsUI.q = norm($q.value||'');
+        renderAlertsPanel();
+      }, 150);
+    };
+  
+    // CREAR (solo staff)
+    const $btnCreate = host.querySelector('#btnCreateAlert');
+    if ($btnCreate) $btnCreate.onclick = openCreateAlertModal;
+  
+    // HOOKS: estado + ámbito
+    const $state = host.querySelector('#alState');
+    $state.value = (state.alertsUI?.state === 'read') ? 'read' : 'unread';
+    $state.onchange = () => { state.alertsUI.state = $state.value; renderAlertsPanel(); };
+  
+    const $scope = host.querySelector('#alScope');
+    $scope.value = (state.alertsUI?.scope === 'mine') ? 'mine' : 'ops';
+    $scope.onchange = () => { state.alertsUI.scope = $scope.value; renderAlertsPanel(); };
+  
+    // Botones de refresco / más
+    host.querySelector('#alRefresh').onclick = async () => { resetAlertsCache(); await fetchAlertsPage(true); };
+    host.querySelector('#alMore').onclick    = async () => { await fetchAlertsPage(false); };
+  
+    return host;
+  }
 
   // === Tira de plegado/desplegado para el panel de alertas (por defecto PLEGADO) ===
   function ensureAlertsFoldStrip(){
@@ -675,6 +684,7 @@ if (typeof window !== 'undefined') {
       arr = arr.filter(a =>  a.readBy?.[meUid]);
     }
     
+        
 
     // ORDEN (fallback si falta fecha)
       arr.sort((a,b) => {
@@ -759,7 +769,6 @@ if (typeof window !== 'undefined') {
       document.querySelectorAll('[data-section="alertas"], .alertas-wrap, .alertasTabs').forEach(n => {
         n.style.display = 'none';
       });
-
   };
 })();
 
