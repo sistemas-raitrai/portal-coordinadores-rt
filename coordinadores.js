@@ -525,7 +525,6 @@ if (typeof window !== 'undefined') {
       btn.innerHTML = folded
         ? 'DESPLEGAR NOTIFICACIONES <span id="alBadge" class="badge"></span>'
         : 'CONTRAER NOTIFICACIONES <span id="alBadge" class="badge"></span>';
-      hint.textContent = folded ? 'Panel contraído' : 'Panel visible';
     };
   
     btn.onclick = () => {
