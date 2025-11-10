@@ -487,7 +487,7 @@ if (typeof window !== 'undefined') {
       if (btn) {
         const folded = (localStorage.getItem('rt__alerts_fold') ?? '1') !== '0';
         panel.style.display = folded ? 'none' : '';
-        btn.textContent = folded ? 'MOSTRAR ALERTAS' : 'OCULTAR ALERTAS';
+        btn.textContent = folded ? 'DESPLEGAR PANEL DE ALERTAS' : 'CONTRAER PANEL DE ALERTAS';
       }
       return;
     }
