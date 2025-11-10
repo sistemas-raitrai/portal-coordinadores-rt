@@ -591,14 +591,7 @@ if (typeof window !== 'undefined') {
           readBy,
           groupInfo: x.groupInfo || null,
           forCoordIds: Array.isArray(x.forCoordIds) ? x.forCoordIds.slice() : [],
-          _q: norm([
-            x.mensaje,
-            x.audience,
-            byEmail,
-            x?.groupInfo?.actividad,
-            x?.groupInfo?.destino,
-            x?.groupInfo?.nombre,
-          ].filter(Boolean).join(' '))
+          _q: ''
         });
       });
 
@@ -640,6 +633,22 @@ if (typeof window !== 'undefined') {
     
     const q = (state.alertsUI.q || '').trim();
     let arr = state.alertsUI.items.slice();
+
+    // Construye _q solo si hay texto en el buscador
+    if (q) {
+      for (const a of arr) {
+        if (!a._q) {
+          a._q = norm([
+            a.mensaje,
+            a.audience,
+            a.createdByEmail,
+            a?.groupInfo?.actividad,
+            a?.groupInfo?.destino,
+            a?.groupInfo?.nombre,
+          ].filter(Boolean).join(' '));
+        }
+      }
+    }
     
     // 0) BUSCADOR (normalizado en _q)
     if (q) arr = arr.filter(a => a._q && a._q.includes(q));
