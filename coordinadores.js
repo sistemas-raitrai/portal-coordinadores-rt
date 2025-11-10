@@ -427,36 +427,50 @@ if (typeof window !== 'undefined') {
      host.style.display = _folded ? 'none' : '';
   
      host.innerHTML = `
+        <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
+          <input id="alQ" type="text" placeholder="BUSCAR EN NOTIFICACIONES..." style="flex:1;min-width:240px"/>
+        
+          ${state.is ? `
+            <!-- STAFF: ESTADO (arranca en NO LEÍDAS) -->
+            <select id="alState" title="ESTADO">
+              <option value="unread" selected>NO LEÍDAS</option>
+              <option value="read">LEÍDAS</option>
+            </select>
+        
+            <!-- STAFF: ÁMBITO -->
+            <select id="alScope" title="ÁMBITO">
+              <option value="all">TODAS (OPS)</option>
+              <option value="ops">PARA OPERACIONES (por autor)</option>
+              <option value="mine">DEL COORDINADOR(A)</option>
+            </select>
+        
+            <!-- STAFF: COORDINADOR (sólo se muestra en OPS por autor / DEL COORDINADOR) -->
+            <div id="wrapAlCoord" style="display:none">
+              <select id="alCoord" title="COORDINADOR(A)">
+                <option value="">— SELECCIONA COORDINADOR(A) —</option>
+              </select>
+            </div>
+        
+            <!-- STAFF: crear -->
+            <button id="btnCreateAlert" class="btn ok" style="width:100%;display:block">CREAR NOTIFICACIÓN</button>
+          ` : `
+            <!-- NO STAFF: ESTADO -->
+            <select id="alState" title="ESTADO">
+              <option value="unread">NO LEÍDAS</option>
+              <option value="read">LEÍDAS</option>
+            </select>
+          `}
+        
+          <button id="alRefresh" class="btn sec" style="width:100%;display:block">ACTUALIZAR</button>
+        </div>
 
-       <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
-         <input id="alQ" type="text" placeholder="BUSCAR EN NOTIFICACIONES..." style="flex:1;min-width:240px"/>
-      
-         ${state.is ? `
-           <!-- STAFF: ÁMBITO -->
-           <select id="alScope" title="ÁMBITO">
-             <option value="all">TODAS</option>
-             <option value="ops">PARA OPERACIONES</option>
-             <option value="mine">DEL COORDINADOR(A)</option>
-           </select>
-           <!-- STAFF: CREAR NOTIFICACIÓN -->
-           <button id="btnCreateAlert" class="btn ok" style="width:100%;display:block">CREAR NOTIFICACIÓN</button>
-         ` : `
-           <!-- NO STAFF: ESTADO -->
-           <select id="alState" title="ESTADO">
-             <option value="unread">NO LEÍDAS</option>
-             <option value="read">LEÍDAS</option>
-           </select>
-         `}
-      
-         <button id="alRefresh" class="btn sec" style="width:100%;display:block">ACTUALIZAR</button>
-       </div>
    
-       <div id="alList" class="acts"></div>
-       <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
-         <button id="alMore" class="btn sec" style="width:100%;display:block">VER MÁS</button>
-       </div>
-       <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
-     `;
+        <div id="alList" class="acts"></div>
+        <div class="rowflex" style="margin-top:.6rem;gap:.5rem;justify-content:center">
+          <button id="alMore" class="btn sec" style="width:100%;display:block">VER MÁS</button>
+        </div>
+        <div class="meta muted" id="alMeta" style="margin-top:.25rem"></div>
+      `;
    
      const $q = host.querySelector('#alQ');
      let t=null;
@@ -465,16 +479,49 @@ if (typeof window !== 'undefined') {
      const $btnCreate = host.querySelector('#btnCreateAlert');
      if ($btnCreate) $btnCreate.onclick = openCreateAlertModal;
 
-   
-     if (state.is){
-       const $scope = host.querySelector('#alScope');
-       // reflejar valor actual si ya existía
-       if (['all','ops','mine'].includes(state.alertsUI.filter)) $scope.value = state.alertsUI.filter;
-       $scope.onchange = () => { state.alertsUI.filter = $scope.value; renderAlertsPanel(); };
-     } else {
-       const $state = host.querySelector('#alState');
-       $state.value = (state.alertsUI.filter === 'read') ? 'read' : 'unread';
-       $state.onchange = () => { state.alertsUI.filter = $state.value; renderAlertsPanel(); };
+     // === HOOKS: ESTADO / ÁMBITO / COORDINADOR ===
+     const $alState   = host.querySelector('#alState');
+     const $alScope   = host.querySelector('#alScope');
+     const $wrapCoord = host.querySelector('#wrapAlCoord');
+     const $alCoord   = host.querySelector('#alCoord');
+     
+     // estado inicial del UI
+     state.alertsUI = state.alertsUI || {};
+     state.alertsUI.state  = state.alertsUI.state  || 'unread';                 // NO LEÍDAS por defecto
+     state.alertsUI.scope  = state.alertsUI.scope  || (state.is ? 'all' : 'mine');
+     state.alertsUI.coordId= state.alertsUI.coordId|| '';
+    
+     if ($alState) $alState.value = state.alertsUI.state;
+     if ($alScope) $alScope.value = state.alertsUI.scope;
+     if ($alCoord) $alCoord.value = state.alertsUI.coordId;
+    
+     // poblar coordinadores (STAFF)
+     if (state.is && $alCoord){
+       const opts = (state.coordinadores || []).map(c =>
+         `<option value="${c.id}">${String(c.nombre||'').toUpperCase()} — ${(c.email||'').toLowerCase()}</option>`
+       ).join('');
+       const keep = $alCoord.value;
+       $alCoord.innerHTML = `<option value="">— SELECCIONA COORDINADOR(A) —</option>` + opts;
+       if (keep) $alCoord.value = keep;
+     }
+    
+     // mostrar/ocultar selector coordinador según ÁMBITO
+     const refreshCoordVisibility = () => {
+       if (!state.is || !$wrapCoord) return;
+       const need = ($alScope.value === 'ops' || $alScope.value === 'mine');
+       $wrapCoord.style.display = need ? '' : 'none';
+     };
+     refreshCoordVisibility();
+    
+     // listeners
+     if ($alState){
+       $alState.onchange = () => { state.alertsUI.state = $alState.value; renderAlertsPanel(); };
+     }
+     if ($alScope){
+       $alScope.onchange = () => { state.alertsUI.scope = $alScope.value; refreshCoordVisibility(); renderAlertsPanel(); };
+     }
+     if ($alCoord){
+       $alCoord.onchange = () => { state.alertsUI.coordId = $alCoord.value; renderAlertsPanel(); };
      }
    
      host.querySelector('#alRefresh').onclick = async () => { resetAlertsCache(); await fetchAlertsPage(true); };
@@ -634,43 +681,77 @@ if (typeof window !== 'undefined') {
 
     const q = state.alertsUI.q;
     let arr = state.alertsUI.items.slice();
-
-    // Si NO es staff: ver solo las alertas dirigidas a mí (o globales que me incluyen)
+    
+    const st      = (state.alertsUI?.state || 'unread');                 // 'unread' | 'read'
+    const scope   = (state.alertsUI?.scope || (state.is ? 'all' : 'mine'));// 'all' | 'ops' | 'mine'
+    const coordId = (state.alertsUI?.coordId || '');
+    
+    // 0) NO STAFF: restringe dataset a sus destinatarios (como ya hacías)
     if (!state.is) {
       arr = arr.filter(a =>
-        a.audience !== '' &&                 // excluye mensajes para OPS
+        a.audience !== '' &&
         Array.isArray(a.forCoordIds) &&
-        a.forCoordIds.includes(myCoordId)   // yo soy destinatario
+        a.forCoordIds.includes(myCoordId)
       );
     }
-
-    // Calcula no leídas para el dataset visible (V2 usa readBy.<uid> = true/false)
-    const unreadCount = (arr || []).reduce((acc, a) => {
-      try {
-        const rb = a?.readBy || {};
-        const x = (rb && typeof rb[meUid] !== 'undefined') ? !!rb[meUid] : false;
-        return acc + (x ? 0 : 1);
-      } catch { return acc; }
-    }, 0);
     
-    // Actualiza badge del botón de plegado
-    setAlertsBadge(unreadCount);
+    // 1) ESTADO primero (siempre arranca en 'unread')
+    arr = arr.filter(a => {
+      const isRead = !!(a?.readBy && a.readBy[meUid]);
+      return st === 'unread' ? !isRead : isRead;
+    });
+    
+    // 2) ÁMBITO después (solo para STAFF)
+    if (state.is){
+      if (scope === 'all'){
+        // TODAS (OPS): notas de bitácora
+        arr = arr.filter(a => (a?.audience || '') === '');
+      } else if (scope === 'ops'){
+        // PARA OPERACIONES (por autor seleccionado)
+        arr = arr.filter(a => (a?.audience || '') === '');
+        if (coordId){
+          const c = (state.coordinadores || []).find(x => x.id === coordId);
+          const email = (c?.email || '').toLowerCase();
+          arr = email ? arr.filter(a => (a?.createdByEmail || '').toLowerCase() === email) : [];
+        } else {
+          arr = []; // exige coordinador para este scope
+        }
+      } else if (scope === 'mine'){
+        // DEL COORDINADOR(A) seleccionado (dirigidas a coord)
+        if (coordId){
+          arr = arr.filter(a => (a?.audience || '') === 'coord' && Array.isArray(a.forCoordIds) && a.forCoordIds.includes(coordId));
+        } else {
+          arr = []; // exige coordinador para este scope
+        }
+      }
+    }
+    
+    // 3) BUSCADOR al final
+    if (q) arr = arr.filter(a => a._q && a._q.includes(q));
+    
+    // Badge: cuenta NO LEÍDAS del ÁMBITO actual (independiente del estado mostrado)
+    try {
+      const base = (() => {
+        if (!state.is) return state.alertsUI.items.filter(x =>
+          x.audience !== '' && Array.isArray(x.forCoordIds) && x.forCoordIds.includes(myCoordId)
+        );
+        if (scope === 'all')  return (state.alertsUI.items||[]).filter(x => (x?.audience || '') === '');
+        if (scope === 'ops'){
+          if (!coordId) return [];
+          const c = (state.coordinadores || []).find(x => x.id === coordId);
+          const email = (c?.email || '').toLowerCase();
+          return (state.alertsUI.items||[]).filter(x => (x?.audience || '') === '' && (x?.createdByEmail || '').toLowerCase() === email);
+        }
+        if (scope === 'mine'){
+          if (!coordId) return [];
+          return (state.alertsUI.items||[]).filter(x => (x?.audience || '') === 'coord' && Array.isArray(x.forCoordIds) && x.forCoordIds.includes(coordId));
+        }
+        return [];
+      })();
+      const unreadBadge = base.filter(x => !(x?.readBy && x.readBy[meUid])).length;
+      setAlertsBadge(unreadBadge);
+    } catch {}
 
-    // BUSCADOR
-    if (q) arr = arr.filter(a => a._q.includes(q));
-
-   // FILTRO (dependiente de STAFF)
-   const f = state.alertsUI.filter;
-   if (state.is){
-     // STAFF: all | ops | mine
-     if (f === 'ops')  arr = arr.filter(a => OPS_SENDERS.has(a.createdByEmail));
-     if (f === 'mine') arr = arr.filter(a => a.createdByEmail === meEmail);
-     // 'all' no filtra
-   } else {
-     // NO STAFF: unread | read
-     if (f === 'unread') arr = arr.filter(a => !a.readBy?.[meUid]);
-     if (f === 'read')   arr = arr.filter(a =>  a.readBy?.[meUid]);
-   }
 
     // ORDEN (fallback si falta fecha)
       arr.sort((a,b) => {
