@@ -488,8 +488,8 @@ if (typeof window !== 'undefined') {
         const folded = (localStorage.getItem('rt__alerts_fold') ?? '1') !== '0';
         panel.style.display = folded ? 'none' : '';
         btn.innerHTML = folded
-          ? 'DESPLEGAR NOTIFICACIONES <span id="alBadge" class="badge"></span>'
-          : 'CONTRAER NOTIFICACIONES <span id="alBadge" class="badge"></span>';
+          ? 'DESPLEGAR NOTIFICACIONES<span id="alBadge" class="badge"></span>'
+          : 'CONTRAER NOTIFICACIONES<span id="alBadge" class="badge"></span>';
         // Badge se actualizará desde renderAlertsPanel() con setAlertsBadge()
       }
       return;
@@ -502,7 +502,7 @@ if (typeof window !== 'undefined') {
   
     strip.innerHTML = `
       <button id="btnFoldAlerts" class="btn sec" style="width:100%;display:block">
-        DESPLEGAR NOTIFICACIONES <span id="alBadge" class="badge"></span>
+        DESPLEGAR NOTIFICACIONES<span id="alBadge" class="badge"></span>
       </button>
       <div class="muted" id="alFoldHint" style="font-size:.85rem"></div>
     `;
@@ -523,8 +523,8 @@ if (typeof window !== 'undefined') {
       const folded = getFolded();
       panel.style.display = folded ? 'none' : '';
       btn.innerHTML = folded
-        ? 'DESPLEGAR NOTIFICACIONES <span id="alBadge" class="badge"></span>'
-        : 'CONTRAER NOTIFICACIONES <span id="alBadge" class="badge"></span>';
+        ? 'DESPLEGAR NOTIFICACIONES<span id="alBadge" class="badge"></span>'
+        : 'CONTRAER NOTIFICACIONES<span id="alBadge" class="badge"></span>';
     };
   
     btn.onclick = () => {
