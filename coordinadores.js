@@ -439,8 +439,8 @@ if (typeof window !== 'undefined') {
         
             <!-- STAFF: ÁMBITO -->
             <select id="alScope" title="ÁMBITO">
-              <option value="all">TODAS (OPS)</option>
-              <option value="ops">PARA OPERACIONES (por autor)</option>
+              <option value="all">TODAS</option>
+              <option value="ops">PARA OPERACIONES</option>
               <option value="mine">DEL COORDINADOR(A)</option>
             </select>
         
