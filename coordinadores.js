@@ -430,7 +430,7 @@ if (typeof window !== 'undefined') {
 
        <div class="rowflex" style="gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem">
          <input id="alQ" type="text" placeholder="BUSCAR EN NOTIFICACIONES..." style="flex:1;min-width:240px"/>
-   
+      
          ${state.is ? `
            <!-- STAFF: ÁMBITO -->
            <select id="alScope" title="ÁMBITO">
@@ -438,6 +438,8 @@ if (typeof window !== 'undefined') {
              <option value="ops">PARA OPERACIONES</option>
              <option value="mine">DEL COORDINADOR(A)</option>
            </select>
+           <!-- STAFF: CREAR NOTIFICACIÓN -->
+           <button id="btnCreateAlert" class="btn ok" style="width:100%;display:block">CREAR NOTIFICACIÓN</button>
          ` : `
            <!-- NO STAFF: ESTADO -->
            <select id="alState" title="ESTADO">
@@ -445,7 +447,7 @@ if (typeof window !== 'undefined') {
              <option value="read">LEÍDAS</option>
            </select>
          `}
-   
+      
          <button id="alRefresh" class="btn sec" style="width:100%;display:block">ACTUALIZAR</button>
        </div>
    
@@ -459,6 +461,10 @@ if (typeof window !== 'undefined') {
      const $q = host.querySelector('#alQ');
      let t=null;
      $q.oninput = () => { clearTimeout(t); t=setTimeout(()=>{ state.alertsUI.q = norm($q.value||''); renderAlertsPanel(); }, 150); };
+
+     const $btnCreate = host.querySelector('#btnCreateAlert');
+     if ($btnCreate) $btnCreate.onclick = openCreateAlertModal;
+
    
      if (state.is){
        const $scope = host.querySelector('#alScope');
