@@ -681,7 +681,7 @@ if (typeof window !== 'undefined') {
 
     // DIBUJO
     if (!arr.length){
-      list.innerHTML = '<div class="muted">SIN ALERTAS POR EL MOMENTO.</div>';
+      list.innerHTML = '<div class="muted">SIN NOTIFICACIONES POR EL MOMENTO.</div>';
     } else {
       const frag = document.createDocumentFragment();
       arr.forEach(a => {
