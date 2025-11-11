@@ -3570,64 +3570,79 @@ async function collectItinLinesFast(grupo){
   return out;
 }
 
-async function openPrintDespacho(g, w){
-  if (!g){
-    alert('No hay viaje activo.');
-    return;
-  }
-  console.log('[PRINT] Inicia generación', { grupoId: g.id });
+// === IMPRESIÓN / DESPACHO — versión completa (transporte + hoteles + itin + finanzas) ===
+async function openPrintDespacho(g){
+  // ==== Helpers locales (usa tus helpers globales si existen) ====
+  const up   = s => String(s||'').toUpperCase();
+  const low  = s => String(s||'').toLowerCase();
+  const dmy  = v => {
+    if (!v) return '';
+    const d = v instanceof Date ? v : new Date(v);
+    return isNaN(d) ? String(v) : d.toLocaleDateString('es-CL').toUpperCase();
+  };
+  const toISO = s => (s && typeof s==='string' && s.includes('-')) ? s : (s ? new Date(s).toISOString().slice(0,10) : '');
 
-  // ==== DATOS BASE ====
-  const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
-  const paxPlan = paxOf(g);
-  const paxReal = paxRealOf(g);
-  const { A: A_real, E: E_real } = paxBreakdown(g);
-  const fechasTxt = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
+  // Carga datos base (usa tus loaders si existen)
+  const have = name => (typeof window[name] === 'function');
 
-  // 1) Itinerario (líneas con proveedor/contacto)
-  console.time('[PRINT] collectItinLines');
-  const itin = await collectItinLines(g).catch((e)=>{ console.error(e); return []; });
-  console.timeEnd('[PRINT] collectItinLines');
+  const vvuelos  = have('loadVuelosInfo')             ? await loadVuelosInfo(g) : [];
+  const hotelesB = have('loadHotelAssignmentsForGroup') ? await loadHotelAssignmentsForGroup(g) : [];
+  const vouchers = have('loadVouchersForGroup')       ? await loadVouchersForGroup(g) : new Set();
 
-  // 2) Finanzas: ABONOS (defensivo si faltan helpers externos)
-  const haveLoadAbonos = (typeof loadAbonos === 'function');
-  const haveConv = (typeof convertirMoneda === 'function');
-
-  let abonos = [];
-  if (haveLoadAbonos){
-    try {
-      console.time('[PRINT] loadAbonos');
-      abonos = await loadAbonos(g.id);
-      console.timeEnd('[PRINT] loadAbonos');
-    } catch (e) {
-      console.warn('[PRINT] loadAbonos falló:', e);
-      abonos = [];
-    }
+  // Itinerario “aplanado” (reutiliza tu collectItinLines si ya lo tienes)
+  let itin = [];
+  if (have('collectItinLines')) {
+    itin = await collectItinLines(g);          // trae proveedor/contacto si tu helper ya lo hace
   } else {
-    console.warn('[PRINT] loadAbonos no definido. Se omiten abonos.');
+    // Fallback simple desde g.itinerario
+    const byDate = g.itinerario || {};
+    const fechas = Object.keys(byDate).sort();
+    for (const f of fechas){
+      let acts = Array.isArray(byDate[f]) ? byDate[f] : Object.values(byDate[f]||{});
+      // ocultar DESAYUNO HOTEL
+      acts = acts.filter(a => up(a.actividad) !== 'DESAYUNO HOTEL');
+      acts.forEach(a => {
+        itin.push({
+          fechaISO: f,
+          hora: a.horaInicio || '',
+          actividad: a.actividad || '',
+          proveedor: '',
+          contacto: '',
+          estado: a.estado || ''
+        });
+      });
+    }
   }
 
+  // Finanzas — abonos (y CLP equivalente si tienes convertirMoneda)
+  const haveAbonos = have('loadAbonos');
+  const haveConv   = have('convertirMoneda');
   const toCLP = async (valor, moneda) => {
     if (!haveConv) return 0;
     try { return await convertirMoneda(Number(valor||0), String(moneda||'CLP'), 'CLP'); }
-    catch(e){ console.warn('[PRINT] convertirMoneda falló:', e); return 0; }
+    catch { return 0; }
   };
 
+  let abonos = [];
+  if (haveAbonos) {
+    try { abonos = await loadAbonos(g.id || g.grupoId || g.code || ''); } catch { abonos = []; }
+  }
   const abonosRows = [];
-  for (const a of (abonos||[])){
-    const fecha  = dmy(toISO(a.fecha||''));                 // fecha abono
-    const moneda = (a.moneda||'').toString().toUpperCase(); // CLP/USD/BRL/ARS
+  for (const a of abonos){
+    const fecha  = dmy(toISO(a.fecha||''));
+    const moneda = up(a.moneda||'CLP');
     const valor  = Number(a.valor||0);
     const clpEq  = await toCLP(valor, moneda);
-    abonosRows.push({ fecha, asunto:(a.asunto||'').toString().toUpperCase(), moneda, valor, clp: clpEq });
+    abonosRows.push({ fecha, asunto: up(a.asunto||''), moneda, valor, clp: clpEq });
   }
   const totalCLP = Math.round(abonosRows.reduce((s,x)=> s + Number(x.clp||0), 0));
 
-  // ==== HTML IMPRESIÓN ====
+  // ==== CSS (fuerza negro + logo arriba derecha) ====
   const css = `
   <style>
     @page { size: A4; margin: 14mm; }
-    body { font-family: system-ui, Arial, sans-serif; font-size: 12px; color:#0a0a0a; }
+    html, body { color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { font-family: system-ui, Arial, sans-serif; font-size: 12px; }
     .head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
     .logo { height: 40px; object-fit:contain; }
     h1 { font-size: 18px; margin: 0 0 6px; }
@@ -3645,50 +3660,86 @@ async function openPrintDespacho(g, w){
     .footer { margin-top:8px; font-size:10px; color:#666; }
   </style>`;
 
+  // ==== CABECERA ====
+  const code      = String(g.numeroNegocio || g.codigo || g.id || '').toUpperCase();
+  const paxPlan   = Number(g.cantidadgrupo || g.pax || 0);
+  const paxReal   = Number(g.paxViajando || 0);
+  const A_real    = Number(g.paxAdultos  || 0);
+  const E_real    = Math.max(paxReal - A_real, 0);
+  const fechasTxt = [dmy(toISO(g.fechaInicio||g.inicio||g.fechaDeViaje||'')), dmy(toISO(g.fechaFin||g.termino||''))].filter(Boolean).join(' — ');
+
   const infoGeneral = `
     <div class="head">
       <div>
         <h1>DESPACHO DE VIAJE</h1>
         <div class="small muted">GENERADO: ${new Date().toLocaleString('es-CL').toUpperCase()}</div>
       </div>
-      <img src="RaitraiLogo.png" class="logo" alt="RAITRAI"/>
+      <img src="RaitraiLogo.png" class="logo" alt="RAI TRAI"/>
     </div>
-
     <div class="grid2">
-      <div><strong>GRUPO:</strong> ${(g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase()}</div>
-      <div><strong>CÓDIGO:</strong> ${code.toUpperCase()}</div>
-      <div><strong>DESTINO:</strong> ${(g.destino||'—').toString().toUpperCase()}</div>
-      <div><strong>PROGRAMA:</strong> ${(g.programa||'—').toString().toUpperCase()}</div>
+      <div><strong>GRUPO:</strong> ${up(g.nombreGrupo||g.aliasGrupo||g.id||'')}</div>
+      <div><strong>CÓDIGO:</strong> ${code}</div>
+      <div><strong>DESTINO:</strong> ${up(g.destino||'—')}</div>
+      <div><strong>PROGRAMA:</strong> ${up(g.programa||'—')}</div>
       <div><strong>FECHAS:</strong> ${fechasTxt}</div>
-      <div><strong>PAX:</strong> PLAN ${paxPlan} ${paxReal?` · REAL ${paxReal} (A:${A_real} · E:${E_real})`:''}</div>
+      <div><strong>PAX:</strong> PLAN ${paxPlan}${paxReal?` · REAL ${paxReal} (A:${A_real} · E:${E_real})`:''}</div>
     </div>
   `;
 
-  const resumen = `
-    <h2>RESUMEN</h2>
-    <div class="small">VIAJE: ${fechasTxt} · DESTINO: ${(g.destino||'—').toString().toUpperCase()} · PROGRAMA: ${(g.programa||'—').toString().toUpperCase()}</div>
+  // ==== TRANSPORTE / VUELOS ====
+  const vueloRows = (vvuelos||[]).map(v=>{
+    const sl = v.salida  ? ` · ${v.salida}`  : '';
+    const ll = v.llegada ? ` → ${v.llegada}` : '';
+    const ob = v.obs     ? ` · ${up(v.obs)}`  : '';
+    return `<div class="small">• ${up(v.tipo||'')} ${v.codigo?up(' '+v.codigo):''}${sl}${ll}${ob}</div>`;
+  }).join('');
+  const transporte = `
+    <h2>TRANSPORTE</h2>
+    ${vueloRows || '<div class="muted small">SIN REGISTROS.</div>'}
   `;
 
+  // ==== HOTELES (múltiples asignaciones) ====
+  const hotelesHtml = (hotelesB||[]).map(h=>{
+    const H   = h.hotel || {};
+    const nom = up(h.hotelNombre || H.nombre || 'HOTEL');
+    const ci  = dmy(toISO(h.checkIn));
+    const co  = dmy(toISO(h.checkOut));
+    const dir = up(H.direccion || h.direccion || '');
+    const tel = up(H.contactoTelefono || h.contactoTelefono || '');
+    return `
+      <div class="cut">
+        <div class="small"><strong>${nom}</strong></div>
+        <div class="small">CHECK-IN: ${ci} · CHECK-OUT: ${co}</div>
+        ${dir?`<div class="small">${dir}</div>`:''}
+        ${tel?`<div class="small">TEL: ${tel}</div>`:''}
+      </div>`;
+  }).join('');
+  const hoteles = `
+    <h2>HOTELES</h2>
+    ${hotelesHtml || '<div class="muted small">SIN ASIGNACIONES.</div>'}
+  `;
+
+  // ==== ITINERARIO (usa tus filas; si viene vacío, aviso) ====
   const itinRows = (itin||[]).map(x => `
     <tr>
       <td>${dmy(x.fechaISO)}</td>
-      <td>${(x.actividad||'').toString().toUpperCase()}</td>
-      <td>${(x.proveedor||'').toString().toUpperCase()}</td>
+      <td>${x.hora||'--:--'}</td>
+      <td>${up(x.actividad||'')}</td>
+      <td>${up(x.proveedor||'')}</td>
       <td>${x.contacto||'—'}</td>
-      <td>${(x.estado||'').toString().toUpperCase()}</td>
+      <td>${up(x.estado||'')}</td>
     </tr>`).join('');
-
   const itinerario = `
     <h2>ITINERARIO</h2>
     <table class="t-tight">
       <thead>
         <tr><th>FECHA</th><th>HORA</th><th>ACTIVIDAD</th><th>PROVEEDOR</th><th>CONTACTO</th><th>ESTADO</th></tr>
       </thead>
-      <tbody>${itinRows || '<tr><td colspan="5" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
+      <tbody>${itinRows || '<tr><td colspan="6" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
     </table>
   `;
 
-  // Si no hay loadAbonos, ocultamos la tabla de abonos para no confundir
+  // ==== FINANZAS — ABONOS ====
   const finRows = (abonosRows||[]).map(r => `
     <tr>
       <td>${r.fecha||'—'}</td>
@@ -3697,48 +3748,23 @@ async function openPrintDespacho(g, w){
       <td>${r.moneda||''}</td>
       <td class="right">${Math.round(r.clp||0).toLocaleString('es-CL')}</td>
     </tr>`).join('');
-
-  const finanzas = haveLoadAbonos ? `
+  const finanzas = haveAbonos ? `
     <h2>FINANZAS — ABONOS</h2>
     <table class="t-tight">
       <thead>
         <tr><th>FECHA</th><th>ASUNTO</th><th class="right">MONTO</th><th>MONEDA</th><th class="right">EQUIV. CLP</th></tr>
       </thead>
-      <tbody>${finRows || '<tr><td colspan="5" class="muted">SIN ABONOS REGISTRADOS.</td></tr>'}</tbody>
-      <tfoot>
-        <tr><th colspan="4" class="right">TOTAL CLP</th><th class="right">${totalCLP.toLocaleString('es-CL')}</th></tr>
-      </tfoot>
+      <tbody>${finRows}</tbody>
     </table>
+    <div class="small badge right">TOTAL CLP: ${totalCLP.toLocaleString('es-CL')}</div>
   ` : '';
 
-  const html = `
-    <!doctype html><html><head><meta charset="utf-8">${css}</head>
-    <body>
-      ${infoGeneral}
-      ${resumen}
-      <div class="cut">${itinerario}</div>
-      ${finanzas ? `<div class="cut">${finanzas}</div>` : ''}
-      <div class="footer">RAITRAI — Despacho de Viaje. Para PDF usa “Guardar como PDF”.</div>
-      <script>
-        window.addEventListener('load', ()=>{
-          try { window.print(); } catch(_) {}
-          setTimeout(()=>{ try{ window.close(); }catch(_){ } }, 600);
-        });
-      </script>
-    </body></html>
-  `;
-
-  // 3) Escribir en la ventana ya abierta
-  try{
-    w.document.open('text/html');
-    w.document.write(html);
-    w.document.close();
-    console.log('[PRINT] HTML escrito en ventana.');
-  }catch(e){
-    console.error('[PRINT] No se pudo escribir el HTML final', e);
-    alert('No se pudo escribir el documento de impresión.');
-    try{ w.close(); }catch(_){}
-  }
+  // ==== Render/print ====
+  const html = `${css}${infoGeneral}${transporte}${hoteles}${itinerario}${finanzas}`;
+  const w = window.open('', '_blank');
+  w.document.open(); w.document.write(`<meta charset="utf-8">${html}`); w.document.close();
+  w.focus(); w.print();
+  try { w.close(); } catch {}
 }
 
 // Busca proveedor en la ruta por DESTINO (según la actividad/servicio)
