@@ -203,28 +203,240 @@ function fillPrintDOM(html){
   host.innerHTML = String(html || '');
 }
 
-async function preparePrintForGroup(g){
-  // ── Helpers locales (no cambian nombres globales)
-  const norm = s => String(s||'').trim().toUpperCase();
-  const dmy  = s => {
-    if (!s) return '';
-    const d = (s instanceof Date) ? s : new Date(s);
-    return isNaN(d) ? String(s) : d.toLocaleDateString('es-CL').toUpperCase();
-  };
-  const timeVal = (hhmm) => {
-    const m = String(hhmm||'').match(/^(\d{1,2}):(\d{2})$/);
-    if (!m) return 99_999;
-    const h = +m[1], mi = +m[2];
-    return h*60 + mi;
-  };
-  const getHotelById = (hid) => {
-    try{
-      const map = state?.cache?.hoteles?.byId;
-      return map?.get ? map.get(hid) : null;
-    }catch{ return null; }
-  };
+// Fijar color de texto en impresión (negro) y respetar colores
+if (!document.getElementById('printStylesFix')){
+  const css = document.createElement('style');
+  css.id = 'printStylesFix';
+  css.textContent = `
+    @media print {
+      #printRoot, #printRoot * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color: #000 !important;
+      }
+    }
+  `;
+  document.head.appendChild(css);
+}
 
-  // ── Cabecera Grupo
+// ====== LOADERS PARA IMPRESIÓN (TRANSPORTE, HOTELES, SERVICIOS, VOUCHERS, ABONOS) ======
+
+// normalizadores locales
+const _norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+const _safeLower = s => String(s||'').toLowerCase();
+const _dmy = v => {
+  if (!v) return '';
+  const d = (v instanceof Date) ? v : new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString('es-CL').toUpperCase();
+};
+const _timeVal = (hhmm) => {
+  const m = String(hhmm||'').match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return 99_999;
+  return (+m[1])*60 + (+m[2]);
+};
+
+// --- TRANSPORTE
+async function loadVuelosInfo(grupo){
+  try{
+    const gid = grupo.id || grupo.grupoId || grupo.code || '';
+    if (!gid) return [];
+    const base = collection(db,'vuelos');
+
+    // 1) mejor caso: array-contains en 'groupIds' o 'grupos'
+    let found = [];
+    for (const field of ['groupIds','grupos','idsGrupos']){
+      try{
+        const qs = await getDocs(query(base, where(field,'array-contains', gid)));
+        qs.forEach(d => found.push({ id:d.id, ...d.data(), _ref:d.ref }));
+        if (found.length) break;
+      }catch{}
+    }
+
+    // 2) fallback: scan limitado y filtrar client-side
+    if (!found.length){
+      const qs = await getDocs(query(base, limit(120)));
+      qs.forEach(d => {
+        const x = d.data()||{};
+        const arr = x.groupIds || x.grupos || x.idsGrupos || [];
+        if (Array.isArray(arr) && arr.includes(gid)) found.push({ id:d.id, ...x, _ref:d.ref });
+      });
+    }
+
+    // Aplanar tramos si existen
+    const out = [];
+    for (const f of found){
+      let tramos = [];
+      try{
+        const tSnap = await getDocs(query(collection(f._ref,'tramos'), orderBy('orden','asc')));
+        if (tSnap.size){
+          tSnap.forEach(t => tramos.push({ id:t.id, ...t.data() }));
+        }
+      }catch{}
+      if (!tramos.length) tramos.push(f); // usa el doc como 1 tramo
+
+      tramos.forEach(t => {
+        out.push({
+          tipo:  _norm(t.tipo || f.tipo || 'TRANSPORTE'),
+          codigo:String(t.codigo || t.numero || f.codigo || f.numero || '').toUpperCase(),
+          salida:t.salida || t.horaSalida || '',
+          llegada:t.llegada|| t.horaLlegada|| '',
+          obs:    t.obs    || f.obs || ''
+        });
+      });
+    }
+    // ordenar por salida si posible
+    return out;
+  }catch(e){
+    console.error('[print] loadVuelosInfo', e);
+    return [];
+  }
+}
+
+// --- HOTELES (todas las asignaciones del viaje)
+async function loadHotelAssignmentsForGroup(grupo){
+  const gid = grupo.id || grupo.grupoId || grupo.code || '';
+  const hotels = [];
+  if (!gid) return hotels;
+
+  try{
+    const qs = await getDocs(collection(db,'hotelAssignments', gid, 'items'));
+    qs.forEach(d => {
+      const x = d.data()||{};
+      hotels.push({
+        hotelId: x.hotelId || x.hotel || null,
+        in:      x.checkIn  || x.in   || x.fechaInicio || '',
+        out:     x.checkOut || x.out  || x.fechaFin    || ''
+      });
+    });
+  }catch{}
+
+  // fallback: un solo hotel plano en el grupo
+  if (!hotels.length && grupo.hotelId){
+    hotels.push({ hotelId: grupo.hotelId, in: grupo.fechaInicio || '', out: grupo.fechaFin || '' });
+  }
+
+  // enriquecer desde cache si existe
+  const map = state?.cache?.hoteles?.byId;
+  return hotels.map(h => {
+    const dat = map?.get ? map.get(h.hotelId) : null;
+    return {
+      ...h,
+      nombre:   dat?.nombre || '',
+      ciudad:   dat?.ciudad || dat?.destino || '',
+      direccion:dat?.direccion || '',
+      contacto: dat?.contacto || '',
+      telefono: dat?.telefono || dat?.fono || '',
+      email:    dat?.email || ''
+    };
+  });
+}
+
+// --- SERVICIO + PROVEEDOR (por actividad)
+async function resolveServicioYProveedor(destinoRaw, actividadRaw, servicioId){
+  const destino = String(destinoRaw||'').toUpperCase();
+  const actKey  = _norm(actividadRaw||'');
+  let servicio  = null;
+
+  try{
+    if (servicioId){
+      const docRef = doc(db, 'Servicios', destino, 'Listado', servicioId);
+      const d = await getDoc(docRef);
+      if (d.exists()) servicio = { id:d.id, ...d.data() };
+    }
+    if (!servicio){
+      // scan limitado y match por nombre normalizado
+      const snap = await getDocs(query(collection(db,'Servicios',destino,'Listado'), limit(200)));
+      const rows = [];
+      snap.forEach(s => rows.push({ id:s.id, ...s.data() }));
+      servicio = rows.find(s => _norm(s.servicio || s.nombre) === actKey) || null;
+    }
+  }catch{}
+
+  let proveedor = null;
+  try{
+    const nombreProv = servicio?.proveedor || servicio?.provider || '';
+    if (nombreProv){
+      const snap = await getDocs(query(collection(db,'Proveedores',destino,'Listado'), limit(200)));
+      const rows = []; snap.forEach(p => rows.push({ id:p.id, ...p.data() }));
+      proveedor = rows.find(p => _norm(p.proveedor || p.nombre) === _norm(nombreProv)) || null;
+    }
+  }catch{}
+
+  return { servicio, proveedor };
+}
+
+// --- VOUCHERS (si existe colección o flag en servicio)
+async function loadVouchersForGroup(grupo){
+  const gid = grupo.id || grupo.grupoId || grupo.code || '';
+  const set = new Set();
+  if (!gid) return set;
+
+  // a) colección vouchers/{gid}/items
+  try{
+    const qs = await getDocs(collection(db,'vouchers', gid, 'items'));
+    qs.forEach(d => {
+      const x = d.data()||{};
+      // guardamos por servicioId y por nombre normalizado para doble match
+      if (x.servicioId) set.add('S:'+x.servicioId);
+      if (x.actividad)  set.add('A:'+_norm(x.actividad));
+    });
+  }catch{}
+
+  // b) confirmaciones/{gid}/items (opcional)
+  try{
+    const qs = await getDocs(collection(db,'confirmaciones', gid, 'items'));
+    qs.forEach(d => {
+      const x = d.data()||{};
+      if (x.servicioId) set.add('S:'+x.servicioId);
+      if (x.actividad)  set.add('A:'+_norm(x.actividad));
+    });
+  }catch{}
+
+  return set;
+}
+
+// --- ABONOS (ítems + totales por moneda)
+async function loadAbonos(grupo){
+  const gid = grupo.id || grupo.grupoId || grupo.code || '';
+  const items = [];
+  if (!gid) return { items:[], totals: new Map() };
+
+  // camino principal
+  let snap = null;
+  try{
+    snap = await getDocs(collection(db,'finanzas_abonos', gid, 'items'));
+  }catch{}
+  // fallback alternativo
+  if (!snap || !snap.size){
+    try{ snap = await getDocs(collection(db,'finanzas', gid, 'abonos')); }catch{}
+  }
+  if (snap && snap.size){
+    snap.forEach(d => {
+      const x = d.data()||{};
+      items.push({
+        moneda: String(x.moneda||'CLP').toUpperCase(),
+        monto:  Number(x.monto||0),
+        detalle:String(x.detalle||'').toUpperCase(),
+        ts:     x.ts?.seconds ? new Date(x.ts.seconds*1000) : null
+      });
+    });
+  }
+
+  // totales por moneda
+  const totals = new Map();
+  for (const it of items){
+    totals.set(it.moneda, (totals.get(it.moneda)||0) + (it.monto||0));
+  }
+  return { items, totals };
+}
+
+async function preparePrintForGroup(g){
+  // helpers locales de formato
+  const norm = s => String(s||'').toUpperCase();
+  const dmy  = v => _dmy(v);
+  const timeVal = _timeVal;
+
+  // ===== CABECERA GRUPO
   const headHtml = (() => {
     const nombre  = norm(g.nombreGrupo || g.nombre || 'GRUPO');
     const destino = norm(g.destino || '');
@@ -232,44 +444,52 @@ async function preparePrintForGroup(g){
     const f1 = dmy(g.fechaInicio || g.inicio || g.fechaDeViaje);
     const f2 = dmy(g.fechaFin    || g.termino);
     return `
-      <h2 style="margin:0 0 .25rem 0">${nombre}</h2>
+      <h2 style="margin:0 0 .25rem 0">${nombre} (${(g.anoViaje||g.year||'').toString().toUpperCase()||''})</h2>
       <div class="meta">DESTINO: ${destino} · FECHAS: ${f1}${f2?(' — '+f2):''} · PAX: ${pax.toLocaleString('es-CL')}</div>
     `;
   })();
 
-  // ── Hoteles (si tienes un hotelId principal; si no, se omite)
-  let hotelHtml = '';
+  // ===== TRANSPORTE
+  let transpHtml = '<h3>TRANSPORTE</h3>';
   try{
-    const h = getHotelById(g.hotelId);
-    if (h){
-      hotelHtml = `
-        <h3>HOTEL</h3>
-        <div class="meta">${norm(h.nombre)}${h.ciudad?(' — '+norm(h.ciudad)) : ''}</div>
-        ${h.direccion ? `<div class="meta">${norm(h.direccion)}</div>` : ''}
-        ${(h.telefono||h.fono) ? `<div class="meta">TEL: ${norm(h.telefono||h.fono)}</div>` : ''}
-        ${h.email ? `<div class="meta">${(h.email||'').toLowerCase()}</div>` : ''}
-      `;
+    const vv = await loadVuelosInfo(g);
+    if (Array.isArray(vv) && vv.length){
+      transpHtml += vv.map(v => {
+        const sl = v.salida ? ` · ${v.salida}`  : '';
+        const ll = v.llegada? ` → ${v.llegada}` : '';
+        const ob = v.obs    ? ` · ${norm(v.obs)}`: '';
+        return `<div class="meta">• ${v.tipo}${v.codigo?(' '+v.codigo):''}${sl}${ll}${ob}</div>`;
+      }).join('');
+    }else{
+      transpHtml += `<div class="muted">SIN REGISTROS.</div>`;
     }
-  }catch{}
+  }catch{ transpHtml += `<div class="muted">SIN REGISTROS.</div>`; }
 
-  // ── Transporte (si tu loader existe)
-  let transpHtml = '';
+  // ===== HOTELES (todas las asignaciones)
+  let hotelHtml = '<h3>HOTELES</h3>';
   try{
-    if (typeof loadVuelosInfo === 'function'){
-      const vv = await loadVuelosInfo(g);
-      if (Array.isArray(vv) && vv.length){
-        transpHtml = `<h3>TRANSPORTE</h3>` + vv.map(v=>{
-          const tipo = norm(v.tipo || '');
-          const code = String(v.codigo||'').toUpperCase();
-          const sl   = v.salida  ? String(v.salida)  : '';
-          const ll   = v.llegada ? String(v.llegada) : '';
-          return `<div class="meta">• ${tipo} ${code}${sl?(' · '+sl):''}${ll?(' → '+ll):''}</div>`;
-        }).join('');
-      }
+    const blocks = await loadHotelAssignmentsForGroup(g);
+    if (blocks.length){
+      hotelHtml += blocks.map(h => `
+        <div class="card">
+          <div class="meta"><strong>${norm(h.nombre||'HOTEL')}</strong> ${h.ciudad?(' · '+norm(h.ciudad)) : ''}</div>
+          <div class="meta">CHECK-IN: ${dmy(h.in)} · CHECK-OUT: ${dmy(h.out)}</div>
+          ${h.direccion ? `<div class="meta">${norm(h.direccion)}</div>` : ''}
+          ${(h.contacto||h.telefono||h.email) ? 
+            `<div class="meta">CONTACTO: ${norm(h.contacto||'')}${h.telefono?(' · '+norm(h.telefono)) : ''}${h.email?(' · '+_safeLower(h.email)) : ''}</div>` 
+            : ''
+          }
+        </div>
+      `).join('');
+    }else{
+      hotelHtml += `<div class="muted">SIN ASIGNACIONES.</div>`;
     }
-  }catch{}
+  }catch{ hotelHtml += `<div class="muted">SIN ASIGNACIONES.</div>`; }
 
-  // ── Itinerario por días (oculta DESAYUNO HOTEL) + datos del Servicio + Tips (últimos 5)
+  // ===== VOUCHERS SET (si existe)
+  const vouchersSet = await loadVouchersForGroup(g);
+
+  // ===== ITINERARIO (oculta DESAYUNO HOTEL) + contactos proveedor + VOUCHER
   async function renderItin(){
     const byDate = g.itinerario || {};
     const fechas = Object.keys(byDate).sort();
@@ -279,11 +499,9 @@ async function preparePrintForGroup(g){
     for (const f of fechas){
       let acts = byDate[f];
       if (!Array.isArray(acts)) acts = Object.values(acts||{}).filter(x=>x && typeof x==='object');
-
-      // Ocultar “Desayuno Hotel”
+      // ocultar "Desayuno Hotel"
       acts = acts.filter(a => norm(a.actividad) !== 'DESAYUNO HOTEL');
-
-      // Orden por hora
+      // ordenar por hora
       acts.sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
       if (!acts.length) continue;
 
@@ -292,92 +510,59 @@ async function preparePrintForGroup(g){
       for (const a of acts){
         const actName = norm(a.actividad || '');
         const horaL   = a.horaInicio ? ` · ${a.horaInicio}${a.horaFin?('—'+a.horaFin):''}` : '';
-        html += `<div class="meta">• ${actName}${horaL}</div>`;
 
-        // Datos del servicio (proveedor/dirección/contacto), si tienes un helper
+        // resolver servicio+proveedor
+        let provLine = '';
         try{
-          let s = null;
-          if (typeof findServicio === 'function'){
-            s = await findServicio(a.destino || g.destino, a.actividad);
-          }
-          if (s){
-            if (s.proveedor) html += `<div class="meta">${norm(s.proveedor)}</div>`;
-            if (s.direccion) html += `<div class="meta">${norm(s.direccion)}</div>`;
-            if (s.contacto || s.telefono){
-              html += `<div class="meta">CONTACTO: ${norm(s.contacto||'')}${s.telefono?(' · '+norm(s.telefono)) : ''}</div>`;
-            }
-          }
+          const { servicio, proveedor } = await resolveServicioYProveedor(g.destino || a.destino, a.actividad, a.servicioId);
+          const markVoucher = (servicio?.requiereVoucher ? true : false)
+            || (servicio?.id && vouchersSet.has('S:'+servicio.id))
+            || vouchersSet.has('A:'+_norm(a.actividad));
+
+          const nombreProv = proveedor?.proveedor || servicio?.proveedor || '';
+          const dir        = proveedor?.direccion || '';
+          const contacto   = proveedor?.contacto || '';
+          const tel        = proveedor?.telefono || proveedor?.fono || '';
+          provLine = [
+            nombreProv ? norm(nombreProv) : '',
+            dir ? norm(dir) : '',
+            (contacto || tel) ? `CONTACTO: ${norm(contacto||'')}${tel?(' · '+norm(tel)) : ''}` : '',
+            markVoucher ? 'VOUCHER' : ''
+          ].filter(Boolean).map(t => `<div class="meta">${t}</div>`).join('');
         }catch{}
 
-        // Tips últimos 5 (si existe tu loader de tips). Para ALMUERZO/CENA usa hotelId.
-        try{
-          if (typeof loadServicioTips === 'function'){
-            // Resolver servicioId, si tu act lo trae o si findServicio devolvió id
-            let servicioId = a.servicioId || null;
-            if (!servicioId && typeof findServicio === 'function'){
-              const s2 = await findServicio(a.destino || g.destino, a.actividad);
-              servicioId = s2?.id || null;
-            }
-            if (servicioId){
-              const isMeal = /^(ALMUERZO|CENA)\b/i.test(actName);
-              const hotelIdForTips = isMeal ? (g.hotelId || null) : null;
-              const pack = await loadServicioTips(servicioId, { hotelId: hotelIdForTips, limitN:5 });
-              const rows = []
-                .concat((pack.tips||[]).map(t=>({...t, scope:'GENERAL'})))
-                .concat((pack.tipsHotel||[]).map(t=>({...t, scope:'HOTEL'})));
-              if (rows.length){
-                html += rows.map(t=>{
-                  const cuando = t.ts?.seconds ? new Date(t.ts.seconds*1000).toLocaleString('es-CL').toUpperCase() : '';
-                  return `<div class="meta">   — [${t.scope}] ${(t.texto||'').toString().toUpperCase()}${cuando?(' · '+cuando):''}</div>`;
-                }).join('');
-              }
-            }
-          }
-        }catch{}
+        html += `<div class="meta">• ${actName}${horaL}</div>${provLine}`;
       }
     }
     return html;
   }
   const itiHtml = await renderItin();
 
-  // ── Finanzas — ABONOS (ajusta la ruta si tu colección difiere)
+  // ===== FINANZAS — ABONOS
   let finHtml = `<h3>FINANZAS — ABONOS</h3>`;
   try{
-    // Ruta de ejemplo: finanzas_abonos/{grupoId}/items
-    const base = collection(db,'finanzas_abonos', g.id || g.grupoId || g.code || '', 'items');
-    const qs   = await getDocs(base);
-    const rows = [];
-    qs.forEach(d=>{
-      const x = d.data()||{};
-      rows.push({
-        fecha: x.ts?.seconds ? new Date(x.ts.seconds*1000) : null,
-        moneda: String(x.moneda||'CLP').toUpperCase(),
-        monto: Number(x.monto||0),
-        detalle: String(x.detalle||'').toUpperCase()
-      });
-    });
-    if (rows.length){
-      rows.sort((a,b)=> (a.moneda<b.moneda)?-1: (a.moneda>b.moneda)?1: 0);
-      finHtml += `<div class="card">` + rows.map(r=>{
-        const fx = r.fecha ? r.fecha.toLocaleDateString('es-CL').toUpperCase() : '';
-        return `<div class="meta">• ${r.moneda} ${r.monto.toLocaleString('es-CL')}${r.detalle?(' — '+r.detalle):''}${fx?(' · '+fx):''}</div>`;
-      }).join('') + `</div>`;
+    const { items, totals } = await loadAbonos(g);
+    if (items.length){
+      finHtml += `<div class="card">` + items
+        .sort((a,b)=> (a.moneda<b.moneda)?-1:(a.moneda>b.moneda)?1: (a.ts?.getTime()||0)-(b.ts?.getTime()||0))
+        .map(r=>{
+          const fx = r.ts ? r.ts.toLocaleDateString('es-CL').toUpperCase() : '';
+          return `<div class="meta">• ${r.moneda} ${r.monto.toLocaleString('es-CL')}${r.detalle?(' — '+r.detalle):''}${fx?(' · '+fx):''}</div>`;
+        }).join('') + `</div>`;
+
+      if (totals && totals.size){
+        finHtml += `<div class="meta" style="margin-top:.25rem"><strong>TOTALES:</strong> ${
+          Array.from(totals.entries()).map(([m,sum])=> `${m} ${Number(sum||0).toLocaleString('es-CL')}`).join(' · ')
+        }</div>`;
+      }
     } else {
       finHtml += `<div class="muted">SIN ABONOS REGISTRADOS.</div>`;
     }
   }catch{ finHtml += `<div class="muted">SIN ABONOS.</div>`; }
 
-  // ── Ensamble final
-  return `
-    ${headHtml}
-    ${hotelHtml}
-    ${transpHtml}
-    ${itiHtml}
-    ${finHtml}
-  `;
+  // retorno final
+  return `${headHtml}${transpHtml}${hotelHtml}${itiHtml}${finHtml}`;
 }
-
-
 
 /* ====== HISTORIAL VIAJE (utils) ====== */
 const HIST_ACTKEY = '_viaje_'; // o 'viaje_hist', cualquier cosa que NO sea __...__
