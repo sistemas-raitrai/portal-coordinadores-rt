@@ -226,49 +226,179 @@ function ensurePrintDOM(){
 }
 
 async function preparePrintForGroup(g){
-  ensurePrintDOM();
-  const $doc   = document.getElementById('print-block');
-  const $grp   = document.getElementById('ph-grupo');
-  const $m1    = document.getElementById('ph-meta1');
-  const $m2    = document.getElementById('ph-meta2');
-  const $fech  = document.getElementById('ph-fechas');
-  const $pax   = document.getElementById('ph-pax');
+  // ── Helpers locales (no cambian nombres globales)
+  const norm = s => String(s||'').trim().toUpperCase();
+  const dmy  = s => {
+    if (!s) return '';
+    const d = (s instanceof Date) ? s : new Date(s);
+    return isNaN(d) ? String(s) : d.toLocaleDateString('es-CL').toUpperCase();
+  };
+  const timeVal = (hhmm) => {
+    const m = String(hhmm||'').match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return 99_999;
+    const h = +m[1], mi = +m[2];
+    return h*60 + mi;
+  };
+  const getHotelById = (hid) => {
+    try{
+      const map = state?.cache?.hoteles?.byId;
+      return map?.get ? map.get(hid) : null;
+    }catch{ return null; }
+  };
 
-  const nombre = (g.nombreGrupo||g.aliasGrupo||g.id)||'';
-  const code   = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
-  const rango  = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
-  const destino= (g.destino||'').toString().toUpperCase();
-  const programa=(g.programa||'').toString().toUpperCase();
+  // ── Cabecera Grupo
+  const headHtml = (() => {
+    const nombre  = norm(g.nombreGrupo || g.nombre || 'GRUPO');
+    const destino = norm(g.destino || '');
+    const pax     = Number(g.pax || g.cantidadgrupo || 0);
+    const f1 = dmy(g.fechaInicio || g.inicio || g.fechaDeViaje);
+    const f2 = dmy(g.fechaFin    || g.termino);
+    return `
+      <h2 style="margin:0 0 .25rem 0">${nombre}</h2>
+      <div class="meta">DESTINO: ${destino} · FECHAS: ${f1}${f2?(' — '+f2):''} · PAX: ${pax.toLocaleString('es-CL')}</div>
+    `;
+  })();
 
-  $grp.textContent  = `GRUPO: ${nombre.toUpperCase()} (${code})`;
-  $m1.textContent   = `DESTINO: ${destino}`;
-  $m2.textContent   = `PROGRAMA: ${programa || '—'}`;
-  $fech.textContent = `FECHAS: ${rango}`;
-  const real  = paxRealOf(g);
-  const plan  = paxOf(g);
-  $pax.innerHTML    = `PAX: ${real && real!==plan ? `${plan} → ${real}` : plan}`;
-
-  // Cuerpo simple: fechas + actividades ordenadas por hora
-  let body = '';
-  const fechas = rangoFechas(g.fechaInicio,g.fechaFin);
-  for (const f of fechas){
-    const actsRaw = (g.itinerario && g.itinerario[f]) ? g.itinerario[f] : [];
-    const acts = (Array.isArray(actsRaw) ? actsRaw : Object.values(actsRaw||{}))
-      .filter(a => a && typeof a==='object')
-      // Ocultar "Desayuno Hotel" en impresión simple
-      .filter(a => String(a?.actividad || '').toUpperCase() !== 'DESAYUNO HOTEL')
-      .sort((a,b)=> timeVal(a?.horaInicio)-timeVal(b?.horaInicio));
-    body += `\n\n# ${dmy(f)}\n`;
-    if (!acts.length){ body += '— SIN ACTIVIDADES —\n'; continue; }
-    for (const a of acts){
-      const hIni = (a.horaInicio||'') ? ` ${a.horaInicio}` : '';
-      const hFin = (a.horaFin||'')    ? ` — ${a.horaFin}`  : '';
-      const prov = (a.proveedor||'')  ? ` · PROV: ${a.proveedor.toString().toUpperCase()}` : '';
-      body += `• ${(a.actividad||'').toString().toUpperCase()}${hIni}${hFin}${prov}\n`;
+  // ── Hoteles (si tienes un hotelId principal; si no, se omite)
+  let hotelHtml = '';
+  try{
+    const h = getHotelById(g.hotelId);
+    if (h){
+      hotelHtml = `
+        <h3>HOTEL</h3>
+        <div class="meta">${norm(h.nombre)}${h.ciudad?(' — '+norm(h.ciudad)) : ''}</div>
+        ${h.direccion ? `<div class="meta">${norm(h.direccion)}</div>` : ''}
+        ${(h.telefono||h.fono) ? `<div class="meta">TEL: ${norm(h.telefono||h.fono)}</div>` : ''}
+        ${h.email ? `<div class="meta">${(h.email||'').toLowerCase()}</div>` : ''}
+      `;
     }
+  }catch{}
+
+  // ── Transporte (si tu loader existe)
+  let transpHtml = '';
+  try{
+    if (typeof loadVuelosInfo === 'function'){
+      const vv = await loadVuelosInfo(g);
+      if (Array.isArray(vv) && vv.length){
+        transpHtml = `<h3>TRANSPORTE</h3>` + vv.map(v=>{
+          const tipo = norm(v.tipo || '');
+          const code = String(v.codigo||'').toUpperCase();
+          const sl   = v.salida  ? String(v.salida)  : '';
+          const ll   = v.llegada ? String(v.llegada) : '';
+          return `<div class="meta">• ${tipo} ${code}${sl?(' · '+sl):''}${ll?(' → '+ll):''}</div>`;
+        }).join('');
+      }
+    }
+  }catch{}
+
+  // ── Itinerario por días (oculta DESAYUNO HOTEL) + datos del Servicio + Tips (últimos 5)
+  async function renderItin(){
+    const byDate = g.itinerario || {};
+    const fechas = Object.keys(byDate).sort();
+    if (!fechas.length) return '<h3>ITINERARIO</h3><div class="muted">SIN ITINERARIO.</div>';
+
+    let html = `<h3>ITINERARIO</h3>`;
+    for (const f of fechas){
+      let acts = byDate[f];
+      if (!Array.isArray(acts)) acts = Object.values(acts||{}).filter(x=>x && typeof x==='object');
+
+      // Ocultar “Desayuno Hotel”
+      acts = acts.filter(a => norm(a.actividad) !== 'DESAYUNO HOTEL');
+
+      // Orden por hora
+      acts.sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
+      if (!acts.length) continue;
+
+      html += `<h4>${dmy(f)}</h4>`;
+
+      for (const a of acts){
+        const actName = norm(a.actividad || '');
+        const horaL   = a.horaInicio ? ` · ${a.horaInicio}${a.horaFin?('—'+a.horaFin):''}` : '';
+        html += `<div class="meta">• ${actName}${horaL}</div>`;
+
+        // Datos del servicio (proveedor/dirección/contacto), si tienes un helper
+        try{
+          let s = null;
+          if (typeof findServicio === 'function'){
+            s = await findServicio(a.destino || g.destino, a.actividad);
+          }
+          if (s){
+            if (s.proveedor) html += `<div class="meta">${norm(s.proveedor)}</div>`;
+            if (s.direccion) html += `<div class="meta">${norm(s.direccion)}</div>`;
+            if (s.contacto || s.telefono){
+              html += `<div class="meta">CONTACTO: ${norm(s.contacto||'')}${s.telefono?(' · '+norm(s.telefono)) : ''}</div>`;
+            }
+          }
+        }catch{}
+
+        // Tips últimos 5 (si existe tu loader de tips). Para ALMUERZO/CENA usa hotelId.
+        try{
+          if (typeof loadServicioTips === 'function'){
+            // Resolver servicioId, si tu act lo trae o si findServicio devolvió id
+            let servicioId = a.servicioId || null;
+            if (!servicioId && typeof findServicio === 'function'){
+              const s2 = await findServicio(a.destino || g.destino, a.actividad);
+              servicioId = s2?.id || null;
+            }
+            if (servicioId){
+              const isMeal = /^(ALMUERZO|CENA)\b/i.test(actName);
+              const hotelIdForTips = isMeal ? (g.hotelId || null) : null;
+              const pack = await loadServicioTips(servicioId, { hotelId: hotelIdForTips, limitN:5 });
+              const rows = []
+                .concat((pack.tips||[]).map(t=>({...t, scope:'GENERAL'})))
+                .concat((pack.tipsHotel||[]).map(t=>({...t, scope:'HOTEL'})));
+              if (rows.length){
+                html += rows.map(t=>{
+                  const cuando = t.ts?.seconds ? new Date(t.ts.seconds*1000).toLocaleString('es-CL').toUpperCase() : '';
+                  return `<div class="meta">   — [${t.scope}] ${(t.texto||'').toString().toUpperCase()}${cuando?(' · '+cuando):''}</div>`;
+                }).join('');
+              }
+            }
+          }
+        }catch{}
+      }
+    }
+    return html;
   }
-  $doc.textContent = body.trim();
+  const itiHtml = await renderItin();
+
+  // ── Finanzas — ABONOS (ajusta la ruta si tu colección difiere)
+  let finHtml = `<h3>FINANZAS — ABONOS</h3>`;
+  try{
+    // Ruta de ejemplo: finanzas_abonos/{grupoId}/items
+    const base = collection(db,'finanzas_abonos', g.id || g.grupoId || g.code || '', 'items');
+    const qs   = await getDocs(base);
+    const rows = [];
+    qs.forEach(d=>{
+      const x = d.data()||{};
+      rows.push({
+        fecha: x.ts?.seconds ? new Date(x.ts.seconds*1000) : null,
+        moneda: String(x.moneda||'CLP').toUpperCase(),
+        monto: Number(x.monto||0),
+        detalle: String(x.detalle||'').toUpperCase()
+      });
+    });
+    if (rows.length){
+      rows.sort((a,b)=> (a.moneda<b.moneda)?-1: (a.moneda>b.moneda)?1: 0);
+      finHtml += `<div class="card">` + rows.map(r=>{
+        const fx = r.fecha ? r.fecha.toLocaleDateString('es-CL').toUpperCase() : '';
+        return `<div class="meta">• ${r.moneda} ${r.monto.toLocaleString('es-CL')}${r.detalle?(' — '+r.detalle):''}${fx?(' · '+fx):''}</div>`;
+      }).join('') + `</div>`;
+    } else {
+      finHtml += `<div class="muted">SIN ABONOS REGISTRADOS.</div>`;
+    }
+  }catch{ finHtml += `<div class="muted">SIN ABONOS.</div>`; }
+
+  // ── Ensamble final
+  return `
+    ${headHtml}
+    ${hotelHtml}
+    ${transpHtml}
+    ${itiHtml}
+    ${finHtml}
+  `;
 }
+
 
 
 /* ====== HISTORIAL VIAJE (utils) ====== */
