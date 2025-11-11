@@ -85,6 +85,33 @@ async function sendMailViaGAS(payload, { retries = 1 } = {}) {
   }
 }
 
+// === Colapsa listas a los últimos 5 elementos con botón VER MÁS / VER MENOS ===
+function applyCollapse5(container, toggleBtn){
+  if (!container) return;
+  const items = Array.from(container.children || []);
+  const MAX = 5;
+  if (items.length <= MAX){
+    if (toggleBtn) toggleBtn.style.display = 'none';
+    return;
+  }
+  let expanded = false;
+  const sync = () => {
+    const start = Math.max(0, items.length - MAX);
+    items.forEach((el, idx) => {
+      el.style.display = expanded || idx >= start ? '' : 'none';
+    });
+    if (toggleBtn){
+      const ocultos = items.length - MAX;
+      toggleBtn.style.display = '';
+      toggleBtn.textContent = expanded ? 'VER MENOS' : `VER MÁS (${ocultos})`;
+    }
+  };
+  sync();
+  if (toggleBtn){
+    toggleBtn.onclick = () => { expanded = !expanded; sync(); };
+  }
+}
+
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
