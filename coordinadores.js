@@ -3504,13 +3504,13 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
        <div class="muted">-------</div>
        <div id="foroList" style="display:grid;gap:.4rem;margin-top:.5rem"></div>
        <div class="rowflex" style="justify-content:center;margin-top:.4rem">
-         <button id="foroMore" class="btn sec" style="display:none">CARGAR MÁS</button>
+         <button id="foroMore" class="btn sec" style="display:none">VER MÁS</button>
        </div>
      </div>
    `;
 
   // ===== Paginación (STAFF arriba, 10 por página, botón "CARGAR MÁS") =====
-  const paging = { cursor:null, exhausted:false, loading:false, pageSize:10, items:[] };
+  const paging = { cursor:null, exhausted:false, loading:false, pageSize:5, items:[] };
 
   const renderForo = ()=>{
     const wrap = body.querySelector('#foroList');
