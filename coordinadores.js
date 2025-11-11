@@ -145,84 +145,62 @@ const timeIdNowMs = () => {
 };
 
 /* ====== IMPRESIÓN: HOJA OCULTA EN ESTA MISMA PÁGINA ====== */
+/* ===== PRINT: root + estilos ===== */
 function ensurePrintDOM(){
-  if (document.getElementById('printSheet')) return;
-
-  const css = document.createElement('style');
-  css.id = 'printStyles';
-   css.textContent = `
-     /* PANTALLA: hoja oculta */
-     #printSheet { display:none; }
-   
-     /* IMPRESIÓN */
-     @media print {
-       @page { size: A4; margin: 20mm; }
-   
-       /* Muestra sólo la hoja de impresión; ocultamos la app por display, no por visibility */
-       #printSheet { display:block !important; }
-       .wrap, #alertsPanel, #navPanel, #statsPanel, #gruposPanel, #modalBack { display:none !important; }
-   
-       /* Encabezado y pie (fijos) */
-       #printSheet .print-head {
-         position: fixed; top: 10mm; left: 0; right: 0;
-         display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 8px;
-         font-family: Calibri, Arial, sans-serif; font-size: 11px; color:#444;
-       }
-       #printSheet .ph-left { text-transform: uppercase; }
-       #printSheet .ph-left strong { font-size: 12px; }
-       #printSheet .ph-right img { height: 36px; object-fit: contain; }
-   
-       #printSheet .print-foot {
-         position: fixed; bottom: 10mm; left: 0; right: 0;
-         text-align: center; font-family: Calibri, Arial, sans-serif; font-size: 10px; color:#666;
-       }
-       #printSheet .page-num::after { content: counter(page) " / " counter(pages); }
-   
-       /* Cuerpo */
-       #printSheet .print-doc {
-         white-space: pre-wrap;
-         text-transform: uppercase;
-         font-family: Calibri, Arial, sans-serif;
-         font-size: 12px; line-height: 1.25;
-         margin-top: 22mm;     /* despeje header */
-         margin-bottom: 16mm;  /* despeje footer */
-         color: #0a0a0a;
-       }
-       /* ====== ESTILOS DE TIPOGRAFÍA PARA EL CUERPO ====== */
-      #printSheet .print-doc .h1 { font-size: 16px; font-weight: 700; letter-spacing:.3px; }
-      #printSheet .print-doc .h2 { font-size: 14px; font-weight: 700; margin-top: 8px; }
-      #printSheet .print-doc .b  { font-weight: 700; }
-      #printSheet .print-doc .big{ font-size: 14px; }
-      #printSheet .print-doc .muted { color:#666; }
-      #printSheet .print-doc .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
-     }
-   `;
-  document.head.appendChild(css);
-
-  const sheet = document.createElement('div');
-  sheet.id = 'printSheet';
-  sheet.innerHTML = `
-    <div class="print-head">
-      <div class="ph-left">
-        <div><strong>DESPACHO DE VIAJE</strong></div>
-        <div id="ph-grupo"></div>
-        <div id="ph-meta1"></div>
-        <div id="ph-meta2"></div>
-        <div id="ph-fechas"></div>
-        <div id="ph-pax"></div>
+  // Root único
+  let root = document.getElementById('printRoot');
+  if (!root){
+    root = document.createElement('div');
+    root.id = 'printRoot';
+    // Por pantalla, oculto; en print se muestra con CSS
+    root.style.display = 'none';
+    root.innerHTML = `
+      <div id="printHeader">
+        <img id="printLogo" src="Logo Raitrai.png" alt="Rai Trai" />
       </div>
-      <div class="ph-right">
-        <img src="RaitraiLogo.png" alt="RAITRAI"/>
-      </div>
-    </div>
+      <div id="printContent"></div>
+    `;
+    document.body.appendChild(root);
+  }
 
-    <pre id="print-block" class="print-doc"></pre>
+  // Estilos únicos
+  if (!document.getElementById('printStyles')){
+    const css = document.createElement('style');
+    css.id = 'printStyles';
+    css.textContent = `
+      #printRoot { padding: 24px 28px; font-family: Arial, Helvetica, sans-serif; color:#111; }
+      #printHeader { position: relative; min-height: 40px; margin-bottom: 8px; }
+      #printLogo { position: fixed; top: 18px; right: 22px; width: 120px; height: auto; }
 
-    <div class="print-foot">
-      <span class="page-num"></span>
-    </div>
-  `;
-  document.body.appendChild(sheet);
+      #printContent h2{ margin: 0 0 .25rem 0; font-size: 22px; }
+      #printContent h3{ margin: .9rem 0 .3rem 0; font-size: 16px; }
+      #printContent h4{ margin: .6rem 0 .2rem 0; font-size: 14px; }
+      #printContent .meta{ font-size: 12px; line-height: 1.35; margin: .12rem 0; }
+      #printContent .muted{ color:#555; font-size:12px; }
+      #printContent .card{ border:1px solid #ddd; border-radius:8px; padding:.45rem .6rem; margin:.35rem 0; }
+
+      /* Pantalla: oculto el root de impresión */
+      @media screen {
+        #printRoot { display: none; }
+      }
+      /* Print: muestro solo el root y oculto el resto para evitar "blancos" */
+      @media print {
+        body * { visibility: hidden !important; }
+        #printRoot, #printRoot * { visibility: visible !important; }
+        #printRoot { display: block !important; position: absolute; left:0; top:0; width: 100%; }
+      }
+    `;
+    document.head.appendChild(css);
+  }
+}
+
+/* ===== PRINT: volcar contenido ===== */
+function fillPrintDOM(html){
+  const host = document.getElementById('printContent') || (()=> {
+    ensurePrintDOM();
+    return document.getElementById('printContent');
+  })();
+  host.innerHTML = String(html || '');
 }
 
 async function preparePrintForGroup(g){
@@ -969,11 +947,40 @@ onAuthStateChanged(auth, async (user) => {
   }
 
    // BOTONES SOLO PARA STAFF (en NAV solo queda imprimir; crear alerta va en Alertas)
+   // BOTÓN IMPRIMIR DESPACHO (solo STAFF)
    const btnPrint = document.getElementById('btnPrintVch');
    if (btnPrint){
      btnPrint.style.display = state.is ? '' : 'none';
-     if (state.is) btnPrint.textContent = 'IMPRIMIR DESPACHO';
+     if (state.is){
+       btnPrint.textContent = 'IMPRIMIR DESPACHO';
+       btnPrint.onclick = async () => {
+         try{
+           // 1) asegurar DOM de impresión
+           ensurePrintDOM();
+  
+           // 2) resolver grupo activo (usa tu variable real si ya la tienes)
+           const g =
+             window._grupoActual ||
+             state._currentGroup ||
+             state.grupoActual ||
+             (Array.isArray(state.grupos) ? state.grupos[0] : null);
+  
+           if (!g){ showFlash('NO HAY GRUPO ACTIVO PARA IMPRIMIR', 'warn'); return; }
+  
+           // 3) construir HTML (usa la versión que te pasé antes)
+           const html = await preparePrintForGroup(g);
+   
+           // 4) volcar y disparar print
+           fillPrintDOM(html);
+           window.print();
+         }catch(e){
+           console.error(e);
+           showFlash('NO SE PUDO IMPRIMIR EL DESPACHO', 'err');
+         }
+       };
+     }
    }
+
    const legacyNewAlert = document.getElementById('btnNewAlert');
    if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
