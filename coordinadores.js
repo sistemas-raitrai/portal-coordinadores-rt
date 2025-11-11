@@ -228,6 +228,8 @@ async function preparePrintForGroup(g){
     const actsRaw = (g.itinerario && g.itinerario[f]) ? g.itinerario[f] : [];
     const acts = (Array.isArray(actsRaw) ? actsRaw : Object.values(actsRaw||{}))
       .filter(a => a && typeof a==='object')
+      // Ocultar "Desayuno Hotel" en impresión simple
+      .filter(a => String(a?.actividad || '').toUpperCase() !== 'DESAYUNO HOTEL')
       .sort((a,b)=> timeVal(a?.horaInicio)-timeVal(b?.horaInicio));
     body += `\n\n# ${dmy(f)}\n`;
     if (!acts.length){ body += '— SIN ACTIVIDADES —\n'; continue; }
@@ -2081,6 +2083,9 @@ async function renderActs(grupo, fechaISO, cont){
     acts = Object.values(acts || {}).filter(x => x && typeof x === 'object');
   }
 
+  // Ocultar "Desayuno Hotel" en la vista de itinerario
+  acts = acts.filter(a => String(a?.actividad || '').toUpperCase() !== 'DESAYUNO HOTEL');
+
   // Orden por hora de inicio (temprano → tarde)
   acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
 
@@ -3149,6 +3154,9 @@ async function collectItinLines(grupo){
     let acts = (grupo.itinerario && grupo.itinerario[f]) ? grupo.itinerario[f] : [];
     if (!Array.isArray(acts)) acts = Object.values(acts||{}).filter(x => x && typeof x === 'object');
 
+    // Ocultar "Desayuno Hotel" en la recolección IMPRESIÓN (completa)
+    acts = acts.filter(a => String(a?.actividad || '').toUpperCase() !== 'DESAYUNO HOTEL');
+
     // ordenar por hora
     acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
 
@@ -3189,6 +3197,9 @@ async function collectItinLinesFast(grupo){
     // tolera objeto indexado
     let acts = (grupo.itinerario && grupo.itinerario[f]) ? grupo.itinerario[f] : [];
     if (!Array.isArray(acts)) acts = Object.values(acts||{}).filter(x => x && typeof x === 'object');
+
+    // Ocultar "Desayuno Hotel" en la recolección IMPRESIÓN (rápida)
+    acts = acts.filter(a => String(a?.actividad || '').toUpperCase() !== 'DESAYUNO HOTEL');
 
     // orden por hora
     acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
