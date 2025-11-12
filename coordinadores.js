@@ -4,7 +4,7 @@ import { app, db, auth, storage } from './firebase-init-portal.js';
 import { onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
-  collection, getDocs, getDoc, doc, updateDoc, addDoc, setDoc,
+  collection, collectionGroup, getDocs, getDoc, doc, updateDoc, addDoc, setDoc,
   serverTimestamp, query, where, orderBy, limit, deleteField, deleteDoc, startAfter
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 import { ref as sRef, uploadBytes, getDownloadURL }
@@ -4632,10 +4632,101 @@ async function closeFinanzas(g){
   showFlash('FINANZAS CERRADAS', 'ok');
 }
 
+// ====== HELPERS FINANZAS (GASTOS APROBADOS) ======
+
+function totalesPorMoneda(items){
+  const t = { CLP:0, USD:0, BRL:0, ARS:0 };
+  (items||[]).forEach(x=>{
+    const m = String(x.moneda||'').toUpperCase();
+    const v = Number(x.valor||0);
+    if (m==='CLP') t.CLP += v;
+    else if (m==='USD') t.USD += v;
+    else if (m==='BRL') t.BRL += v;
+    else if (m==='ARS') t.ARS += v;
+  });
+  return t;
+}
+
+// Devuelve SOLO gastos con estado APROBADO del grupo.
+// STAFF “Todos” -> busca con collectionGroup; si hay coordinador seleccionado -> subcolección del coord.
+// Coordinador -> su propia subcolección.
+async function loadGastosAprobados(grupoId){
+  try{
+    const isStaff = !!state.is;
+    const viewAll = isStaff && state.viewingCoordId === '__ALL__';
+    const out = [];
+
+    if (viewAll){
+      const qs = await getDocs(query(
+        collectionGroup(db,'gastos'),
+        where('grupoId','==', grupoId),
+        where('estado','==','APROBADO')
+      ));
+      qs.forEach(d => out.push({ id:d.id, ...d.data() }));
+    } else {
+      const coordId = (typeof getActiveCoordIdForGastos==='function'
+                        ? getActiveCoordIdForGastos()
+                        : (state.viewingCoordId || state?.user?.uid || ''));
+      if (!coordId) return [];
+      const qs = await getDocs(query(
+        collection(db,'coordinadores', coordId, 'gastos'),
+        where('grupoId','==', grupoId),
+        where('estado','==','APROBADO')
+      ));
+      qs.forEach(d => out.push({ id:d.id, ...d.data() }));
+    }
+    return out;
+  }catch(e){
+    console.error('loadGastosAprobados()', e);
+    return [];
+  }
+}
+
+// ¿Hay algún gasto en PENDIENTE (o sin estado) para el grupo?
+// Para docs antiguos sin `estado`, los tratamos como PENDIENTE (control local).
+async function existsGastoPendiente(grupoId){
+  try{
+    const isStaff = !!state.is;
+    const viewAll = isStaff && state.viewingCoordId === '__ALL__';
+
+    if (viewAll){
+      const qs = await getDocs(query(
+        collectionGroup(db,'gastos'),
+        where('grupoId','==', grupoId),
+        limit(200)
+      ));
+      let pend = false;
+      qs.forEach(d=>{
+        const est = String((d.data()?.estado || 'PENDIENTE')).toUpperCase();
+        if (est === 'PENDIENTE') pend = true;
+      });
+      return pend;
+    } else {
+      const coordId = (typeof getActiveCoordIdForGastos==='function'
+                        ? getActiveCoordIdForGastos()
+                        : (state.viewingCoordId || state?.user?.uid || ''));
+      if (!coordId) return false;
+      const qs = await getDocs(query(
+        collection(db,'coordinadores', coordId,'gastos'),
+        where('grupoId','==', grupoId),
+        limit(200)
+      ));
+      let pend = false;
+      qs.forEach(d=>{
+        const est = String((d.data()?.estado || 'PENDIENTE')).toUpperCase();
+        if (est === 'PENDIENTE') pend = true;
+      });
+      return pend;
+    }
+  }catch(e){
+    console.error('existsGastoPendiente()', e);
+    return false;
+  }
+}
+
 async function renderFinanzas(g, pane){
   pane.innerHTML='<div class="muted">CARGANDO…</div>';
   const qNorm = norm(state.groupQ||'');
-  const tasas = await getTasas();
 
   // 1) Carga abonos (tal cual) y gastos APROBADOS (nuevo)
   const abonos = await loadAbonos(g.id);
