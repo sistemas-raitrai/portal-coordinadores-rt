@@ -1009,21 +1009,6 @@ function daysBetweenInclusive(a,b){
 // Carga GASTOS APROBADOS del grupo (colección estándar).
 // Lee de: grupos/{id}/gastos  (fallback: finanzas_gastos/{id}/items si existiera)
 // Verifica si existen gastos PENDIENTES (bloquea cierre)
-async function existsGastoPendiente(grupoId){
-  try{
-    const base = collection(db,'grupos', String(grupoId), 'gastos');
-    const qs   = await getDocs(base);
-    let found = false;
-    qs.forEach(d=>{
-      const x = d.data()||{};
-      if (String(x.estado||'PENDIENTE').toUpperCase() === 'PENDIENTE') found = true;
-    });
-    return found;
-  }catch{
-    return false;
-  }
-}
-
 window.renderFinanzas ??= async ()=>0;
 window.setEstadoServicio ??= async ()=> showFlash('ESTADO ACTUALIZADO');
 window.openActividadModal ??= async ()=>{};
