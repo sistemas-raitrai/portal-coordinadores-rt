@@ -4720,13 +4720,27 @@ async function renderFinanzas(g, pane){
   const qNorm = norm(state.groupQ||'');
   const tasas = await getTasas();
 
-  const abonos = await loadAbonos(g.id);
-  const totAb = abonos.reduce((acc,a)=>{ const m=String(a.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(a.valor||0); return acc; },{CLP:0,USD:0,BRL:0,ARS:0});
+  // Carga de abonos (v2: devuelve { items, totals })
+  let resAb;
+  try {
+    resAb = await loadAbonos(g);      // ← preferimos pasar el grupo completo
+  } catch (_) {
+    try { resAb = await loadAbonos(g.id); } catch { resAb = { items: [] }; }
+  }
+  const abonos = Array.isArray(resAb) ? resAb : (resAb?.items || []);
+
+  // Totales por moneda (objeto plano) calculados desde el array
+  const totAb = (abonos || []).reduce((acc, a) => {
+    const m = String(a.moneda || 'CLP').toUpperCase();
+    acc[m] = (acc[m] || 0) + Number(a.valor || 0);
+    return acc;
+  }, { CLP: 0, USD: 0, BRL: 0, ARS: 0 });
+
   const totGa = await sumGastosPorMonedaDelGrupo(g, qNorm);
 
   const abCLP = await sumCLPByMoneda(totAb, tasas);
   const gaCLP = await sumCLPByMoneda(totGa, tasas);
-  const saldoCLP = abCLP.CLPconv - gaCLP.CLPconv;
+  const saldoCLP = (abCLP?.CLPconv || 0) - (gaCLP?.CLPconv || 0);
 
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML=''; pane.appendChild(wrap);
 
