@@ -5026,40 +5026,138 @@ async function getTasas(){
   try{ const d=await getDoc(doc(db,'config','tasas')); if(d.exists()){ state.cache.tasas=d.data()||{}; return state.cache.tasas; } }catch(_){}
   state.cache.tasas={ USD:950, BRL:170, ARS:1.2 }; return state.cache.tasas;
 }
+// === REEMPLAZO COMPLETO ===
 async function loadGastosList(g, box, coordId){
-  const qs=await getDocs(query(collection(db,'coordinadores',coordId,'gastos'), orderBy('createdAt','desc')));
-  let list=[]; qs.forEach(d=>{ const x=d.data()||{}; if(x.grupoId===g.id) list.push({id:d.id,...x}); });
+  const qs = await getDocs(
+    query(collection(db,'coordinadores', coordId, 'gastos'), orderBy('createdAt','desc'))
+  );
 
-  const q = norm(state.groupQ||''); let hits=0;
-  if(q){ const before=list.length; list = list.filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(q)); hits = list.length; }
-
-  const tot={ CLP:0, USD:0, BRL:0, ARS:0 };
-
-  const table=document.createElement('table'); table.className='table';
-  table.innerHTML='<thead><tr><th>ASUNTO</th><th>AUTOR</th><th>MONEDA</th><th>VALOR</th><th>COMPROBANTE</th></tr></thead><tbody></tbody>';
-  const tb=table.querySelector('tbody');
-
-  list.forEach(x=>{
-     const tr=document.createElement('tr');
-     tr.innerHTML = `
-       <td data-label="ASUNTO">${(x.asunto||'').toString().toUpperCase()}</td>
-       <td data-label="AUTOR">${(x.byEmail||'').toString().toUpperCase()}</td>
-       <td data-label="MONEDA">${(x.moneda||'').toString().toUpperCase()}</td>
-       <td data-label="VALOR">${Number(x.valor||0).toLocaleString('es-CL')}</td>
-       <td data-label="COMPROBANTE">${x.imgUrl?`<a href="${x.imgUrl}" target="_blank">VER</a>`:'—'}</td>
-     `;
-     tb.appendChild(tr);
-
-     if(x.moneda==='CLP') tot.CLP+=Number(x.valor||0);
-     if(x.moneda==='USD') tot.USD+=Number(x.valor||0);
-     if(x.moneda==='BRL') tot.BRL+=Number(x.valor||0);
-     if(x.moneda==='ARS') tot.ARS+=Number(x.valor||0);
+  let list = [];
+  qs.forEach(d=>{
+    const x = d.data() || {};
+    if (x.grupoId === g.id) {
+      list.push({
+        id: d.id,
+        ...x,
+        estado: String(x.estado || 'PENDIENTE').toUpperCase() // ← default
+      });
+    }
   });
 
-  box.innerHTML='<h4>GASTOS DEL GRUPO</h4>'; box.appendChild(table);
+  // Filtro por buscador global (si aplica)
+  const q = norm(state.groupQ || '');
+  let hits = 0;
+  if (q){
+    const before = list.length;
+    list = list.filter(x =>
+      norm([x.asunto, x.byEmail, x.moneda, String(x.valor||0)].join(' '))
+        .includes(q)
+    );
+    hits = list.length;
+  }
 
-  const totDiv=document.createElement('div'); totDiv.className='totline';
-  totDiv.textContent=`TOTAL — CLP: ${tot.CLP.toLocaleString('es-CL')} · USD: ${tot.USD.toLocaleString('es-CL')} · BRL: ${tot.BRL.toLocaleString('es-CL')} · ARS: ${tot.ARS.toLocaleString('es-CL')}`;
+  // Totales por moneda (sin equivalencias)
+  const tot = { CLP:0, USD:0, BRL:0, ARS:0 };
+  list.forEach(x => {
+    const m = String(x.moneda || '').toUpperCase();
+    if (m === 'CLP') tot.CLP += Number(x.valor || 0);
+    if (m === 'USD') tot.USD += Number(x.valor || 0);
+    if (m === 'BRL') tot.BRL += Number(x.valor || 0);
+    if (m === 'ARS') tot.ARS += Number(x.valor || 0);
+  });
+
+  // Render tabla
+  box.innerHTML = '<h4>GASTOS DEL GRUPO</h4>';
+  const table = document.createElement('table');
+  table.className = 'table';
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>ASUNTO</th>
+        <th>AUTOR</th>
+        <th>MONEDA</th>
+        <th>VALOR</th>
+        <th>ESTADO</th>
+        <th>COMPROBANTE</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  const tb = table.querySelector('tbody');
+
+  list.forEach(x=>{
+    const tr = document.createElement('tr');
+
+    // celdas básicas
+    const tdAsu = document.createElement('td');
+    tdAsu.setAttribute('data-label','ASUNTO');
+    tdAsu.textContent = String(x.asunto||'').toUpperCase();
+
+    const tdAut = document.createElement('td');
+    tdAut.setAttribute('data-label','AUTOR');
+    tdAut.textContent = String(x.byEmail||'').toUpperCase();
+
+    const tdMon = document.createElement('td');
+    tdMon.setAttribute('data-label','MONEDA');
+    tdMon.textContent = String(x.moneda||'').toUpperCase();
+
+    const tdVal = document.createElement('td');
+    tdVal.setAttribute('data-label','VALOR');
+    tdVal.textContent = Number(x.valor||0).toLocaleString('es-CL');
+
+    // ESTADO: selector si es STAFF; texto si es coordinador
+    const tdEst = document.createElement('td');
+    tdEst.setAttribute('data-label','ESTADO');
+
+    if (state.is) {
+      const sel = document.createElement('select');
+      sel.innerHTML = `
+        <option value="PENDIENTE">PENDIENTE</option>
+        <option value="APROBADO">APROBADO</option>
+        <option value="RECHAZADO">RECHAZADO</option>
+      `;
+      sel.value = x.estado || 'PENDIENTE';
+      sel.onchange = async () => {
+        const nuevo = sel.value;
+        try {
+          await updateDoc(
+            doc(db,'coordinadores', coordId, 'gastos', x.id),
+            { estado: nuevo, estadoAt: serverTimestamp(), estadoBy: (state.user?.email||'').toLowerCase() }
+          );
+          x.estado = nuevo;
+          showFlash('ESTADO ACTUALIZADO', 'ok');
+        } catch (e) {
+          console.error(e);
+          showFlash('NO SE PUDO ACTUALIZAR EL ESTADO', 'err');
+          sel.value = x.estado || 'PENDIENTE'; // revertir UI
+        }
+      };
+      tdEst.appendChild(sel);
+    } else {
+      tdEst.textContent = x.estado || 'PENDIENTE';
+    }
+
+    // Comprobante
+    const tdComp = document.createElement('td');
+    tdComp.setAttribute('data-label','COMPROBANTE');
+    tdComp.innerHTML = x.imgUrl ? `<a href="${x.imgUrl}" target="_blank">VER</a>` : '—';
+
+    tr.appendChild(tdAsu);
+    tr.appendChild(tdAut);
+    tr.appendChild(tdMon);
+    tr.appendChild(tdVal);
+    tr.appendChild(tdEst);
+    tr.appendChild(tdComp);
+    tb.appendChild(tr);
+  });
+
+  box.appendChild(table);
+
+  // Totales (sin equivalencia a CLP)
+  const totDiv = document.createElement('div');
+  totDiv.className = 'totline';
+  totDiv.textContent =
+    `TOTAL — CLP: ${tot.CLP.toLocaleString('es-CL')} · USD: ${tot.USD.toLocaleString('es-CL')} · BRL: ${tot.BRL.toLocaleString('es-CL')} · ARS: ${tot.ARS.toLocaleString('es-CL')}`;
   box.appendChild(totDiv);
 
   return hits;
