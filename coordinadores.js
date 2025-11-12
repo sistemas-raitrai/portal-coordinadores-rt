@@ -5143,39 +5143,44 @@ async function loadGastosList(g, box, coordId, paneRef){
   table.className = 'table gastos';
   ensureGastosCompactCSS?.();
 
+  const showAutor = !!state.is; // STAFF ve AUTOR; no-staff no
   table.innerHTML = `
     <thead>
       <tr>
-        <th>ASUNTO</th><th>AUTOR</th><th>MONEDA</th><th>VALOR</th>
-        ${state.is ? '<th>ESTADO</th>' : ''}
+        <th>ASUNTO</th>
+        ${showAutor ? '<th>AUTOR</th>' : ''}
+        <th>MONEDA</th>
+        <th>VALOR</th>
+        <th>ESTADO</th>        <!-- SIEMPRE mostrar ESTADO -->
         <th>COMPROBANTE</th>
       </tr>
     </thead>
-    <tbody></tbody>`; // ← FIX 2: eliminar el backtick extra que estaba debajo
+    <tbody></tbody>`;
 
   const tb = table.querySelector('tbody');
 
   list.forEach(x=>{
-    const tr = document.createElement('tr');
-
+    // celdas ya construidas arriba:
     const tdAsu = document.createElement('td');
     tdAsu.setAttribute('data-label','ASUNTO');
-    tdAsu.textContent = String(x.asunto||'').toUpperCase();
-
+    tdAsu.textContent = String(x.asunto || '').toUpperCase();
+    
     const tdAut = document.createElement('td');
     tdAut.setAttribute('data-label','AUTOR');
-    tdAut.textContent = String(x.byEmail||'').toUpperCase();
-
+    tdAut.textContent = String(x.byEmail || '').toUpperCase();
+    
     const tdMon = document.createElement('td');
     tdMon.setAttribute('data-label','MONEDA');
-    tdMon.textContent = String(x.moneda||'').toUpperCase();
-
+    tdMon.textContent = String(x.moneda || '').toUpperCase();
+    
     const tdVal = document.createElement('td');
     tdVal.setAttribute('data-label','VALOR');
-    tdVal.textContent = Number(x.valor||0).toLocaleString('es-CL');
-
-    // ESTADO (selector si es STAFF)
+    tdVal.textContent = Number(x.valor || 0).toLocaleString('es-CL');
+    
+    // ESTADO: selector si es STAFF; texto si es no-staff
     const tdEst = document.createElement('td');
+    tdEst.setAttribute('data-label','ESTADO');
+    
     if (state.is) {
       const sel = document.createElement('select');
       sel.innerHTML = `
@@ -5183,7 +5188,7 @@ async function loadGastosList(g, box, coordId, paneRef){
         <option value="APROBADO">APROBADO</option>
         <option value="RECHAZADO">RECHAZADO</option>
       `;
-      sel.value = x.estado || 'PENDIENTE';
+      sel.value = String(x.estado || 'PENDIENTE').toUpperCase();
       sel.onchange = async () => {
         const nuevo = sel.value;
         try {
@@ -5192,33 +5197,30 @@ async function loadGastosList(g, box, coordId, paneRef){
             { estado: nuevo, estadoAt: serverTimestamp(), estadoBy: (state.user?.email||'').toLowerCase() }
           );
           x.estado = nuevo;
-          // Si este listado vive dentro del modal de finanzas, refresca totales/saldos:
-          if (paneRef) {
-            await renderFinanzas(g, paneRef);
-          }
           showFlash('ESTADO ACTUALIZADO', 'ok');
+          if (paneRef) renderFinanzas(g, paneRef);  // refrescar saldos
         } catch (e) {
           console.error(e);
           showFlash('NO SE PUDO ACTUALIZAR EL ESTADO', 'err');
-          sel.value = x.estado || 'PENDIENTE';
+          sel.value = String(x.estado || 'PENDIENTE').toUpperCase();
         }
       };
       tdEst.appendChild(sel);
     } else {
-      tdEst.textContent = x.estado || 'PENDIENTE';
+      tdEst.textContent = String(x.estado || 'PENDIENTE').toUpperCase();
     }
-
+    
     const tdComp = document.createElement('td');
     tdComp.setAttribute('data-label','COMPROBANTE');
     tdComp.innerHTML = x.imgUrl ? `<a href="${x.imgUrl}" target="_blank">VER</a>` : '—';
-
+    
+    // ⬇⬇⬇ append final con AUTOR condicional
     tr.appendChild(tdAsu);
-    tr.appendChild(tdAut);
+    if (showAutor) tr.appendChild(tdAut);   // <<— showAutor = !!state.is
     tr.appendChild(tdMon);
     tr.appendChild(tdVal);
-    if (state.is) tr.appendChild(tdEst);
+    tr.appendChild(tdEst);
     tr.appendChild(tdComp);
-    tb.appendChild(tr);
   });
 
   box.appendChild(table);
