@@ -4348,7 +4348,7 @@ async function renderGlobalAlerts(){
   if (btnCreate) btnCreate.onclick = openCreateAlertModal;
 }
 /* ====== GASTOS ====== */
-async function renderGastos(g, pane){
+async function renderGastos(g, pane, paneRef){
   pane.innerHTML='';
   const form=document.createElement('div'); form.className='act';
   form.innerHTML=`
@@ -4409,11 +4409,12 @@ async function renderGastos(g, pane){
         createdAt: serverTimestamp()
       });
       form.querySelector('#spAsunto').value=''; form.querySelector('#spValor').value=''; form.querySelector('#spImg').value='';
-      await loadGastosList(g, listBox, coordId);
+      await loadGastosList(g, listBox, coordId, paneRef);
+      if (paneRef) await renderFinanzas(g, paneRef);
     }catch(e){ console.error(e); alert('NO FUE POSIBLE GUARDAR EL GASTO.'); }finally{ btn.disabled=false; }
   };
 
-  const hits = await loadGastosList(g, listBox, coordId);
+  const hits = await loadGastosList(g, listBox, coordId, paneRef);
   return hits;
 }
 
@@ -4588,18 +4589,34 @@ async function suggestAbonosFromItin(grupo){
   return out;
 }
 
-// -------- Totales de gastos (reusa colec. coordinadores/{id}/gastos) ----------
-async function sumGastosPorMonedaDelGrupo(g, qNorm=''){
-  const coordId = getActiveCoordIdForGastos();
-  const qs=await getDocs(query(collection(db,'coordinadores',coordId,'gastos'), orderBy('createdAt','desc')));
-  const list=[]; qs.forEach(d=>{ const x=d.data()||{}; if(x.grupoId===g.id) list.push({id:d.id,...x}); });
+// ==== REEMPLAZO: SOLO APROBADOS EN EL SALDO ====
+async function sumGastosPorMonedaDelGrupo(g, qNorm){
+  // coordId activo (igual que en el resto de tu app)
+  const meEmail = (state.user?.email||'').toLowerCase();
+  const coordId = state.viewingCoordId && state.viewingCoordId !== '__ALL__'
+    ? state.viewingCoordId
+    : (state.coordinadores?.find(c => (c.email||'').toLowerCase() === meEmail)?.id) || state.user?.uid;
 
-  if(qNorm){
-    return list
-      .filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(qNorm))
-      .reduce((acc,x)=>{ const m=String(x.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(x.valor||0); return acc; },{});
-  }
-  return list.reduce((acc,x)=>{ const m=String(x.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(x.valor||0); return acc; },{});
+  const base = collection(db,'coordinadores', coordId,'gastos');
+  const qs   = await getDocs(query(base, where('grupoId','==', g.id)));
+
+  const out = { CLP:0, USD:0, BRL:0, ARS:0 };
+  qs.forEach(d=>{
+    const x = d.data() || {};
+    // Filtro de búsqueda (si aplica)
+    if (qNorm){
+      const hay = norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(qNorm);
+      if (!hay) return;
+    }
+    // *** SOLO APROBADOS ***
+    const estado = String(x.estado||'PENDIENTE').toUpperCase();
+    if (estado !== 'APROBADO') return;
+
+    const m = String(x.moneda||'CLP').toUpperCase();
+    const v = Number(x.valor||0);
+    if (out[m] != null) out[m] += v;
+  });
+  return out;
 }
 
 // -------- Summary / Cierre finanzas ----------
@@ -4726,9 +4743,11 @@ async function renderFinanzas(g, pane){
   renderAbonosList(abonos);
 
   // GASTOS
-  const paneGastos=document.createElement('div');
-  const ghits = await renderGastos(g, paneGastos);
+  const paneGastos = document.createElement('div');
+  // pasamos pane como 3er parámetro para poder refrescar totales al cambiar estado
+  const ghits = await renderGastos(g, paneGastos, pane);
   wrap.appendChild(paneGastos);
+
 
   // CIERRE FINANCIERO
   const cierre=document.createElement('div'); cierre.className='act';
@@ -5042,8 +5061,8 @@ function ensureGastosCompactCSS(){
   document.head.appendChild(s);
 }
 
-// === REEMPLAZO COMPLETO ===
-async function loadGastosList(g, box, coordId){
+
+async function loadGastosList(g, box, coordId, paneRef){
   const qs = await getDocs(
     query(collection(db,'coordinadores', coordId, 'gastos'), orderBy('createdAt','desc'))
   );
@@ -5085,20 +5104,18 @@ async function loadGastosList(g, box, coordId){
   // Render tabla
   box.innerHTML = '<h4>GASTOS DEL GRUPO</h4>';
   const table = document.createElement('table');
-  table.className = 'table gastos';
-  ensureGastosCompactCSS();
+  table.className = 'table gastos';   // si ya estaba, déjalo igual
+  ensureGastosCompactCSS?.();
+  
   table.innerHTML = `
     <thead>
       <tr>
-        <th>ASUNTO</th>
-        <th>AUTOR</th>
-        <th>MONEDA</th>
-        <th>VALOR</th>
-        <th>ESTADO</th>
+        <th>ASUNTO</th><th>AUTOR</th><th>MONEDA</th><th>VALOR</th>
+        ${state.is ? '<th>ESTADO</th>' : ''}
         <th>COMPROBANTE</th>
       </tr>
     </thead>
-    <tbody></tbody>
+    <tbody></tbody>`;
   `;
   const tb = table.querySelector('tbody');
 
@@ -5134,6 +5151,7 @@ async function loadGastosList(g, box, coordId){
         <option value="RECHAZADO">RECHAZADO</option>
       `;
       sel.value = x.estado || 'PENDIENTE';
+  
       sel.onchange = async () => {
         const nuevo = sel.value;
         try {
@@ -5143,12 +5161,16 @@ async function loadGastosList(g, box, coordId){
           );
           x.estado = nuevo;
           showFlash('ESTADO ACTUALIZADO', 'ok');
+      
+          // ← REFRESCA TOTALES/REGLAS DE CIERRE
+          if (paneRef) await renderFinanzas(g, paneRef);
         } catch (e) {
           console.error(e);
           showFlash('NO SE PUDO ACTUALIZAR EL ESTADO', 'err');
           sel.value = x.estado || 'PENDIENTE'; // revertir UI
         }
       };
+
       tdEst.appendChild(sel);
     } else {
       tdEst.textContent = x.estado || 'PENDIENTE';
