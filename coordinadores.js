@@ -235,7 +235,6 @@ const _timeVal = (hhmm) => {
   return (+m[1])*60 + (+m[2]);
 };
 
-// --- TRANSPORTE
 // --- TRANSPORTE (mejorado)
 async function loadVuelosInfo(grupo){
   try{
@@ -2295,73 +2294,6 @@ function normalizeVuelo(v){
     tramos,
     reservaEstado, reservaFechaLimite
   };
-}
-
-/* ====== VUELOS (BÚSQUEDA ROBUSTA POR DOCID Y NUM NEGOCIO) ====== */
-async function loadVuelosInfo(g){
-  const docId = String(g.id || '').trim();
-  const num   = String(g.numeroNegocio || '').trim();
-
-  const cacheKey = `vuelos:${docId || num}`;
-  if (state.cache.vuelos.has(cacheKey)) return state.cache.vuelos.get(cacheKey);
-
-  let found = [];
-
-  // 1) Esquema: campo grupoIds = array de docIds
-  try {
-    if (docId) {
-      const qs1 = await getDocs(query(collection(db,'vuelos'), where('grupoIds','array-contains', docId)));
-      qs1.forEach(d => found.push({ id:d.id, ...(d.data()||{}) }));
-    }
-  } catch (_) {}
-
-  // 2) Legacy: grupoIds = array de numeros de negocio
-  try {
-    if (!found.length && num) {
-      const qs2 = await getDocs(query(collection(db,'vuelos'), where('grupoIds','array-contains', num)));
-      qs2.forEach(d => found.push({ id:d.id, ...(d.data()||{}) }));
-    }
-  } catch (_) {}
-
-  // 3) Generalista: recorrer y chequear patrones frecuentes
-  if (!found.length) {
-    const ss = await getDocs(collection(db,'vuelos'));
-    ss.forEach(d => {
-      const v = d.data() || {};
-      let match = false;
-
-      // a) v.grupos: array de strings (docId o número)
-      if (!match && Array.isArray(v.grupos)) {
-        match = v.grupos.some(x => {
-          if (typeof x === 'string') {
-            return (docId && x === docId) || (num && x === num);
-          }
-          if (x && typeof x === 'object') {
-            // b) v.grupos: array de objetos { id?, numeroNegocio?, grupoId? }
-            const xid  = String(x.id || x.grupoId || '').trim();
-            const xnum = String(x.numeroNegocio || x.numNegocio || '').trim();
-            return (docId && xid && xid === docId) || (num && xnum && xnum === num);
-          }
-          return false;
-        });
-      }
-
-      // c) campos sueltos: grupoId / grupoNumero en raíz
-      if (!match) {
-        const rootId  = String(v.grupoId || '').trim();
-        const rootNum = String(v.grupoNumero || v.numeroNegocio || '').trim();
-        match = (docId && rootId && rootId === docId) || (num && rootNum && rootNum === num);
-      }
-
-      if (match) found.push({ id:d.id, ...v });
-    });
-  }
-
-  // Ordena por fecha de ida
-  found.sort((a,b) => (toISO(a.fechaIda) || '').localeCompare(toISO(b.fechaIda) || ''));
-
-  state.cache.vuelos.set(cacheKey, found);
-  return found;
 }
 
 /* ====== ITINERARIO + BITÁCORA + VOUCHERS ====== */
@@ -4664,16 +4596,6 @@ async function sumCLPByMoneda(montos, tasasOpt){
   const BRL = toCLP(montos.BRL, 'BRL'); // BRL→CLP vía USD
   const ARS = toCLP(montos.ARS, 'ARS'); // ARS→CLP vía USD
   return { CLP, USD, BRL, ARS, CLPconv: CLP + USD + BRL + ARS };
-}
-
-// -------- ABONOS CRUD  (grupos/{gid}/finanzas_abonos) ----------
-async function loadAbonos(gid){
-  // ojo: aquí debe usarse gid (parámetro), no g.id
-  const qs = await getDocs(collection(db,'grupos', gid, 'finanzas_abonos'));
-  const list = [];
-  qs.forEach(d => list.push({ id:d.id, ...(d.data()||{}) }));
-  list.sort((a,b)=> String(b.fecha||'').localeCompare(String(a.fecha||'')));
-  return list;
 }
 
 async function saveAbono(gid, abono){
