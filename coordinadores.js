@@ -984,17 +984,6 @@ if (typeof window !== 'undefined') {
 // ===== Helpers financieros por moneda (sin conversión) =====
 function _safeNum(x){ const n = Number(x||0); return isFinite(n) ? n : 0; }
 
-// Agrupa una lista de items (con .moneda y .valor) a totales por moneda.
-// Espera formatos: { moneda:'CLP'|'USD'|'BRL'|'ARS', valor:Number }
-function totalesPorMoneda(items){
-  const acc = { CLP:0, USD:0, BRL:0, ARS:0 };
-  for (const it of (items||[])) {
-    const m = String(it.moneda||'CLP').toUpperCase();
-    if (m in acc) acc[m] += _safeNum(it.valor);
-  }
-  return acc;
-}
-
 // Días inclusivos (ej: 1–5 = 5 días). Acepta 'YYYY-MM-DD' o Date.
 function daysBetweenInclusive(a,b){
   const toD = (v)=> (v instanceof Date) ? v : new Date(String(v));
@@ -4612,36 +4601,6 @@ async function loadGastosAprobados(grupoId){
   }catch(e){
     console.error('[loadGastosAprobados]', e);
     return [];
-  }
-}
-
-async function existsGastoPendiente(grupoId){
-  try{
-    const isStaff = !!state.is;
-    const viewAll = isStaff && state.viewingCoordId === '__ALL__';
-    if (viewAll){
-      const qs = await getDocs(query(
-        collectionGroup(db,'gastos'),
-        where('grupoId','==', grupoId),
-        where('estado','==','PENDIENTE'),
-        limit(1)
-      ));
-      return qs.size > 0;
-    } else {
-      const coordId = (typeof getActiveCoordIdForGastos==='function')
-        ? getActiveCoordIdForGastos()
-        : (state.viewingCoordId || state.user.uid);
-      const qs = await getDocs(query(
-        collection(db,'coordinadores', coordId, 'gastos'),
-        where('grupoId','==', grupoId),
-        where('estado','==','PENDIENTE'),
-        limit(1)
-      ));
-      return qs.size > 0;
-    }
-  }catch(e){
-    console.error('[existsGastoPendiente]', e);
-    return false;
   }
 }
 
