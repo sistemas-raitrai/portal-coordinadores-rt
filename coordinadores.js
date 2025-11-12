@@ -4881,8 +4881,20 @@ async function renderFinanzas(g, pane){
     if (!sinPendientes) hints.push('• HAY GASTOS PENDIENTES: DEBEN SER APROBADOS O RECHAZADOS.');
     if (!brlOk) hints.push('• BRL DEBE QUEDAR EN 0.');
     if (!arsOk) hints.push('• ARS DEBE QUEDAR EN 0.');
-    if (needTransfCLP && !okTransf) hints.push('• SOBRA CLP: MARCA “TRANSFERENCIA REALIZADA (CLP)” Y SUBE COMPROBANTE.');
-    if (needCashUSD   && !okCash)   hints.push('• SOBRA USD: MARCA “EFECTIVO DEVUELTO (USD)” Y SUBE CONSTANCIA.');
+    // Mostrar SALDO por moneda (monto a devolver a la empresa) con instrucciones si falta marcar/cargar
+    const saldoEmpresaCLP = needTransfCLP ? Math.max(0, Number(saldos.CLP||0)) : 0;
+    const saldoEmpresaUSD = needCashUSD   ? Math.max(0, Number(saldos.USD||0)) : 0;
+    
+    if (needTransfCLP){
+      // Mostramos siempre el saldo CLP a devolver; si aún no está ok, agregamos la instrucción
+      hints.push(`• SALDO CLP A DEVOLVER: CLP ${fmtCL(saldoEmpresaCLP)}${okTransf ? '' : ' — marca “TRANSFERENCIA REALIZADA (CLP)” y sube comprobante.'}`);
+    }
+    
+    if (needCashUSD){
+      // Mostramos siempre el saldo USD a devolver; si aún no está ok, agregamos la instrucción
+      hints.push(`• SALDO USD A DEVOLVER: USD ${fmtCL(saldoEmpresaUSD)}${okCash ? '' : ' — marca “EFECTIVO DEVUELTO (USD)” y sube constancia.'}`);
+    }
+
   
     const h = cierre.querySelector('#finHints');
     h.innerHTML = hints.length ? `<div class="muted">${hints.join('<br>')}</div>` : '<div class="muted">TODO LISTO PARA CERRAR.</div>';
