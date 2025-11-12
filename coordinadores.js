@@ -4682,8 +4682,6 @@ async function renderFinanzas(g, pane){
   
   // 4) ¿Quedan gastos PENDIENTES? (bloquea cierre)
   const hayPendientes = await existsGastoPendiente(g.id);
-
-
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML=''; pane.appendChild(wrap);
 
   // RESUMEN
