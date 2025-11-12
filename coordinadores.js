@@ -4640,14 +4640,6 @@ async function renderFinanzas(g, pane){
   const totAb = totalesPorMoneda(abonos);       // {CLP,USD,BRL,ARS}
   const totGa = totalesPorMoneda(gastosAprob);  // {CLP,USD,BRL,ARS}
   
-  // 3) Saldos por moneda (aprobados)
-  const saldos = {
-    CLP: (totAb.CLP||0) - (totGa.CLP||0),
-    USD: (totAb.USD||0) - (totGa.USD||0),
-    BRL: (totAb.BRL||0) - (totGa.BRL||0),
-    ARS: (totAb.ARS||0) - (totGa.ARS||0),
-  };
-  
   // 4) ¿Quedan gastos PENDIENTES? (bloquea cierre)
   const hayPendientes = await existsGastoPendiente(g.id);
 
