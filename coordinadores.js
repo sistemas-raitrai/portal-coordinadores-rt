@@ -145,447 +145,131 @@ const timeIdNowMs = () => {
 };
 
 /* ====== IMPRESIÓN: HOJA OCULTA EN ESTA MISMA PÁGINA ====== */
-/* ===== PRINT: root + estilos ===== */
 function ensurePrintDOM(){
-  // Root único
-  let root = document.getElementById('printRoot');
-  if (!root){
-    root = document.createElement('div');
-    root.id = 'printRoot';
-    // Por pantalla, oculto; en print se muestra con CSS
-    root.style.display = 'none';
-    root.innerHTML = `
-      <div id="printHeader">
-        <img id="printLogo" src="Logo Raitrai.png" alt="Rai Trai" />
-      </div>
-      <div id="printContent"></div>
-    `;
-    document.body.appendChild(root);
-  }
+  if (document.getElementById('printSheet')) return;
 
-  // Estilos únicos
-  if (!document.getElementById('printStyles')){
-    const css = document.createElement('style');
-    css.id = 'printStyles';
-    css.textContent = `
-      #printRoot { padding: 24px 28px; font-family: Arial, Helvetica, sans-serif; color:#111; }
-      #printHeader { position: relative; min-height: 40px; margin-bottom: 8px; }
-      #printLogo { position: fixed; top: 18px; right: 22px; width: 120px; height: auto; }
-
-      #printContent h2{ margin: 0 0 .25rem 0; font-size: 22px; }
-      #printContent h3{ margin: .9rem 0 .3rem 0; font-size: 16px; }
-      #printContent h4{ margin: .6rem 0 .2rem 0; font-size: 14px; }
-      #printContent .meta{ font-size: 12px; line-height: 1.35; margin: .12rem 0; }
-      #printContent .muted{ color:#555; font-size:12px; }
-      #printContent .card{ border:1px solid #ddd; border-radius:8px; padding:.45rem .6rem; margin:.35rem 0; }
-
-      /* Pantalla: oculto el root de impresión */
-      @media screen {
-        #printRoot { display: none; }
-      }
-      /* Print: muestro solo el root y oculto el resto para evitar "blancos" */
-      @media print {
-        body * { visibility: hidden !important; }
-        #printRoot, #printRoot * { visibility: visible !important; }
-        #printRoot { display: block !important; position: absolute; left:0; top:0; width: 100%; }
-      }
-    `;
-    document.head.appendChild(css);
-  }
-}
-
-/* ===== PRINT: volcar contenido ===== */
-function fillPrintDOM(html){
-  const host = document.getElementById('printContent') || (()=> {
-    ensurePrintDOM();
-    return document.getElementById('printContent');
-  })();
-  host.innerHTML = String(html || '');
-}
-
-// Fijar color de texto en impresión (negro) y respetar colores
-if (!document.getElementById('printStylesFix')){
   const css = document.createElement('style');
-  css.id = 'printStylesFix';
-  css.textContent = `
-    @media print {
-      #printRoot, #printRoot * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        color: #000 !important;
-      }
-    }
-  `;
+  css.id = 'printStyles';
+   css.textContent = `
+     /* PANTALLA: hoja oculta */
+     #printSheet { display:none; }
+   
+     /* IMPRESIÓN */
+     @media print {
+       @page { size: A4; margin: 20mm; }
+   
+       /* Muestra sólo la hoja de impresión; ocultamos la app por display, no por visibility */
+       #printSheet { display:block !important; }
+       .wrap, #alertsPanel, #navPanel, #statsPanel, #gruposPanel, #modalBack { display:none !important; }
+   
+       /* Encabezado y pie (fijos) */
+       #printSheet .print-head {
+         position: fixed; top: 10mm; left: 0; right: 0;
+         display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 8px;
+         font-family: Calibri, Arial, sans-serif; font-size: 11px; color:#444;
+       }
+       #printSheet .ph-left { text-transform: uppercase; }
+       #printSheet .ph-left strong { font-size: 12px; }
+       #printSheet .ph-right img { height: 36px; object-fit: contain; }
+   
+       #printSheet .print-foot {
+         position: fixed; bottom: 10mm; left: 0; right: 0;
+         text-align: center; font-family: Calibri, Arial, sans-serif; font-size: 10px; color:#666;
+       }
+       #printSheet .page-num::after { content: counter(page) " / " counter(pages); }
+   
+       /* Cuerpo */
+       #printSheet .print-doc {
+         white-space: pre-wrap;
+         text-transform: uppercase;
+         font-family: Calibri, Arial, sans-serif;
+         font-size: 12px; line-height: 1.25;
+         margin-top: 22mm;     /* despeje header */
+         margin-bottom: 16mm;  /* despeje footer */
+         color: #0a0a0a;
+       }
+       /* ====== ESTILOS DE TIPOGRAFÍA PARA EL CUERPO ====== */
+      #printSheet .print-doc .h1 { font-size: 16px; font-weight: 700; letter-spacing:.3px; }
+      #printSheet .print-doc .h2 { font-size: 14px; font-weight: 700; margin-top: 8px; }
+      #printSheet .print-doc .b  { font-weight: 700; }
+      #printSheet .print-doc .big{ font-size: 14px; }
+      #printSheet .print-doc .muted { color:#666; }
+      #printSheet .print-doc .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+     }
+   `;
   document.head.appendChild(css);
-}
 
-// ====== LOADERS PARA IMPRESIÓN (TRANSPORTE, HOTELES, SERVICIOS, VOUCHERS, ABONOS) ======
+  const sheet = document.createElement('div');
+  sheet.id = 'printSheet';
+  sheet.innerHTML = `
+    <div class="print-head">
+      <div class="ph-left">
+        <div><strong>DESPACHO DE VIAJE</strong></div>
+        <div id="ph-grupo"></div>
+        <div id="ph-meta1"></div>
+        <div id="ph-meta2"></div>
+        <div id="ph-fechas"></div>
+        <div id="ph-pax"></div>
+      </div>
+      <div class="ph-right">
+        <img src="RaitraiLogo.png" alt="RAITRAI"/>
+      </div>
+    </div>
 
-// normalizadores locales
-const _norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
-const _safeLower = s => String(s||'').toLowerCase();
-const _dmy = v => {
-  if (!v) return '';
-  const d = (v instanceof Date) ? v : new Date(v);
-  return isNaN(d) ? String(v) : d.toLocaleDateString('es-CL').toUpperCase();
-};
-const _timeVal = (hhmm) => {
-  const m = String(hhmm||'').match(/^(\d{1,2}):(\d{2})$/);
-  if (!m) return 99_999;
-  return (+m[1])*60 + (+m[2]);
-};
+    <pre id="print-block" class="print-doc"></pre>
 
-// --- TRANSPORTE (mejorado)
-async function loadVuelosInfo(grupo){
-  try{
-    const gid = grupo.id || grupo.grupoId || grupo.code || '';
-    if (!gid) return [];
-
-    const base = collection(db,'vuelos');
-    const fields = ['groupIds','grupos','idsGrupos'];
-
-    // 1) Buscar por array-contains en campos conocidos
-    let found = [];
-    for (const field of fields){
-      try{
-        const qs = await getDocs(query(base, where(field,'array-contains', gid)));
-        qs.forEach(d => found.push({ id:d.id, ...d.data(), _ref:d.ref }));
-        if (found.length) break;
-      }catch{}
-    }
-
-    // 2) Fallback: escaneo acotado + filtro client-side
-    if (!found.length){
-      const qs = await getDocs(query(base, limit(200)));
-      qs.forEach(d => {
-        const x = d.data()||{};
-        const arr = x.groupIds || x.grupos || x.idsGrupos || [];
-        if (Array.isArray(arr) && arr.includes(gid)){
-          found.push({ id:d.id, ...x, _ref:d.ref });
-        }
-      });
-    }
-
-    // Helper para normalizar HH:mm → minutos (para ordenar)
-    const toMin = (hhmm)=>{
-      const m = String(hhmm||'').match(/^(\d{1,2}):(\d{2})$/);
-      if (!m) return 9e6;
-      return (+m[1])*60 + (+m[2]);
-    };
-
-    // 3) Aplanar tramos si existen
-    const out = [];
-    for (const v of found){
-      let tramos = [];
-
-      // Subcolección 'tramos' ordenada por 'orden'
-      try{
-        const tSnap = await getDocs(query(collection(v._ref,'tramos'), orderBy('orden','asc')));
-        tSnap.forEach(t => tramos.push({ id:t.id, ...t.data() }));
-      }catch{}
-
-      // Sin subcolección → usar el doc como un tramo único
-      if (!tramos.length) tramos.push(v);
-
-      // Mapear a forma estándar
-      tramos.forEach(t => {
-        const tipoBase = (t.tipo || v.tipo || '').toString().toUpperCase();
-        const isAereo  = /A(E|É)REO/.test(tipoBase) || /VUELO/.test(tipoBase);
-        const isBus    = /BUS|TERRESTRE/.test(tipoBase);
-
-        const codigo   = String(t.codigo || t.numero || v.codigo || v.numero || '').toUpperCase();
-
-        // Horas “ida/vuelta” si las hay; si no, usar campos genéricos
-        const salida   = t.salida || t.presentacionIdaHora || t.idaHora || t.vueloIdaHora || '';
-        const llegada  = t.llegada || t.presentacionVueltaHora || t.vueltaHora || t.vueloVueltaHora || '';
-
-        out.push({
-          tipo:  isAereo ? 'AÉREO' : (isBus ? 'BUS' : (tipoBase || 'TRANSPORTE')),
-          codigo,
-          salida,
-          llegada,
-          obs:    t.obs || v.obs || ''
-        });
-      });
-    }
-
-    // 4) Ordenar por hora de salida (si está en HH:mm)
-    out.sort((a,b)=> toMin(a.salida) - toMin(b.salida));
-
-    return out;
-  }catch(e){
-    console.error('[print] loadVuelosInfo', e);
-    return [];
-  }
-}
-
-
-// --- HOTELES (todas las asignaciones del viaje)
-async function loadHotelAssignmentsForGroup(grupo){
-  const gid = grupo.id || grupo.grupoId || grupo.code || '';
-  if (!gid) return [];
-
-  const asigs = [];
-
-  // Ruta A: raíz 'hotelAssignments' con groupId
-  try{
-    const qs = await getDocs(query(collection(db,'hotelAssignments'), where('groupId','==', gid)));
-    qs.forEach(d => asigs.push({ id:d.id, ...d.data() }));
-  }catch{}
-
-  // Ruta B: subcolección en grupo
-  if (!asigs.length){
-    try{
-      const qs = await getDocs(collection(db,'grupos', gid, 'hotelAssignments'));
-      qs.forEach(d => asigs.push({ id:d.id, ...d.data() }));
-    }catch{}
-  }
-
-  // Normalizar campos esperados por impresión
-  return asigs.map(x => ({
-    nombre:   x.nombreHotel || x.hotelNombre || x.nombre || '',
-    ciudad:   x.ciudad || x.destino || '',
-    in:       x.checkIn || x.checkin || x.in || x.fechaIn || x.fechaEntrada || '',
-    out:      x.checkOut || x.checkout || x.out || x.fechaOut || x.fechaSalida || '',
-    contacto: x.contacto || '',
-    telefono: x.telefono || x.fono || '',
-    email:    x.email || x.correo || ''
-  }));
-}
-
-
-// --- SERVICIO + PROVEEDOR (por actividad)
-async function resolveServicioYProveedor(destinoRaw, actividadRaw, servicioId){
-  const destino = String(destinoRaw||'').toUpperCase();
-  const actKey  = _norm(actividadRaw||'');
-  let servicio  = null;
-
-  try{
-    if (servicioId){
-      const docRef = doc(db, 'Servicios', destino, 'Listado', servicioId);
-      const d = await getDoc(docRef);
-      if (d.exists()) servicio = { id:d.id, ...d.data() };
-    }
-    if (!servicio){
-      // scan limitado y match por nombre normalizado
-      const snap = await getDocs(query(collection(db,'Servicios',destino,'Listado'), limit(200)));
-      const rows = [];
-      snap.forEach(s => rows.push({ id:s.id, ...s.data() }));
-      servicio = rows.find(s => _norm(s.servicio || s.nombre) === actKey) || null;
-    }
-  }catch{}
-
-  let proveedor = null;
-  try{
-    const nombreProv = servicio?.proveedor || servicio?.provider || '';
-    if (nombreProv){
-      const snap = await getDocs(query(collection(db,'Proveedores',destino,'Listado'), limit(200)));
-      const rows = []; snap.forEach(p => rows.push({ id:p.id, ...p.data() }));
-      proveedor = rows.find(p => _norm(p.proveedor || p.nombre) === _norm(nombreProv)) || null;
-    }
-  }catch{}
-
-  return { servicio, proveedor };
-}
-
-// --- VOUCHERS (si existe colección o flag en servicio)
-async function loadVouchersForGroup(grupo){
-  const gid = grupo.id || grupo.grupoId || grupo.code || '';
-  const set = new Set();
-  if (!gid) return set;
-
-  // a) colección vouchers/{gid}/items
-  try{
-    const qs = await getDocs(collection(db,'vouchers', gid, 'items'));
-    qs.forEach(d => {
-      const x = d.data()||{};
-      // guardamos por servicioId y por nombre normalizado para doble match
-      if (x.servicioId) set.add('S:'+x.servicioId);
-      if (x.actividad)  set.add('A:'+_norm(x.actividad));
-    });
-  }catch{}
-
-  // b) confirmaciones/{gid}/items (opcional)
-  try{
-    const qs = await getDocs(collection(db,'confirmaciones', gid, 'items'));
-    qs.forEach(d => {
-      const x = d.data()||{};
-      if (x.servicioId) set.add('S:'+x.servicioId);
-      if (x.actividad)  set.add('A:'+_norm(x.actividad));
-    });
-  }catch{}
-
-  return set;
-}
-
-// --- ABONOS (ítems + totales por moneda)
-async function loadAbonos(grupo){
-  const gid = grupo.id || grupo.grupoId || grupo.code || '';
-  const items = [];
-  if (!gid) return { items:[], totals: new Map() };
-
-  // camino principal
-  let snap = null;
-  try{
-    snap = await getDocs(collection(db,'finanzas_abonos', gid, 'items'));
-  }catch{}
-  // fallback alternativo
-  if (!snap || !snap.size){
-    try{ snap = await getDocs(collection(db,'finanzas', gid, 'abonos')); }catch{}
-  }
-  if (snap && snap.size){
-    snap.forEach(d => {
-      const x = d.data()||{};
-      items.push({
-        moneda: String(x.moneda||'CLP').toUpperCase(),
-        monto:  Number(x.monto||0),
-        detalle:String(x.detalle||'').toUpperCase(),
-        ts:     x.ts?.seconds ? new Date(x.ts.seconds*1000) : null
-      });
-    });
-  }
-
-  // totales por moneda
-  const totals = new Map();
-  for (const it of items){
-    totals.set(it.moneda, (totals.get(it.moneda)||0) + (it.monto||0));
-  }
-  return { items, totals };
+    <div class="print-foot">
+      <span class="page-num"></span>
+    </div>
+  `;
+  document.body.appendChild(sheet);
 }
 
 async function preparePrintForGroup(g){
-  // helpers locales de formato
-  const norm = s => String(s||'').toUpperCase();
-  const dmy  = v => _dmy(v);
-  const timeVal = _timeVal;
+  ensurePrintDOM();
+  const $doc   = document.getElementById('print-block');
+  const $grp   = document.getElementById('ph-grupo');
+  const $m1    = document.getElementById('ph-meta1');
+  const $m2    = document.getElementById('ph-meta2');
+  const $fech  = document.getElementById('ph-fechas');
+  const $pax   = document.getElementById('ph-pax');
 
-  // ===== CABECERA GRUPO
-  const headHtml = (() => {
-    const nombre  = norm(g.nombreGrupo || g.nombre || 'GRUPO');
-    const destino = norm(g.destino || '');
-    const pax     = Number(g.pax || g.cantidadgrupo || 0);
-    const f1 = dmy(g.fechaInicio || g.inicio || g.fechaDeViaje);
-    const f2 = dmy(g.fechaFin    || g.termino);
-    return `
-      <h2 style="margin:0 0 .25rem 0">${nombre} (${(g.anoViaje||g.year||'').toString().toUpperCase()||''})</h2>
-      <div class="meta">DESTINO: ${destino} · FECHAS: ${f1}${f2?(' — '+f2):''} · PAX: ${pax.toLocaleString('es-CL')}</div>
-    `;
-  })();
+  const nombre = (g.nombreGrupo||g.aliasGrupo||g.id)||'';
+  const code   = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
+  const rango  = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
+  const destino= (g.destino||'').toString().toUpperCase();
+  const programa=(g.programa||'').toString().toUpperCase();
 
-  // ===== TRANSPORTE
-  let transpHtml = '<h3>TRANSPORTE</h3>';
-  try{
-    const vv = await loadVuelosInfo(g);
-    if (Array.isArray(vv) && vv.length){
-      transpHtml += vv.map(v => {
-        const sl = v.salida ? ` · ${v.salida}`  : '';
-        const ll = v.llegada? ` → ${v.llegada}` : '';
-        const ob = v.obs    ? ` · ${norm(v.obs)}`: '';
-        return `<div class="meta">• ${v.tipo}${v.codigo?(' '+v.codigo):''}${sl}${ll}${ob}</div>`;
-      }).join('');
-    }else{
-      transpHtml += `<div class="muted">SIN REGISTROS.</div>`;
+  $grp.textContent  = `GRUPO: ${nombre.toUpperCase()} (${code})`;
+  $m1.textContent   = `DESTINO: ${destino}`;
+  $m2.textContent   = `PROGRAMA: ${programa || '—'}`;
+  $fech.textContent = `FECHAS: ${rango}`;
+  const real  = paxRealOf(g);
+  const plan  = paxOf(g);
+  $pax.innerHTML    = `PAX: ${real && real!==plan ? `${plan} → ${real}` : plan}`;
+
+  // Cuerpo simple: fechas + actividades ordenadas por hora
+  let body = '';
+  const fechas = rangoFechas(g.fechaInicio,g.fechaFin);
+  for (const f of fechas){
+    const actsRaw = (g.itinerario && g.itinerario[f]) ? g.itinerario[f] : [];
+    const acts = (Array.isArray(actsRaw) ? actsRaw : Object.values(actsRaw||{}))
+      .filter(a => a && typeof a==='object')
+      // Ocultar "Desayuno Hotel" en impresión simple
+      .filter(a => String(a?.actividad || '').toUpperCase() !== 'DESAYUNO HOTEL')
+      .sort((a,b)=> timeVal(a?.horaInicio)-timeVal(b?.horaInicio));
+    body += `\n\n# ${dmy(f)}\n`;
+    if (!acts.length){ body += '— SIN ACTIVIDADES —\n'; continue; }
+    for (const a of acts){
+      const hIni = (a.horaInicio||'') ? ` ${a.horaInicio}` : '';
+      const hFin = (a.horaFin||'')    ? ` — ${a.horaFin}`  : '';
+      const prov = (a.proveedor||'')  ? ` · PROV: ${a.proveedor.toString().toUpperCase()}` : '';
+      body += `• ${(a.actividad||'').toString().toUpperCase()}${hIni}${hFin}${prov}\n`;
     }
-  }catch{ transpHtml += `<div class="muted">SIN REGISTROS.</div>`; }
-
-  // ===== HOTELES (todas las asignaciones)
-  let hotelHtml = '<h3>HOTELES</h3>';
-  try{
-    const blocks = await loadHotelAssignmentsForGroup(g);
-    if (blocks.length){
-      hotelHtml += blocks.map(h => `
-        <div class="card">
-          <div class="meta"><strong>${norm(h.nombre||'HOTEL')}</strong> ${h.ciudad?(' · '+norm(h.ciudad)) : ''}</div>
-          <div class="meta">CHECK-IN: ${dmy(h.in)} · CHECK-OUT: ${dmy(h.out)}</div>
-          ${h.direccion ? `<div class="meta">${norm(h.direccion)}</div>` : ''}
-          ${(h.contacto||h.telefono||h.email) ? 
-            `<div class="meta">CONTACTO: ${norm(h.contacto||'')}${h.telefono?(' · '+norm(h.telefono)) : ''}${h.email?(' · '+_safeLower(h.email)) : ''}</div>` 
-            : ''
-          }
-        </div>
-      `).join('');
-    }else{
-      hotelHtml += `<div class="muted">SIN ASIGNACIONES.</div>`;
-    }
-  }catch{ hotelHtml += `<div class="muted">SIN ASIGNACIONES.</div>`; }
-
-  // ===== VOUCHERS SET (si existe)
-  const vouchersSet = await loadVouchersForGroup(g);
-
-  // ===== ITINERARIO (oculta DESAYUNO HOTEL) + contactos proveedor + VOUCHER
-  async function renderItin(){
-    const byDate = g.itinerario || {};
-    const fechas = Object.keys(byDate).sort();
-    if (!fechas.length) return '<h3>ITINERARIO</h3><div class="muted">SIN ITINERARIO.</div>';
-
-    let html = `<h3>ITINERARIO</h3>`;
-    for (const f of fechas){
-      let acts = byDate[f];
-      if (!Array.isArray(acts)) acts = Object.values(acts||{}).filter(x=>x && typeof x==='object');
-      // ocultar "Desayuno Hotel"
-      acts = acts.filter(a => norm(a.actividad) !== 'DESAYUNO HOTEL');
-      // ordenar por hora
-      acts.sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
-      if (!acts.length) continue;
-
-      html += `<h4>${dmy(f)}</h4>`;
-
-      for (const a of acts){
-        const actName = norm(a.actividad || '');
-        const horaL   = a.horaInicio ? ` · ${a.horaInicio}${a.horaFin?('—'+a.horaFin):''}` : '';
-
-        // resolver servicio+proveedor
-        let provLine = '';
-        try{
-          const { servicio, proveedor } = await resolveServicioYProveedor(g.destino || a.destino, a.actividad, a.servicioId);
-          const markVoucher = (servicio?.requiereVoucher ? true : false)
-            || (servicio?.id && vouchersSet.has('S:'+servicio.id))
-            || vouchersSet.has('A:'+_norm(a.actividad));
-
-          const nombreProv = proveedor?.proveedor || servicio?.proveedor || '';
-          const dir        = proveedor?.direccion || '';
-          const contacto   = proveedor?.contacto || '';
-          const tel        = proveedor?.telefono || proveedor?.fono || '';
-          provLine = [
-            nombreProv ? norm(nombreProv) : '',
-            dir ? norm(dir) : '',
-            (contacto || tel) ? `CONTACTO: ${norm(contacto||'')}${tel?(' · '+norm(tel)) : ''}` : '',
-            markVoucher ? 'VOUCHER' : ''
-          ].filter(Boolean).map(t => `<div class="meta">${t}</div>`).join('');
-        }catch{}
-
-        html += `<div class="meta">• ${actName}${horaL}</div>${provLine}`;
-      }
-    }
-    return html;
   }
-  const itiHtml = await renderItin();
-
-  // ===== FINANZAS — ABONOS
-  let finHtml = `<h3>FINANZAS — ABONOS</h3>`;
-  try{
-    const { items, totals } = await loadAbonos(g);
-    if (items.length){
-      finHtml += `<div class="card">` + items
-        .sort((a,b)=> (a.moneda<b.moneda)?-1:(a.moneda>b.moneda)?1: (a.ts?.getTime()||0)-(b.ts?.getTime()||0))
-        .map(r=>{
-          const fx = r.ts ? r.ts.toLocaleDateString('es-CL').toUpperCase() : '';
-          return `<div class="meta">• ${r.moneda} ${r.monto.toLocaleString('es-CL')}${r.detalle?(' — '+r.detalle):''}${fx?(' · '+fx):''}</div>`;
-        }).join('') + `</div>`;
-
-      if (totals && totals.size){
-        finHtml += `<div class="meta" style="margin-top:.25rem"><strong>TOTALES:</strong> ${
-          Array.from(totals.entries()).map(([m,sum])=> `${m} ${Number(sum||0).toLocaleString('es-CL')}`).join(' · ')
-        }</div>`;
-      }
-    } else {
-      finHtml += `<div class="muted">SIN ABONOS REGISTRADOS.</div>`;
-    }
-  }catch{ finHtml += `<div class="muted">SIN ABONOS.</div>`; }
-
-  // retorno final
-  return `${headHtml}${transpHtml}${hotelHtml}${itiHtml}${finHtml}`;
+  $doc.textContent = body.trim();
 }
+
 
 /* ====== HISTORIAL VIAJE (utils) ====== */
 const HIST_ACTKEY = '_viaje_'; // o 'viaje_hist', cualquier cosa que NO sea __...__
@@ -1155,40 +839,11 @@ onAuthStateChanged(auth, async (user) => {
   }
 
    // BOTONES SOLO PARA STAFF (en NAV solo queda imprimir; crear alerta va en Alertas)
-   // BOTÓN IMPRIMIR DESPACHO (solo STAFF)
    const btnPrint = document.getElementById('btnPrintVch');
    if (btnPrint){
      btnPrint.style.display = state.is ? '' : 'none';
-     if (state.is){
-       btnPrint.textContent = 'IMPRIMIR DESPACHO';
-       btnPrint.onclick = async () => {
-         try{
-           // 1) asegurar DOM de impresión
-           ensurePrintDOM();
-  
-           // 2) resolver grupo activo (usa tu variable real si ya la tienes)
-           const g =
-             window._grupoActual ||
-             state._currentGroup ||
-             state.grupoActual ||
-             (Array.isArray(state.grupos) ? state.grupos[0] : null);
-  
-           if (!g){ showFlash('NO HAY GRUPO ACTIVO PARA IMPRIMIR', 'warn'); return; }
-  
-           // 3) construir HTML (usa la versión que te pasé antes)
-           const html = await preparePrintForGroup(g);
-   
-           // 4) volcar y disparar print
-           fillPrintDOM(html);
-           window.print();
-         }catch(e){
-           console.error(e);
-           showFlash('NO SE PUDO IMPRIMIR EL DESPACHO', 'err');
-         }
-       };
-     }
+     if (state.is) btnPrint.textContent = 'IMPRIMIR DESPACHO';
    }
-
    const legacyNewAlert = document.getElementById('btnNewAlert');
    if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
@@ -2294,6 +1949,73 @@ function normalizeVuelo(v){
     tramos,
     reservaEstado, reservaFechaLimite
   };
+}
+
+/* ====== VUELOS (BÚSQUEDA ROBUSTA POR DOCID Y NUM NEGOCIO) ====== */
+async function loadVuelosInfo(g){
+  const docId = String(g.id || '').trim();
+  const num   = String(g.numeroNegocio || '').trim();
+
+  const cacheKey = `vuelos:${docId || num}`;
+  if (state.cache.vuelos.has(cacheKey)) return state.cache.vuelos.get(cacheKey);
+
+  let found = [];
+
+  // 1) Esquema: campo grupoIds = array de docIds
+  try {
+    if (docId) {
+      const qs1 = await getDocs(query(collection(db,'vuelos'), where('grupoIds','array-contains', docId)));
+      qs1.forEach(d => found.push({ id:d.id, ...(d.data()||{}) }));
+    }
+  } catch (_) {}
+
+  // 2) Legacy: grupoIds = array de numeros de negocio
+  try {
+    if (!found.length && num) {
+      const qs2 = await getDocs(query(collection(db,'vuelos'), where('grupoIds','array-contains', num)));
+      qs2.forEach(d => found.push({ id:d.id, ...(d.data()||{}) }));
+    }
+  } catch (_) {}
+
+  // 3) Generalista: recorrer y chequear patrones frecuentes
+  if (!found.length) {
+    const ss = await getDocs(collection(db,'vuelos'));
+    ss.forEach(d => {
+      const v = d.data() || {};
+      let match = false;
+
+      // a) v.grupos: array de strings (docId o número)
+      if (!match && Array.isArray(v.grupos)) {
+        match = v.grupos.some(x => {
+          if (typeof x === 'string') {
+            return (docId && x === docId) || (num && x === num);
+          }
+          if (x && typeof x === 'object') {
+            // b) v.grupos: array de objetos { id?, numeroNegocio?, grupoId? }
+            const xid  = String(x.id || x.grupoId || '').trim();
+            const xnum = String(x.numeroNegocio || x.numNegocio || '').trim();
+            return (docId && xid && xid === docId) || (num && xnum && xnum === num);
+          }
+          return false;
+        });
+      }
+
+      // c) campos sueltos: grupoId / grupoNumero en raíz
+      if (!match) {
+        const rootId  = String(v.grupoId || '').trim();
+        const rootNum = String(v.grupoNumero || v.numeroNegocio || '').trim();
+        match = (docId && rootId && rootId === docId) || (num && rootNum && rootNum === num);
+      }
+
+      if (match) found.push({ id:d.id, ...v });
+    });
+  }
+
+  // Ordena por fecha de ida
+  found.sort((a,b) => (toISO(a.fechaIda) || '').localeCompare(toISO(b.fechaIda) || ''));
+
+  state.cache.vuelos.set(cacheKey, found);
+  return found;
 }
 
 /* ====== ITINERARIO + BITÁCORA + VOUCHERS ====== */
@@ -3526,8 +3248,6 @@ async function collectItinLinesFast(grupo){
   return out;
 }
 
-// === IMPRESIÓN / DESPACHO — versión completa (transporte + hoteles + itin + finanzas) ===
-// === IMPRESIÓN / DESPACHO — versión completa (transporte + hoteles + itin + finanzas) ===
 async function openPrintDespacho(g, w){
   if (!g){
     alert('No hay viaje activo.');
@@ -3536,40 +3256,20 @@ async function openPrintDespacho(g, w){
   console.log('[PRINT] Inicia generación', { grupoId: g.id });
 
   // ==== DATOS BASE ====
-  const code    = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
+  const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
   const paxPlan = paxOf(g);
   const paxReal = paxRealOf(g);
   const { A: A_real, E: E_real } = paxBreakdown(g);
   const fechasTxt = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
-  // 1) Transporte
-  let vuelos = [];
-  try{
-    vuelos = await loadVuelosInfo(g);
-  }catch(e){
-    console.warn('[PRINT] loadVuelosInfo falló:', e);
-    vuelos = [];
-  }
-
-  // 2) Hoteles (usa loader opcional al final de este mensaje)
-  let hotels = [];
-  if (typeof loadHotelAssignmentsForGroup === 'function'){
-    try{
-      hotels = await loadHotelAssignmentsForGroup(g);
-    }catch(e){
-      console.warn('[PRINT] loadHotelAssignmentsForGroup falló:', e);
-      hotels = [];
-    }
-  }
-
-  // 3) Itinerario (líneas con proveedor/contacto; ocultando DESAYUNO HOTEL en tu recolector)
+  // 1) Itinerario (líneas con proveedor/contacto)
   console.time('[PRINT] collectItinLines');
   const itin = await collectItinLines(g).catch((e)=>{ console.error(e); return []; });
   console.timeEnd('[PRINT] collectItinLines');
 
-  // 4) Finanzas: ABONOS (defensivo si faltan helpers externos)
+  // 2) Finanzas: ABONOS (defensivo si faltan helpers externos)
   const haveLoadAbonos = (typeof loadAbonos === 'function');
-  const haveConv       = (typeof convertirMoneda === 'function');
+  const haveConv = (typeof convertirMoneda === 'function');
 
   let abonos = [];
   if (haveLoadAbonos){
@@ -3594,7 +3294,7 @@ async function openPrintDespacho(g, w){
   const abonosRows = [];
   for (const a of (abonos||[])){
     const fecha  = dmy(toISO(a.fecha||''));                 // fecha abono
-    const moneda = (a.moneda||'').toString().toUpperCase(); // CLP/USD/BRL/ARS/ARS...
+    const moneda = (a.moneda||'').toString().toUpperCase(); // CLP/USD/BRL/ARS
     const valor  = Number(a.valor||0);
     const clpEq  = await toCLP(valor, moneda);
     abonosRows.push({ fecha, asunto:(a.asunto||'').toString().toUpperCase(), moneda, valor, clp: clpEq });
@@ -3605,28 +3305,29 @@ async function openPrintDespacho(g, w){
   const css = `
   <style>
     @page { size: A4; margin: 14mm; }
-    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; color: #000 !important; }
-    body { font-family: system-ui, Arial, sans-serif; font-size: 12px; }
+    body { font-family: system-ui, Arial, sans-serif; font-size: 12px; color:#0a0a0a; }
     .head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
     .logo { height: 40px; object-fit:contain; }
     h1 { font-size: 18px; margin: 0 0 6px; }
-    h2 { font-size: 14px; margin: 12px 0 6px; border-bottom:1px solid #000; padding-bottom:4px; }
+    h2 { font-size: 14px; margin: 12px 0 6px; border-bottom:1px solid #ddd; padding-bottom:4px; }
     .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:6px 16px; }
+    .muted { color:#555; }
     table { width:100%; border-collapse:collapse; }
-    th, td { padding:4px 6px; border-bottom:1px solid #000; vertical-align:top; }
-    th { text-align:left; font-size:11px; }
+    th, td { padding:4px 6px; border-bottom:1px solid #eee; vertical-align:top; }
+    th { text-align:left; font-size:11px; color:#444; }
     .t-tight td { padding:3px 4px; }
     .right { text-align:right; }
+    .badge { font-weight:700; }
     .small { font-size:11px; }
     .cut { page-break-inside: avoid; }
-    .muted { opacity:.85; } /* seguirá negro por la regla global */
+    .footer { margin-top:8px; font-size:10px; color:#666; }
   </style>`;
 
   const infoGeneral = `
     <div class="head">
       <div>
         <h1>DESPACHO DE VIAJE</h1>
-        <div class="small">GENERADO: ${new Date().toLocaleString('es-CL').toUpperCase()}</div>
+        <div class="small muted">GENERADO: ${new Date().toLocaleString('es-CL').toUpperCase()}</div>
       </div>
       <img src="RaitraiLogo.png" class="logo" alt="RAITRAI"/>
     </div>
@@ -3641,60 +3342,17 @@ async function openPrintDespacho(g, w){
     </div>
   `;
 
-  // ===== TRANSPORTE =====
-  const transporte = `
-    <h2>TRANSPORTE</h2>
-    ${
-      (vuelos&&vuelos.length)
-        ? `<table class="t-tight">
-             <thead><tr><th>TIPO</th><th>CÓDIGO</th><th>SALIDA</th><th>LLEGADA</th><th>OBS</th></tr></thead>
-             <tbody>${
-               vuelos.map(v => `<tr>
-                 <td>${(v.tipo||'').toString().toUpperCase()}</td>
-                 <td>${(v.codigo||'').toString().toUpperCase()}</td>
-                 <td>${(v.salida||'—')}</td>
-                 <td>${(v.llegada||'—')}</td>
-                 <td>${(v.obs||'').toString().toUpperCase()}</td>
-               </tr>`).join('')
-             }</tbody>
-           </table>`
-        : `<div class="muted">SIN REGISTROS.</div>`
-    }
+  const resumen = `
+    <h2>RESUMEN</h2>
+    <div class="small">VIAJE: ${fechasTxt} · DESTINO: ${(g.destino||'—').toString().toUpperCase()} · PROGRAMA: ${(g.programa||'—').toString().toUpperCase()}</div>
   `;
 
-  // ===== HOTELES =====
-  const hoteles = `
-    <h2>HOTELES</h2>
-    ${
-      (hotels&&hotels.length)
-        ? `<table class="t-tight">
-             <thead><tr><th>HOTEL</th><th>CIUDAD</th><th>CHECK-IN</th><th>CHECK-OUT</th><th>CONTACTO</th></tr></thead>
-             <tbody>${
-               hotels.map(h => `<tr>
-                 <td>${(h.nombre||'HOTEL').toString().toUpperCase()}</td>
-                 <td>${(h.ciudad||'').toString().toUpperCase()}</td>
-                 <td>${dmy(h.in||h.checkin||'')}</td>
-                 <td>${dmy(h.out||h.checkout||'')}</td>
-                 <td>${[
-                      (h.contacto||'').toString().toUpperCase(),
-                      (h.telefono||h.fono||'').toString().toUpperCase(),
-                      (h.email||'').toString().toLowerCase()
-                    ].filter(Boolean).join(' · ')}</td>
-               </tr>`).join('')
-             }</tbody>
-           </table>`
-        : `<div class="muted">SIN ASIGNACIONES.</div>`
-    }
-  `;
-
-  // ===== ITINERARIO =====
   const itinRows = (itin||[]).map(x => `
     <tr>
       <td>${dmy(x.fechaISO)}</td>
-      <td>${(x.hora||'—')}</td>
       <td>${(x.actividad||'').toString().toUpperCase()}</td>
       <td>${(x.proveedor||'').toString().toUpperCase()}</td>
-      <td>${(x.contacto||'—')}</td>
+      <td>${x.contacto||'—'}</td>
       <td>${(x.estado||'').toString().toUpperCase()}</td>
     </tr>`).join('');
 
@@ -3704,11 +3362,11 @@ async function openPrintDespacho(g, w){
       <thead>
         <tr><th>FECHA</th><th>HORA</th><th>ACTIVIDAD</th><th>PROVEEDOR</th><th>CONTACTO</th><th>ESTADO</th></tr>
       </thead>
-      <tbody>${itinRows || '<tr><td colspan="6" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
+      <tbody>${itinRows || '<tr><td colspan="5" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
     </table>
   `;
 
-  // ===== FINANZAS =====
+  // Si no hay loadAbonos, ocultamos la tabla de abonos para no confundir
   const finRows = (abonosRows||[]).map(r => `
     <tr>
       <td>${r.fecha||'—'}</td>
@@ -3731,15 +3389,14 @@ async function openPrintDespacho(g, w){
     </table>
   ` : '';
 
-  // ==== ENSAMBLA E IMPRIME ====
   const html = `
     <!doctype html><html><head><meta charset="utf-8">${css}</head>
     <body>
       ${infoGeneral}
-      <div class="cut">${transporte}</div>
-      <div class="cut">${hoteles}</div>
+      ${resumen}
       <div class="cut">${itinerario}</div>
       ${finanzas ? `<div class="cut">${finanzas}</div>` : ''}
+      <div class="footer">RAITRAI — Despacho de Viaje. Para PDF usa “Guardar como PDF”.</div>
       <script>
         window.addEventListener('load', ()=>{
           try { window.print(); } catch(_) {}
@@ -3749,6 +3406,7 @@ async function openPrintDespacho(g, w){
     </body></html>
   `;
 
+  // 3) Escribir en la ventana ya abierta
   try{
     w.document.open('text/html');
     w.document.write(html);
@@ -3846,13 +3504,13 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
        <div class="muted">-------</div>
        <div id="foroList" style="display:grid;gap:.4rem;margin-top:.5rem"></div>
        <div class="rowflex" style="justify-content:center;margin-top:.4rem">
-         <button id="foroMore" class="btn sec" style="display:none">VER MÁS</button>
+         <button id="foroMore" class="btn sec" style="display:none">CARGAR MÁS</button>
        </div>
      </div>
    `;
 
   // ===== Paginación (STAFF arriba, 10 por página, botón "CARGAR MÁS") =====
-  const paging = { cursor:null, exhausted:false, loading:false, pageSize:5, items:[] };
+  const paging = { cursor:null, exhausted:false, loading:false, pageSize:10, items:[] };
 
   const renderForo = ()=>{
     const wrap = body.querySelector('#foroList');
@@ -4598,6 +4256,16 @@ async function sumCLPByMoneda(montos, tasasOpt){
   return { CLP, USD, BRL, ARS, CLPconv: CLP + USD + BRL + ARS };
 }
 
+// -------- ABONOS CRUD  (grupos/{gid}/finanzas_abonos) ----------
+async function loadAbonos(gid){
+  // ojo: aquí debe usarse gid (parámetro), no g.id
+  const qs = await getDocs(collection(db,'grupos', gid, 'finanzas_abonos'));
+  const list = [];
+  qs.forEach(d => list.push({ id:d.id, ...(d.data()||{}) }));
+  list.sort((a,b)=> String(b.fecha||'').localeCompare(String(a.fecha||'')));
+  return list;
+}
+
 async function saveAbono(gid, abono){
   // separa la id y limpia undefined del resto de campos
   const { id, ...raw } = abono || {};
@@ -4720,27 +4388,13 @@ async function renderFinanzas(g, pane){
   const qNorm = norm(state.groupQ||'');
   const tasas = await getTasas();
 
-  // Carga de abonos (v2: devuelve { items, totals })
-  let resAb;
-  try {
-    resAb = await loadAbonos(g);      // ← preferimos pasar el grupo completo
-  } catch (_) {
-    try { resAb = await loadAbonos(g.id); } catch { resAb = { items: [] }; }
-  }
-  const abonos = Array.isArray(resAb) ? resAb : (resAb?.items || []);
-
-  // Totales por moneda (objeto plano) calculados desde el array
-  const totAb = (abonos || []).reduce((acc, a) => {
-    const m = String(a.moneda || 'CLP').toUpperCase();
-    acc[m] = (acc[m] || 0) + Number(a.valor || 0);
-    return acc;
-  }, { CLP: 0, USD: 0, BRL: 0, ARS: 0 });
-
+  const abonos = await loadAbonos(g.id);
+  const totAb = abonos.reduce((acc,a)=>{ const m=String(a.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(a.valor||0); return acc; },{CLP:0,USD:0,BRL:0,ARS:0});
   const totGa = await sumGastosPorMonedaDelGrupo(g, qNorm);
 
   const abCLP = await sumCLPByMoneda(totAb, tasas);
   const gaCLP = await sumCLPByMoneda(totGa, tasas);
-  const saldoCLP = (abCLP?.CLPconv || 0) - (gaCLP?.CLPconv || 0);
+  const saldoCLP = abCLP.CLPconv - gaCLP.CLPconv;
 
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML=''; pane.appendChild(wrap);
 
