@@ -236,15 +236,18 @@ const _timeVal = (hhmm) => {
 };
 
 // --- TRANSPORTE
+// --- TRANSPORTE (mejorado)
 async function loadVuelosInfo(grupo){
   try{
     const gid = grupo.id || grupo.grupoId || grupo.code || '';
     if (!gid) return [];
-    const base = collection(db,'vuelos');
 
-    // 1) mejor caso: array-contains en 'groupIds' o 'grupos'
+    const base = collection(db,'vuelos');
+    const fields = ['groupIds','grupos','idsGrupos'];
+
+    // 1) Buscar por array-contains en campos conocidos
     let found = [];
-    for (const field of ['groupIds','grupos','idsGrupos']){
+    for (const field of fields){
       try{
         const qs = await getDocs(query(base, where(field,'array-contains', gid)));
         qs.forEach(d => found.push({ id:d.id, ...d.data(), _ref:d.ref }));
@@ -252,39 +255,64 @@ async function loadVuelosInfo(grupo){
       }catch{}
     }
 
-    // 2) fallback: scan limitado y filtrar client-side
+    // 2) Fallback: escaneo acotado + filtro client-side
     if (!found.length){
-      const qs = await getDocs(query(base, limit(120)));
+      const qs = await getDocs(query(base, limit(200)));
       qs.forEach(d => {
         const x = d.data()||{};
         const arr = x.groupIds || x.grupos || x.idsGrupos || [];
-        if (Array.isArray(arr) && arr.includes(gid)) found.push({ id:d.id, ...x, _ref:d.ref });
+        if (Array.isArray(arr) && arr.includes(gid)){
+          found.push({ id:d.id, ...x, _ref:d.ref });
+        }
       });
     }
 
-    // Aplanar tramos si existen
-    const out = [];
-    for (const f of found){
-      let tramos = [];
-      try{
-        const tSnap = await getDocs(query(collection(f._ref,'tramos'), orderBy('orden','asc')));
-        if (tSnap.size){
-          tSnap.forEach(t => tramos.push({ id:t.id, ...t.data() }));
-        }
-      }catch{}
-      if (!tramos.length) tramos.push(f); // usa el doc como 1 tramo
+    // Helper para normalizar HH:mm → minutos (para ordenar)
+    const toMin = (hhmm)=>{
+      const m = String(hhmm||'').match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) return 9e6;
+      return (+m[1])*60 + (+m[2]);
+    };
 
+    // 3) Aplanar tramos si existen
+    const out = [];
+    for (const v of found){
+      let tramos = [];
+
+      // Subcolección 'tramos' ordenada por 'orden'
+      try{
+        const tSnap = await getDocs(query(collection(v._ref,'tramos'), orderBy('orden','asc')));
+        tSnap.forEach(t => tramos.push({ id:t.id, ...t.data() }));
+      }catch{}
+
+      // Sin subcolección → usar el doc como un tramo único
+      if (!tramos.length) tramos.push(v);
+
+      // Mapear a forma estándar
       tramos.forEach(t => {
+        const tipoBase = (t.tipo || v.tipo || '').toString().toUpperCase();
+        const isAereo  = /A(E|É)REO/.test(tipoBase) || /VUELO/.test(tipoBase);
+        const isBus    = /BUS|TERRESTRE/.test(tipoBase);
+
+        const codigo   = String(t.codigo || t.numero || v.codigo || v.numero || '').toUpperCase();
+
+        // Horas “ida/vuelta” si las hay; si no, usar campos genéricos
+        const salida   = t.salida || t.presentacionIdaHora || t.idaHora || t.vueloIdaHora || '';
+        const llegada  = t.llegada || t.presentacionVueltaHora || t.vueltaHora || t.vueloVueltaHora || '';
+
         out.push({
-          tipo:  _norm(t.tipo || f.tipo || 'TRANSPORTE'),
-          codigo:String(t.codigo || t.numero || f.codigo || f.numero || '').toUpperCase(),
-          salida:t.salida || t.horaSalida || '',
-          llegada:t.llegada|| t.horaLlegada|| '',
-          obs:    t.obs    || f.obs || ''
+          tipo:  isAereo ? 'AÉREO' : (isBus ? 'BUS' : (tipoBase || 'TRANSPORTE')),
+          codigo,
+          salida,
+          llegada,
+          obs:    t.obs || v.obs || ''
         });
       });
     }
-    // ordenar por salida si posible
+
+    // 4) Ordenar por hora de salida (si está en HH:mm)
+    out.sort((a,b)=> toMin(a.salida) - toMin(b.salida));
+
     return out;
   }catch(e){
     console.error('[print] loadVuelosInfo', e);
@@ -292,44 +320,40 @@ async function loadVuelosInfo(grupo){
   }
 }
 
+
 // --- HOTELES (todas las asignaciones del viaje)
 async function loadHotelAssignmentsForGroup(grupo){
   const gid = grupo.id || grupo.grupoId || grupo.code || '';
-  const hotels = [];
-  if (!gid) return hotels;
+  if (!gid) return [];
 
+  const asigs = [];
+
+  // Ruta A: raíz 'hotelAssignments' con groupId
   try{
-    const qs = await getDocs(collection(db,'hotelAssignments', gid, 'items'));
-    qs.forEach(d => {
-      const x = d.data()||{};
-      hotels.push({
-        hotelId: x.hotelId || x.hotel || null,
-        in:      x.checkIn  || x.in   || x.fechaInicio || '',
-        out:     x.checkOut || x.out  || x.fechaFin    || ''
-      });
-    });
+    const qs = await getDocs(query(collection(db,'hotelAssignments'), where('groupId','==', gid)));
+    qs.forEach(d => asigs.push({ id:d.id, ...d.data() }));
   }catch{}
 
-  // fallback: un solo hotel plano en el grupo
-  if (!hotels.length && grupo.hotelId){
-    hotels.push({ hotelId: grupo.hotelId, in: grupo.fechaInicio || '', out: grupo.fechaFin || '' });
+  // Ruta B: subcolección en grupo
+  if (!asigs.length){
+    try{
+      const qs = await getDocs(collection(db,'grupos', gid, 'hotelAssignments'));
+      qs.forEach(d => asigs.push({ id:d.id, ...d.data() }));
+    }catch{}
   }
 
-  // enriquecer desde cache si existe
-  const map = state?.cache?.hoteles?.byId;
-  return hotels.map(h => {
-    const dat = map?.get ? map.get(h.hotelId) : null;
-    return {
-      ...h,
-      nombre:   dat?.nombre || '',
-      ciudad:   dat?.ciudad || dat?.destino || '',
-      direccion:dat?.direccion || '',
-      contacto: dat?.contacto || '',
-      telefono: dat?.telefono || dat?.fono || '',
-      email:    dat?.email || ''
-    };
-  });
+  // Normalizar campos esperados por impresión
+  return asigs.map(x => ({
+    nombre:   x.nombreHotel || x.hotelNombre || x.nombre || '',
+    ciudad:   x.ciudad || x.destino || '',
+    in:       x.checkIn || x.checkin || x.in || x.fechaIn || x.fechaEntrada || '',
+    out:      x.checkOut || x.checkout || x.out || x.fechaOut || x.fechaSalida || '',
+    contacto: x.contacto || '',
+    telefono: x.telefono || x.fono || '',
+    email:    x.email || x.correo || ''
+  }));
 }
+
 
 // --- SERVICIO + PROVEEDOR (por actividad)
 async function resolveServicioYProveedor(destinoRaw, actividadRaw, servicioId){
@@ -3571,6 +3595,7 @@ async function collectItinLinesFast(grupo){
 }
 
 // === IMPRESIÓN / DESPACHO — versión completa (transporte + hoteles + itin + finanzas) ===
+// === IMPRESIÓN / DESPACHO — versión completa (transporte + hoteles + itin + finanzas) ===
 async function openPrintDespacho(g, w){
   if (!g){
     alert('No hay viaje activo.');
@@ -3579,20 +3604,40 @@ async function openPrintDespacho(g, w){
   console.log('[PRINT] Inicia generación', { grupoId: g.id });
 
   // ==== DATOS BASE ====
-  const code = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
+  const code    = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
   const paxPlan = paxOf(g);
   const paxReal = paxRealOf(g);
   const { A: A_real, E: E_real } = paxBreakdown(g);
   const fechasTxt = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
-  // 1) Itinerario (líneas con proveedor/contacto)
+  // 1) Transporte
+  let vuelos = [];
+  try{
+    vuelos = await loadVuelosInfo(g);
+  }catch(e){
+    console.warn('[PRINT] loadVuelosInfo falló:', e);
+    vuelos = [];
+  }
+
+  // 2) Hoteles (usa loader opcional al final de este mensaje)
+  let hotels = [];
+  if (typeof loadHotelAssignmentsForGroup === 'function'){
+    try{
+      hotels = await loadHotelAssignmentsForGroup(g);
+    }catch(e){
+      console.warn('[PRINT] loadHotelAssignmentsForGroup falló:', e);
+      hotels = [];
+    }
+  }
+
+  // 3) Itinerario (líneas con proveedor/contacto; ocultando DESAYUNO HOTEL en tu recolector)
   console.time('[PRINT] collectItinLines');
   const itin = await collectItinLines(g).catch((e)=>{ console.error(e); return []; });
   console.timeEnd('[PRINT] collectItinLines');
 
-  // 2) Finanzas: ABONOS (defensivo si faltan helpers externos)
+  // 4) Finanzas: ABONOS (defensivo si faltan helpers externos)
   const haveLoadAbonos = (typeof loadAbonos === 'function');
-  const haveConv = (typeof convertirMoneda === 'function');
+  const haveConv       = (typeof convertirMoneda === 'function');
 
   let abonos = [];
   if (haveLoadAbonos){
@@ -3617,7 +3662,7 @@ async function openPrintDespacho(g, w){
   const abonosRows = [];
   for (const a of (abonos||[])){
     const fecha  = dmy(toISO(a.fecha||''));                 // fecha abono
-    const moneda = (a.moneda||'').toString().toUpperCase(); // CLP/USD/BRL/ARS
+    const moneda = (a.moneda||'').toString().toUpperCase(); // CLP/USD/BRL/ARS/ARS...
     const valor  = Number(a.valor||0);
     const clpEq  = await toCLP(valor, moneda);
     abonosRows.push({ fecha, asunto:(a.asunto||'').toString().toUpperCase(), moneda, valor, clp: clpEq });
@@ -3628,29 +3673,28 @@ async function openPrintDespacho(g, w){
   const css = `
   <style>
     @page { size: A4; margin: 14mm; }
-    body { font-family: system-ui, Arial, sans-serif; font-size: 12px; color:#0a0a0a; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; color: #000 !important; }
+    body { font-family: system-ui, Arial, sans-serif; font-size: 12px; }
     .head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
     .logo { height: 40px; object-fit:contain; }
     h1 { font-size: 18px; margin: 0 0 6px; }
-    h2 { font-size: 14px; margin: 12px 0 6px; border-bottom:1px solid #ddd; padding-bottom:4px; }
+    h2 { font-size: 14px; margin: 12px 0 6px; border-bottom:1px solid #000; padding-bottom:4px; }
     .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:6px 16px; }
-    .muted { color:#555; }
     table { width:100%; border-collapse:collapse; }
-    th, td { padding:4px 6px; border-bottom:1px solid #eee; vertical-align:top; }
-    th { text-align:left; font-size:11px; color:#444; }
+    th, td { padding:4px 6px; border-bottom:1px solid #000; vertical-align:top; }
+    th { text-align:left; font-size:11px; }
     .t-tight td { padding:3px 4px; }
     .right { text-align:right; }
-    .badge { font-weight:700; }
     .small { font-size:11px; }
     .cut { page-break-inside: avoid; }
-    .footer { margin-top:8px; font-size:10px; color:#666; }
+    .muted { opacity:.85; } /* seguirá negro por la regla global */
   </style>`;
 
   const infoGeneral = `
     <div class="head">
       <div>
         <h1>DESPACHO DE VIAJE</h1>
-        <div class="small muted">GENERADO: ${new Date().toLocaleString('es-CL').toUpperCase()}</div>
+        <div class="small">GENERADO: ${new Date().toLocaleString('es-CL').toUpperCase()}</div>
       </div>
       <img src="RaitraiLogo.png" class="logo" alt="RAITRAI"/>
     </div>
@@ -3665,17 +3709,60 @@ async function openPrintDespacho(g, w){
     </div>
   `;
 
-  const resumen = `
-    <h2>RESUMEN</h2>
-    <div class="small">VIAJE: ${fechasTxt} · DESTINO: ${(g.destino||'—').toString().toUpperCase()} · PROGRAMA: ${(g.programa||'—').toString().toUpperCase()}</div>
+  // ===== TRANSPORTE =====
+  const transporte = `
+    <h2>TRANSPORTE</h2>
+    ${
+      (vuelos&&vuelos.length)
+        ? `<table class="t-tight">
+             <thead><tr><th>TIPO</th><th>CÓDIGO</th><th>SALIDA</th><th>LLEGADA</th><th>OBS</th></tr></thead>
+             <tbody>${
+               vuelos.map(v => `<tr>
+                 <td>${(v.tipo||'').toString().toUpperCase()}</td>
+                 <td>${(v.codigo||'').toString().toUpperCase()}</td>
+                 <td>${(v.salida||'—')}</td>
+                 <td>${(v.llegada||'—')}</td>
+                 <td>${(v.obs||'').toString().toUpperCase()}</td>
+               </tr>`).join('')
+             }</tbody>
+           </table>`
+        : `<div class="muted">SIN REGISTROS.</div>`
+    }
   `;
 
+  // ===== HOTELES =====
+  const hoteles = `
+    <h2>HOTELES</h2>
+    ${
+      (hotels&&hotels.length)
+        ? `<table class="t-tight">
+             <thead><tr><th>HOTEL</th><th>CIUDAD</th><th>CHECK-IN</th><th>CHECK-OUT</th><th>CONTACTO</th></tr></thead>
+             <tbody>${
+               hotels.map(h => `<tr>
+                 <td>${(h.nombre||'HOTEL').toString().toUpperCase()}</td>
+                 <td>${(h.ciudad||'').toString().toUpperCase()}</td>
+                 <td>${dmy(h.in||h.checkin||'')}</td>
+                 <td>${dmy(h.out||h.checkout||'')}</td>
+                 <td>${[
+                      (h.contacto||'').toString().toUpperCase(),
+                      (h.telefono||h.fono||'').toString().toUpperCase(),
+                      (h.email||'').toString().toLowerCase()
+                    ].filter(Boolean).join(' · ')}</td>
+               </tr>`).join('')
+             }</tbody>
+           </table>`
+        : `<div class="muted">SIN ASIGNACIONES.</div>`
+    }
+  `;
+
+  // ===== ITINERARIO =====
   const itinRows = (itin||[]).map(x => `
     <tr>
       <td>${dmy(x.fechaISO)}</td>
+      <td>${(x.hora||'—')}</td>
       <td>${(x.actividad||'').toString().toUpperCase()}</td>
       <td>${(x.proveedor||'').toString().toUpperCase()}</td>
-      <td>${x.contacto||'—'}</td>
+      <td>${(x.contacto||'—')}</td>
       <td>${(x.estado||'').toString().toUpperCase()}</td>
     </tr>`).join('');
 
@@ -3685,11 +3772,11 @@ async function openPrintDespacho(g, w){
       <thead>
         <tr><th>FECHA</th><th>HORA</th><th>ACTIVIDAD</th><th>PROVEEDOR</th><th>CONTACTO</th><th>ESTADO</th></tr>
       </thead>
-      <tbody>${itinRows || '<tr><td colspan="5" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
+      <tbody>${itinRows || '<tr><td colspan="6" class="muted">SIN ACTIVIDADES.</td></tr>'}</tbody>
     </table>
   `;
 
-  // Si no hay loadAbonos, ocultamos la tabla de abonos para no confundir
+  // ===== FINANZAS =====
   const finRows = (abonosRows||[]).map(r => `
     <tr>
       <td>${r.fecha||'—'}</td>
@@ -3712,14 +3799,15 @@ async function openPrintDespacho(g, w){
     </table>
   ` : '';
 
+  // ==== ENSAMBLA E IMPRIME ====
   const html = `
     <!doctype html><html><head><meta charset="utf-8">${css}</head>
     <body>
       ${infoGeneral}
-      ${resumen}
+      <div class="cut">${transporte}</div>
+      <div class="cut">${hoteles}</div>
       <div class="cut">${itinerario}</div>
       ${finanzas ? `<div class="cut">${finanzas}</div>` : ''}
-      <div class="footer">RAITRAI — Despacho de Viaje. Para PDF usa “Guardar como PDF”.</div>
       <script>
         window.addEventListener('load', ()=>{
           try { window.print(); } catch(_) {}
@@ -3729,7 +3817,6 @@ async function openPrintDespacho(g, w){
     </body></html>
   `;
 
-  // 3) Escribir en la ventana ya abierta
   try{
     w.document.open('text/html');
     w.document.write(html);
