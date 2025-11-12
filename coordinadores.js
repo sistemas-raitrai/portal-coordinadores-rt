@@ -984,6 +984,16 @@ if (typeof window !== 'undefined') {
 // ===== Helpers financieros por moneda (sin conversión) =====
 function _safeNum(x){ const n = Number(x||0); return isFinite(n) ? n : 0; }
 
+// Agrupa una lista de items (con .moneda y .valor) a totales por moneda.
+// Espera formatos: { moneda:'CLP'|'USD'|'BRL'|'ARS', valor:Number }
+function totalesPorMoneda(items){
+  const acc = { CLP:0, USD:0, BRL:0, ARS:0 };
+  for (const it of (items||[])) {
+    const m = String(it.moneda||'CLP').toUpperCase();
+    if (m in acc) acc[m] += _safeNum(it.valor);
+  }
+  return acc;
+}
 
 // Días inclusivos (ej: 1–5 = 5 días). Acepta 'YYYY-MM-DD' o Date.
 function daysBetweenInclusive(a,b){
@@ -4623,20 +4633,6 @@ async function closeFinanzas(g){
 }
 
 // ====== HELPERS FINANZAS (GASTOS APROBADOS) ======
-
-function totalesPorMoneda(items){
-  const t = { CLP:0, USD:0, BRL:0, ARS:0 };
-  (items||[]).forEach(x=>{
-    const m = String(x.moneda||'').toUpperCase();
-    const v = Number(x.valor||0);
-    if (m==='CLP') t.CLP += v;
-    else if (m==='USD') t.USD += v;
-    else if (m==='BRL') t.BRL += v;
-    else if (m==='ARS') t.ARS += v;
-  });
-  return t;
-}
-
 // Devuelve SOLO gastos con estado APROBADO del grupo.
 // STAFF “Todos” -> busca con collectionGroup; si hay coordinador seleccionado -> subcolección del coord.
 // Coordinador -> su propia subcolección.
