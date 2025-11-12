@@ -4832,7 +4832,7 @@ async function renderFinanzas(g, pane){
     // Mensajes guía
     const hints = [];
     // Línea informativa de boleta
-    hints.push(`• BOLETA SUGERIDA: CLP ${fmtCL(boletaSugerida)} (${dias||0} DÍAS).`);
+    hints.push(`• MONTO BRUTO DE BOLETA: CLP ${fmtCL(boletaSugerida)} (${dias||0} DÍAS).`);
     if (!boletaOk) hints.push('• FALTA SUBIR BOLETA DEL SII.');
     if (!sinPendientes) hints.push('• HAY GASTOS PENDIENTES: DEBEN SER APROBADOS O RECHAZADOS.');
     if (!brlOk) hints.push('• BRL DEBE QUEDAR EN 0.');
