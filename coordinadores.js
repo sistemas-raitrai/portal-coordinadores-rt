@@ -1008,43 +1008,6 @@ function daysBetweenInclusive(a,b){
 
 // Carga GASTOS APROBADOS del grupo (colección estándar).
 // Lee de: grupos/{id}/gastos  (fallback: finanzas_gastos/{id}/items si existiera)
-async function loadGastosAprobados(grupoId){
-  const out = [];
-  try{
-    // ruta 1: grupos/{id}/gastos
-    const base1 = collection(db,'grupos', String(grupoId), 'gastos');
-    const qs1   = await getDocs(base1);
-    qs1.forEach(d=>{
-      const x = d.data()||{};
-      if ((String(x.estado||'PENDIENTE').toUpperCase()) === 'APROBADO') {
-        out.push({
-          id: d.id,
-          moneda: String(x.moneda||'CLP').toUpperCase(),
-          valor:  _safeNum(x.monto || x.valor || 0)
-        });
-      }
-    });
-    if (out.length) return out;
-  }catch{}
-
-  try{
-    // ruta 2: finanzas_gastos/{id}/items (si la usas)
-    const base2 = collection(db,'finanzas_gastos', String(grupoId), 'items');
-    const qs2   = await getDocs(base2);
-    qs2.forEach(d=>{
-      const x = d.data()||{};
-      if ((String(x.estado||'PENDIENTE').toUpperCase()) === 'APROBADO') {
-        out.push({
-          id: d.id,
-          moneda: String(x.moneda||'CLP').toUpperCase(),
-          valor:  _safeNum(x.monto || x.valor || 0)
-        });
-      }
-    });
-  }catch{}
-  return out;
-}
-
 // Verifica si existen gastos PENDIENTES (bloquea cierre)
 async function existsGastoPendiente(grupoId){
   try{
@@ -4636,12 +4599,12 @@ async function closeFinanzas(g){
 // Devuelve SOLO gastos con estado APROBADO del grupo.
 // STAFF “Todos” -> busca con collectionGroup; si hay coordinador seleccionado -> subcolección del coord.
 // Coordinador -> su propia subcolección.
+// ===== HELPERS FINANZAS (GASTOS APROBADOS) =====
 async function loadGastosAprobados(grupoId){
   try{
     const isStaff = !!state.is;
     const viewAll = isStaff && state.viewingCoordId === '__ALL__';
     const out = [];
-
     if (viewAll){
       const qs = await getDocs(query(
         collectionGroup(db,'gastos'),
@@ -4650,10 +4613,9 @@ async function loadGastosAprobados(grupoId){
       ));
       qs.forEach(d => out.push({ id:d.id, ...d.data() }));
     } else {
-      const coordId = (typeof getActiveCoordIdForGastos==='function'
-                        ? getActiveCoordIdForGastos()
-                        : (state.viewingCoordId || state?.user?.uid || ''));
-      if (!coordId) return [];
+      const coordId = (typeof getActiveCoordIdForGastos==='function')
+        ? getActiveCoordIdForGastos()
+        : (state.viewingCoordId || state.user.uid);
       const qs = await getDocs(query(
         collection(db,'coordinadores', coordId, 'gastos'),
         where('grupoId','==', grupoId),
@@ -4663,10 +4625,54 @@ async function loadGastosAprobados(grupoId){
     }
     return out;
   }catch(e){
-    console.error('loadGastosAprobados()', e);
+    console.error('[loadGastosAprobados]', e);
     return [];
   }
 }
+
+async function existsGastoPendiente(grupoId){
+  try{
+    const isStaff = !!state.is;
+    const viewAll = isStaff && state.viewingCoordId === '__ALL__';
+    if (viewAll){
+      const qs = await getDocs(query(
+        collectionGroup(db,'gastos'),
+        where('grupoId','==', grupoId),
+        where('estado','==','PENDIENTE'),
+        limit(1)
+      ));
+      return qs.size > 0;
+    } else {
+      const coordId = (typeof getActiveCoordIdForGastos==='function')
+        ? getActiveCoordIdForGastos()
+        : (state.viewingCoordId || state.user.uid);
+      const qs = await getDocs(query(
+        collection(db,'coordinadores', coordId, 'gastos'),
+        where('grupoId','==', grupoId),
+        where('estado','==','PENDIENTE'),
+        limit(1)
+      ));
+      return qs.size > 0;
+    }
+  }catch(e){
+    console.error('[existsGastoPendiente]', e);
+    return false;
+  }
+}
+
+function totalesPorMoneda(items){
+  const t = { CLP:0, USD:0, BRL:0, ARS:0 };
+  (items||[]).forEach(x=>{
+    const m = String(x.moneda||'').toUpperCase();
+    const v = Number(x.valor||0);
+    if (m==='CLP') t.CLP += v;
+    else if (m==='USD') t.USD += v;
+    else if (m==='BRL') t.BRL += v;
+    else if (m==='ARS') t.ARS += v;
+  });
+  return t;
+}
+
 
 // ¿Hay algún gasto en PENDIENTE (o sin estado) para el grupo?
 // Para docs antiguos sin `estado`, los tratamos como PENDIENTE (control local).
