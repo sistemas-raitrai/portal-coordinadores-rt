@@ -5073,8 +5073,8 @@ async function loadGastosList(g, box, coordId, paneRef){
     if (x.grupoId === g.id) {
       list.push({
         id: d.id,
-        ...x,
-        estado: String(x.estado || 'PENDIENTE').toUpperCase() // ← default
+        ...x, // ← FIX 1: spread correcto
+        estado: String(x.estado || 'PENDIENTE').toUpperCase()
       });
     }
   });
@@ -5085,8 +5085,7 @@ async function loadGastosList(g, box, coordId, paneRef){
   if (q){
     const before = list.length;
     list = list.filter(x =>
-      norm([x.asunto, x.byEmail, x.moneda, String(x.valor||0)].join(' '))
-        .includes(q)
+      norm([x.asunto, x.byEmail, x.moneda, String(x.valor||0)].join(' ')).includes(q)
     );
     hits = list.length;
   }
@@ -5104,9 +5103,9 @@ async function loadGastosList(g, box, coordId, paneRef){
   // Render tabla
   box.innerHTML = '<h4>GASTOS DEL GRUPO</h4>';
   const table = document.createElement('table');
-  table.className = 'table gastos';   // si ya estaba, déjalo igual
+  table.className = 'table gastos';
   ensureGastosCompactCSS?.();
-  
+
   table.innerHTML = `
     <thead>
       <tr>
@@ -5115,14 +5114,13 @@ async function loadGastosList(g, box, coordId, paneRef){
         <th>COMPROBANTE</th>
       </tr>
     </thead>
-    <tbody></tbody>`;
-  `;
+    <tbody></tbody>`; // ← FIX 2: eliminar el backtick extra que estaba debajo
+
   const tb = table.querySelector('tbody');
 
   list.forEach(x=>{
     const tr = document.createElement('tr');
 
-    // celdas básicas
     const tdAsu = document.createElement('td');
     tdAsu.setAttribute('data-label','ASUNTO');
     tdAsu.textContent = String(x.asunto||'').toUpperCase();
@@ -5139,10 +5137,8 @@ async function loadGastosList(g, box, coordId, paneRef){
     tdVal.setAttribute('data-label','VALOR');
     tdVal.textContent = Number(x.valor||0).toLocaleString('es-CL');
 
-    // ESTADO: selector si es STAFF; texto si es coordinador
+    // ESTADO (selector si es STAFF)
     const tdEst = document.createElement('td');
-    tdEst.setAttribute('data-label','ESTADO');
-
     if (state.is) {
       const sel = document.createElement('select');
       sel.innerHTML = `
@@ -5151,7 +5147,6 @@ async function loadGastosList(g, box, coordId, paneRef){
         <option value="RECHAZADO">RECHAZADO</option>
       `;
       sel.value = x.estado || 'PENDIENTE';
-  
       sel.onchange = async () => {
         const nuevo = sel.value;
         try {
@@ -5160,23 +5155,22 @@ async function loadGastosList(g, box, coordId, paneRef){
             { estado: nuevo, estadoAt: serverTimestamp(), estadoBy: (state.user?.email||'').toLowerCase() }
           );
           x.estado = nuevo;
+          // Si este listado vive dentro del modal de finanzas, refresca totales/saldos:
+          if (paneRef) {
+            await renderFinanzas(g, paneRef);
+          }
           showFlash('ESTADO ACTUALIZADO', 'ok');
-      
-          // ← REFRESCA TOTALES/REGLAS DE CIERRE
-          if (paneRef) await renderFinanzas(g, paneRef);
         } catch (e) {
           console.error(e);
           showFlash('NO SE PUDO ACTUALIZAR EL ESTADO', 'err');
-          sel.value = x.estado || 'PENDIENTE'; // revertir UI
+          sel.value = x.estado || 'PENDIENTE';
         }
       };
-
       tdEst.appendChild(sel);
     } else {
       tdEst.textContent = x.estado || 'PENDIENTE';
     }
 
-    // Comprobante
     const tdComp = document.createElement('td');
     tdComp.setAttribute('data-label','COMPROBANTE');
     tdComp.innerHTML = x.imgUrl ? `<a href="${x.imgUrl}" target="_blank">VER</a>` : '—';
@@ -5185,14 +5179,14 @@ async function loadGastosList(g, box, coordId, paneRef){
     tr.appendChild(tdAut);
     tr.appendChild(tdMon);
     tr.appendChild(tdVal);
-    tr.appendChild(tdEst);
+    if (state.is) tr.appendChild(tdEst);
     tr.appendChild(tdComp);
     tb.appendChild(tr);
   });
 
   box.appendChild(table);
 
-  // Totales (sin equivalencia a CLP)
+  // Totales (sin equivalencias)
   const totDiv = document.createElement('div');
   totDiv.className = 'totline gastos';
   totDiv.textContent =
@@ -5201,6 +5195,7 @@ async function loadGastosList(g, box, coordId, paneRef){
 
   return hits;
 }
+
 
 /* ====== IMPRIMIR VOUCHERS (STAFF) ====== */
 function openPrintVouchersModal(){
