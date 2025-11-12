@@ -3513,7 +3513,6 @@ async function openPrintDespacho(g, w){
 
   // 2) Finanzas: ABONOS (defensivo si faltan helpers externos)
   const haveLoadAbonos = (typeof loadAbonos === 'function');
-  const haveConv = (typeof convertirMoneda === 'function');
 
   let abonos = [];
   if (haveLoadAbonos){
@@ -3529,21 +3528,13 @@ async function openPrintDespacho(g, w){
     console.warn('[PRINT] loadAbonos no definido. Se omiten abonos.');
   }
 
-  const toCLP = async (valor, moneda) => {
-    if (!haveConv) return 0;
-    try { return await convertirMoneda(Number(valor||0), String(moneda||'CLP'), 'CLP'); }
-    catch(e){ console.warn('[PRINT] convertirMoneda falló:', e); return 0; }
-  };
-
-  const abonosRows = [];
-  for (const a of (abonos||[])){
-    const fecha  = dmy(toISO(a.fecha||''));                 // fecha abono
-    const moneda = (a.moneda||'').toString().toUpperCase(); // CLP/USD/BRL/ARS
-    const valor  = Number(a.valor||0);
-    const clpEq  = await toCLP(valor, moneda);
-    abonosRows.push({ fecha, asunto:(a.asunto||'').toString().toUpperCase(), moneda, valor, clp: clpEq });
-  }
-  const totalCLP = Math.round(abonosRows.reduce((s,x)=> s + Number(x.clp||0), 0));
+  const abonosRows = (abonos || []).map(a => ({
+    fecha : dmy(toISO(a.fecha || '')),
+    medio : (a.medio || '').toString().toUpperCase(),
+    asunto: (a.asunto || '').toString().toUpperCase(),
+    moneda: (a.moneda || '').toString().toUpperCase(),
+    valor : Number(a.valor || 0),
+  }));
 
   // ==== HTML IMPRESIÓN ====
   const css = `
@@ -3611,25 +3602,22 @@ async function openPrintDespacho(g, w){
   `;
 
   // Si no hay loadAbonos, ocultamos la tabla de abonos para no confundir
-  const finRows = (abonosRows||[]).map(r => `
+  const finRows = (abonosRows || []).map(r => `
     <tr>
-      <td>${r.fecha||'—'}</td>
-      <td>${r.asunto||'—'}</td>
-      <td class="right">${(r.valor||0).toLocaleString('es-CL')}</td>
-      <td>${r.moneda||''}</td>
-      <td class="right">${Math.round(r.clp||0).toLocaleString('es-CL')}</td>
+      <td>${r.fecha || '—'}</td>
+      <td>${r.medio || '—'}</td>
+      <td>${r.asunto || '—'}</td>
+      <td>${r.moneda || ''}</td>
+      <td class="right">${(r.valor || 0).toLocaleString('es-CL')}</td>
     </tr>`).join('');
 
   const finanzas = haveLoadAbonos ? `
     <h2>FINANZAS — ABONOS</h2>
     <table class="t-tight">
       <thead>
-        <tr><th>FECHA</th><th>ASUNTO</th><th class="right">MONTO</th><th>MONEDA</th><th class="right">EQUIV. CLP</th></tr>
+        <tr><th>FECHA</th><th>MEDIO</th><th>ASUNTO</th><th>MONEDA</th><th class="right">MONTO</th></tr>
       </thead>
       <tbody>${finRows || '<tr><td colspan="5" class="muted">SIN ABONOS REGISTRADOS.</td></tr>'}</tbody>
-      <tfoot>
-        <tr><th colspan="4" class="right">TOTAL CLP</th><th class="right">${totalCLP.toLocaleString('es-CL')}</th></tr>
-      </tfoot>
     </table>
   ` : '';
 
@@ -5045,8 +5033,7 @@ async function loadGastosList(g, box, coordId){
   const q = norm(state.groupQ||''); let hits=0;
   if(q){ const before=list.length; list = list.filter(x => norm([x.asunto,x.byEmail,x.moneda,String(x.valor||0)].join(' ')).includes(q)); hits = list.length; }
 
-  const tasas=await getTasas();
-  const tot={ CLP:0, USD:0, BRL:0, ARS:0, CLPconv:0 };
+  const tot={ CLP:0, USD:0, BRL:0, ARS:0 };
 
   const table=document.createElement('table'); table.className='table';
   table.innerHTML='<thead><tr><th>ASUNTO</th><th>AUTOR</th><th>MONEDA</th><th>VALOR</th><th>COMPROBANTE</th></tr></thead><tbody></tbody>';
@@ -5069,11 +5056,10 @@ async function loadGastosList(g, box, coordId){
      if(x.moneda==='ARS') tot.ARS+=Number(x.valor||0);
   });
 
-  tot.CLPconv = tot.CLP + (tot.USD*(tasas.USD||0)) + (tot.BRL*(tasas.BRL||0)) + (tot.ARS*(tasas.ARS||0));
   box.innerHTML='<h4>GASTOS DEL GRUPO</h4>'; box.appendChild(table);
 
   const totDiv=document.createElement('div'); totDiv.className='totline';
-  totDiv.textContent=`TOTAL CLP: ${tot.CLP.toLocaleString('es-CL')} · USD: ${tot.USD.toLocaleString('es-CL')} · BRL: ${tot.BRL.toLocaleString('es-CL')} · ARS: ${tot.ARS.toLocaleString('es-CL')} · EQUIV. CLP: ${Math.round(tot.CLPconv).toLocaleString('es-CL')}`;
+  totDiv.textContent=`TOTAL — CLP: ${tot.CLP.toLocaleString('es-CL')} · USD: ${tot.USD.toLocaleString('es-CL')} · BRL: ${tot.BRL.toLocaleString('es-CL')} · ARS: ${tot.ARS.toLocaleString('es-CL')}`;
   box.appendChild(totDiv);
 
   return hits;
