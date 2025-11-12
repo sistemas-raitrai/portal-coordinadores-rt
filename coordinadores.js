@@ -7,7 +7,7 @@ import {
   collection, collectionGroup, getDocs, getDoc, doc, updateDoc, addDoc, setDoc,
   serverTimestamp, query, where, orderBy, limit, deleteField, deleteDoc, startAfter
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
-import { ref as sRef, uploadBytes, getDownloadURL }
+import { ref as sRef, uploadBytes, getDownloadURL, listAll, deleteObject }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
 
 // === CORREO POR GAS (CONFIG) ===
@@ -1399,80 +1399,80 @@ async function renderOneGroup(g, preferDate){
   const started  = (viajeEstado === 'EN_CURSO') || !!viaje.inicio?.at;
   const finished = (viajeEstado === 'FINALIZADO') || !!viaje.fin?.at;
 
-   const header = document.createElement('div');
-   header.className = 'group-card';
+  const header = document.createElement('div');
+  header.className = 'group-card';
    
-   const topInfo = `
-     <h3>${(name||'').toUpperCase()} · CÓDIGO: (${code})</h3>
-     <div class="grid-mini">
-       <div class="lab">DESTINO</div><div>${(g.destino||'—').toUpperCase()}</div>
-       <div class="lab">GRUPO</div><div>${(name||'').toUpperCase()}</div>
-       <div class="lab">PAX TOTAL</div>
-       <div>${fmtPaxPlan(paxPlan, g)}${real ? ` <span class="muted">(A:${A_real} · E:${E_real})</span>` : ''}</div>
-       <div class="lab">PROGRAMA</div><div>${(g.programa||'—').toUpperCase()}</div>
-       <div class="lab">FECHAS</div><div>${rango}</div>
-     </div>
+  const topInfo = `
+    <h3>${(name||'').toUpperCase()} · CÓDIGO: (${code})</h3>
+    <div class="grid-mini">
+      <div class="lab">DESTINO</div><div>${(g.destino||'—').toUpperCase()}</div>
+      <div class="lab">GRUPO</div><div>${(name||'').toUpperCase()}</div>
+      <div class="lab">PAX TOTAL</div>
+      <div>${fmtPaxPlan(paxPlan, g)}${real ? ` <span class="muted">(A:${A_real} · E:${E_real})</span>` : ''}</div>
+      <div class="lab">PROGRAMA</div><div>${(g.programa||'—').toUpperCase()}</div>
+      <div class="lab">FECHAS</div><div>${rango}</div>
+    </div>
    
-     <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
-       <input id="searchTrips" type="text" placeholder="BUSCADOR EN RESUMEN, ITINERARIO Y GASTOS..." style="flex:1"/>
-     </div>
-   `;
+    <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
+      <input id="searchTrips" type="text" placeholder="BUSCADOR EN RESUMEN, ITINERARIO Y GASTOS..." style="flex:1"/>
+    </div>
+  `;
    
-   // Botón INICIO (full width, verde)
-   const btnInicioHtml = (!started)
-     ? `<button id="btnInicioViaje" class="btn ok" style="width:100%;"${isStartDay ? '' : ' title="No es el día de inicio. Se pedirá confirmación."'}>INICIO DE VIAJE</button>`
-     : '';
+  // Botón INICIO (full width, verde)
+  const btnInicioHtml = (!started)
+    ? `<button id="btnInicioViaje" class="btn ok" style="width:100%;"${isStartDay ? '' : ' title="No es el día de inicio. Se pedirá confirmación."'}>INICIO DE VIAJE</button>`
+    : '';
    
-   // Botón RESTABLECER (STAFF + viaje iniciado) – gris, full width, debajo del inicio
-   const btnResetInicioHtml = (state.is && started && !finished)
-     ? `<button id="btnResetInicio" class="btn" style="width:100%;background:#64748b;color:#fff;">RESTABLECER</button>`
-     : '';
+  // Botón RESTABLECER (STAFF + viaje iniciado) – gris, full width, debajo del inicio
+  const btnResetInicioHtml = (state.is && started && !finished)
+    ? `<button id="btnResetInicio" class="btn" style="width:100%;background:#64748b;color:#fff;">RESTABLECER</button>`
+    : '';
    
-   // Botón TERMINAR (si está en curso)
-   const btnTerminarHtml = (started && !finished)
-     ? `<button id="btnTerminoViaje" class="btn warn" style="width:100%;">TERMINAR VIAJE</button>`
-     : '';
+  // Botón TERMINAR (si está en curso)
+  const btnTerminarHtml = (started && !finished)
+    ? `<button id="btnTerminoViaje" class="btn warn" style="width:100%;">TERMINAR VIAJE</button>`
+    : '';
    
-   // Info finalizado + botón reabrir cierre (STAFF)
-   const finHtml = (finished)
-     ? `
-        <div class="muted">VIAJE FINALIZADO${viaje?.fin?.rendicionOk ? ' · RENDICIÓN HECHA' : ''}${viaje?.fin?.boletaOk ? ' · BOLETA ENTREGADA' : ''}</div>
-        ${state.is ? `<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>` : ''}`
-     : '';
+  // Info finalizado + botón reabrir cierre (STAFF)
+  const finHtml = (finished)
+    ? `
+      <div class="muted">VIAJE FINALIZADO${viaje?.fin?.rendicionOk ? ' · RENDICIÓN HECHA' : ''}${viaje?.fin?.boletaOk ? ' · BOLETA ENTREGADA' : ''}</div>
+      ${state.is ? `<button id="btnReabrirCierre" class="btn sec">RESTABLECER CIERRE</button>` : ''}`
+    : '';
    
-   header.innerHTML = `
-     ${topInfo}
-     <div class="rowflex" style="margin-top:.4rem;gap:.5rem;align-items:stretch;flex-wrap:wrap;flex-direction:column">
-       ${btnInicioHtml}
-       ${btnResetInicioHtml}
-       ${btnTerminarHtml}
-       ${finHtml}
-     </div>
+  header.innerHTML = `
+    ${topInfo}
+    <div class="rowflex" style="margin-top:.4rem;gap:.5rem;align-items:stretch;flex-wrap:wrap;flex-direction:column">
+      ${btnInicioHtml}
+      ${btnResetInicioHtml}
+      ${btnTerminarHtml}
+      ${finHtml}
+    </div>
    
-     <!-- HISTORIAL DEL VIAJE -->
-     <div id="viajeHistoryBox" class="act" style="margin-top:.6rem">
-       <h4>HISTORIAL DEL VIAJE</h4>
-       <div class="muted">CARGANDO…</div>
-     </div>
-   `;
-   cont.appendChild(header);
+    <!-- HISTORIAL DEL VIAJE -->
+    <div id="viajeHistoryBox" class="act" style="margin-top:.6rem">
+      <h4>HISTORIAL DEL VIAJE</h4>
+      <div class="muted">CARGANDO…</div>
+    </div>
+  `;
+  cont.appendChild(header);
    
-   // Handlers (únicos)
-   const btnIV = header.querySelector('#btnInicioViaje');
-   if (btnIV) btnIV.onclick = () => openInicioViajeModal(g);
+  // Handlers (únicos)
+  const btnIV = header.querySelector('#btnInicioViaje');
+  if (btnIV) btnIV.onclick = () => openInicioViajeModal(g);
    
-   const btnTV = header.querySelector('#btnTerminoViaje');
-   if (btnTV) btnTV.onclick = () => openTerminoViajeModal(g);
+  const btnTV = header.querySelector('#btnTerminoViaje');
+  if (btnTV) btnTV.onclick = () => openTerminoViajeModal(g);
    
-   const btnRY = header.querySelector('#btnReabrirCierre');
-   if (btnRY) btnRY.onclick = () => staffReopenCierre(g);
+  const btnRY = header.querySelector('#btnReabrirCierre');
+  if (btnRY) btnRY.onclick = () => staffReopenCierre(g);
    
-   // RESTABLECER (antes "Restablecer inicio")
-   const btnR0 = header.querySelector('#btnResetInicio');
-   if (btnR0) btnR0.onclick = async () => { await staffResetInicio(g); };
+  // RESTABLECER (antes "Restablecer inicio")
+  const btnR0 = header.querySelector('#btnResetInicio');
+  if (btnR0) btnR0.onclick = async () => { await staffResetInicio(g); };
 
-   const histBox = header.querySelector('#viajeHistoryBox');
-   renderViajeHistory(g, histBox);
+  const histBox = header.querySelector('#viajeHistoryBox');
+  renderViajeHistory(g, histBox);
 
   const tabs=document.createElement('div');
   tabs.innerHTML=`
@@ -4560,6 +4560,120 @@ async function sumGastosPorMonedaDelGrupo(g, qNorm){
 async function updateFinanzasSummary(gid, patch){
   await setDoc(doc(db,'grupos',gid,'finanzas','summary'), { ...patch, updatedAt: serverTimestamp(), updatedBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() } }, { merge:true });
 }
+
+// =============== RESTABLECER VIAJE COMPLETO — HELPERS ===============
+async function resetViajeCompleto(g){
+  if (!state.is){ alert('Solo STAFF puede restablecer.'); return; }
+  const ok = confirm('Esto borrará GASTOS, BITÁCORAS y ARCHIVOS DE CIERRE.\nDejará flags en cero y mantendrá el HISTORIAL.\n¿Continuar?');
+  if (!ok) return;
+
+  const gid = g.id;
+  showFlash('REESTABLECIENDO VIAJE…', 'warn');
+
+  // 1) Eliminar archivos de cierre (Storage)
+  await wipeFinanzasFiles(gid).catch(()=>{});
+
+  // 2) Eliminar todos los gastos del grupo (en cualquier coordinador)
+  const borradosGa = await wipeGastosForGroup(gid).catch(()=>0);
+
+  // 3) Vaciar bitácora basada en itinerario del grupo
+  const borradosBit = await wipeBitacoraFromItinerario(g).catch(()=>0);
+
+  // 4) Quitar flags de cierre / dejar “en cero”
+  await resetGroupFlags(gid);
+
+  // 5) Registrar auditoría
+  await logHistorial(gid, 'RESTABLECER_VIAJE_COMPLETO',
+    `Se restableció el viaje: gastos borrados=${borradosGa}, bitácora borrada=${borradosBit}`);
+
+  showFlash('VIAJE RESTABLECIDO', 'ok');
+
+  // refresco
+  try{
+    if (typeof renderOneGroup === 'function') await renderOneGroup(g);
+    else location.reload();
+  }catch{ location.reload(); }
+}
+
+// Borra recursivamente /finanzas/{grupoId}/... (boleta, comprobantes, efectivo_usd)
+async function wipeFinanzasFiles(grupoId){
+  async function delFolder(refFolder){
+    const l = await listAll(refFolder);
+    await Promise.all((l.items || []).map(it => deleteObject(it).catch(()=>{})));
+    for (const p of (l.prefixes || [])) await delFolder(p);
+  }
+  return delFolder(sRef(storage, `finanzas/${grupoId}`));
+}
+
+// Borra TODOS los gastos del grupo en cualquier uid; además borra la imagen si se guardó imgPath
+async function wipeGastosForGroup(grupoId){
+  const qs = await getDocs(query(collectionGroup(db,'gastos'), where('grupoId','==', grupoId)));
+  let n = 0;
+  for (const d of qs.docs){
+    const x = d.data() || {};
+    if (x.imgPath) { try{ await deleteObject(sRef(storage, x.imgPath)); }catch{} }
+    try{ await deleteDoc(d.ref); n++; }catch{}
+  }
+  return n;
+}
+
+// Borra entradas de bitácora recorriendo el itinerario del grupo
+async function wipeBitacoraFromItinerario(g){
+  const it = g.itinerario || {};
+  let n = 0;
+  const fechas = Object.keys(it);
+  for (const f of fechas){
+    const arr = Array.isArray(it[f]) ? it[f] : Object.values(it[f]||{});
+    for (const a of arr){
+      const actKey = slugActKey(a);
+      const coll = collection(db,'grupos', g.id, 'bitacora', actKey, f);
+      const qs = await getDocs(coll);
+      for (const d of qs.docs){ try{ await deleteDoc(d.ref); n++; }catch{} }
+    }
+  }
+  return n;
+}
+
+// Normaliza clave de actividad (misma lógica que usas para bitácora)
+function slugActKey(a){
+  const raw = String(a?.actKey || a?.key || a?.actividad || 'ACTIVIDAD').toUpperCase();
+  return raw.replace(/[^A-Z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+}
+
+// Quita flags/summary y vuelve “editable”
+async function resetGroupFlags(grupoId){
+  // flags del doc del grupo
+  try{
+    await updateDoc(doc(db,'grupos',grupoId), {
+      'viaje.fin.rendicionOk': false,
+      'viaje.fin.boletaOk': false
+    });
+  }catch{}
+
+  // summary de finanzas
+  try{
+    await updateFinanzasSummary(grupoId, {
+      closed:false,
+      totals: deleteField(),
+      transfer: deleteField(),
+      cashUsd: deleteField(),
+      boleta: deleteField()
+    });
+  }catch{}
+}
+
+// Auditoría
+async function logHistorial(grupoId, accion, detalle){
+  try{
+    await addDoc(collection(db,'grupos',grupoId,'historial'), {
+      accion, detalle,
+      by: (state.user?.email||'').toLowerCase(),
+      ts: serverTimestamp()
+    });
+  }catch{}
+}
+// =============== /HELPERS RESTABLECER ===============
+
 async function closeFinanzas(g){
   await updateFinanzasSummary(g.id, { closed:true, closedAt: serverTimestamp(), closedBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() } });
   await updateDoc(doc(db,'grupos',g.id), {
