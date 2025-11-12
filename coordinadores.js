@@ -4639,6 +4639,14 @@ async function renderFinanzas(g, pane){
   // 2) Totales por moneda (sin conversión)
   const totAb = totalesPorMoneda(abonos);       // {CLP,USD,BRL,ARS}
   const totGa = totalesPorMoneda(gastosAprob);  // {CLP,USD,BRL,ARS}
+
+  // === Saldos por moneda (bolsillos internos, pero UI unificada) ===
+  const saldos = {
+    CLP: (totAb.CLP||0) - (totGa.CLP||0),
+    USD: (totAb.USD||0) - (totGa.USD||0),
+    BRL: (totAb.BRL||0) - (totGa.BRL||0),
+    ARS: (totAb.ARS||0) - (totGa.ARS||0),
+  };
   
   // 4) ¿Quedan gastos PENDIENTES? (bloquea cierre)
   const hayPendientes = await existsGastoPendiente(g.id);
@@ -4789,14 +4797,6 @@ async function renderFinanzas(g, pane){
   // Inicializa checks si ya había registros subidos
   if (sumPrev?.transfer?.done && chTransf) chTransf.checked = true;
   if (sumPrev?.cashUsd?.done && chCash)   chCash.checked   = true;
-  
-  // === Saldos por moneda (bolsillos internos, pero UI unificada) ===
-  const saldos = {
-    CLP: (totAb.CLP||0) - (totGa.CLP||0),
-    USD: (totAb.USD||0) - (totGa.USD||0),
-    BRL: (totAb.BRL||0) - (totGa.BRL||0),
-    ARS: (totAb.ARS||0) - (totGa.ARS||0),
-  };
   
   // helper numérico tolerante (≈0 a 2 decimales)
   const isZero = v => Math.abs(Number(v||0)) < 0.005;
