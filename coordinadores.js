@@ -4965,8 +4965,9 @@ async function renderFinanzas(g, pane){
 
   await updateFinanzasSummary(g.id, {
     totals:{
-      abonos: totAb, gastos: totGa,
-      tasas: tasas, abonosCLP: abCLP.CLPconv, gastosCLP: gaCLP.CLPconv, saldoCLP
+      abonos: totAb,
+      gastos: totGa,
+      saldos: saldos
     }
   });
 
