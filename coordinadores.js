@@ -5026,6 +5026,22 @@ async function getTasas(){
   try{ const d=await getDoc(doc(db,'config','tasas')); if(d.exists()){ state.cache.tasas=d.data()||{}; return state.cache.tasas; } }catch(_){}
   state.cache.tasas={ USD:950, BRL:170, ARS:1.2 }; return state.cache.tasas;
 }
+
+// === CSS compacto para "GASTOS DEL GRUPO" (−20%) ===
+function ensureGastosCompactCSS(){
+  if (document.getElementById('cssGastosCompact')) return;
+  const s = document.createElement('style');
+  s.id = 'cssGastosCompact';
+  s.textContent = `
+    /* Tabla 20% más compacta */
+    .table.gastos { font-size: 0.8rem; }
+    .table.gastos th, .table.gastos td { padding: 4px 6px; }
+    .table.gastos select { font-size: 0.85em; padding: .2rem .5rem; height: 2rem; }
+    .totline.gastos { font-size: 0.9em; margin-top: .35rem; }
+  `;
+  document.head.appendChild(s);
+}
+
 // === REEMPLAZO COMPLETO ===
 async function loadGastosList(g, box, coordId){
   const qs = await getDocs(
@@ -5069,7 +5085,8 @@ async function loadGastosList(g, box, coordId){
   // Render tabla
   box.innerHTML = '<h4>GASTOS DEL GRUPO</h4>';
   const table = document.createElement('table');
-  table.className = 'table';
+  table.className = 'table gastos';
+  ensureGastosCompactCSS();
   table.innerHTML = `
     <thead>
       <tr>
@@ -5155,7 +5172,7 @@ async function loadGastosList(g, box, coordId){
 
   // Totales (sin equivalencia a CLP)
   const totDiv = document.createElement('div');
-  totDiv.className = 'totline';
+  totDiv.className = 'totline gastos';
   totDiv.textContent =
     `TOTAL — CLP: ${tot.CLP.toLocaleString('es-CL')} · USD: ${tot.USD.toLocaleString('es-CL')} · BRL: ${tot.BRL.toLocaleString('es-CL')} · ARS: ${tot.ARS.toLocaleString('es-CL')}`;
   box.appendChild(totDiv);
