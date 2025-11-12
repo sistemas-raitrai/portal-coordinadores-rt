@@ -4351,7 +4351,7 @@ async function renderGastos(g, pane, paneRef){
     }catch(e){ console.error(e); alert('NO FUE POSIBLE GUARDAR EL GASTO.'); }finally{ btn.disabled=false; }
   };
 
-  const hits = await loadGastosList(g, listBox, coordId, paneRef);
+  const hits = await loadGastosList(g, listBox, coordId, pane);
   return hits;
 }
 
@@ -5085,65 +5085,64 @@ async function getTasas(){
 
 // === CSS compacto para "GASTOS DEL GRUPO" (−20%) ===
 function ensureGastosCompactCSS(){
-  if (document.getElementById('cssGastosCompact')) return;
+  if (document.getElementById('css-gastos-compact')) return;
   const s = document.createElement('style');
-  s.id = 'cssGastosCompact';
+  s.id = 'css-gastos-compact';
   s.textContent = `
-    /* Tabla 20% más compacta */
-    .table.gastos { font-size: 0.8rem; }
-    .table.gastos th, .table.gastos td { padding: 4px 6px; }
-    .table.gastos select { font-size: 0.85em; padding: .2rem .5rem; height: 2rem; }
-    .totline.gastos { font-size: 0.9em; margin-top: .35rem; }
+    .table.gastos th, .table.gastos td{ padding: 6px 10px; }
+    .table.gastos select{ padding: 4px 8px; font-size: .95rem; }
+    .totline.gastos{ padding: 6px 10px; font-size: .95rem; }
   `;
   document.head.appendChild(s);
 }
 
 
 async function loadGastosList(g, box, coordId, paneRef){
+  // leer gastos de ese coordinador (orden creación desc)
   const qs = await getDocs(
-    query(collection(db,'coordinadores', coordId, 'gastos'), orderBy('createdAt','desc'))
+    query(collection(db,'coordinadores',coordId,'gastos'), orderBy('createdAt','desc'))
   );
 
+  // normalizamos lista + estado por defecto
   let list = [];
   qs.forEach(d=>{
     const x = d.data() || {};
-    if (x.grupoId === g.id) {
+    if (x.grupoId === g.id){
       list.push({
         id: d.id,
-        ...x, // ← FIX 1: spread correcto
+        ...x,
         estado: String(x.estado || 'PENDIENTE').toUpperCase()
       });
     }
   });
 
-  // Filtro por buscador global (si aplica)
+  // filtro por buscador global
   const q = norm(state.groupQ || '');
   let hits = 0;
   if (q){
-    const before = list.length;
     list = list.filter(x =>
-      norm([x.asunto, x.byEmail, x.moneda, String(x.valor||0)].join(' ')).includes(q)
+      norm([x.asunto, x.byEmail, x.moneda, String(x.valor||0)].join(' '))
+        .includes(q)
     );
     hits = list.length;
   }
 
-  // Totales por moneda (sin equivalencias)
+  // totales por moneda (solo para la línea TOTAL de la tabla)
   const tot = { CLP:0, USD:0, BRL:0, ARS:0 };
-  list.forEach(x => {
-    const m = String(x.moneda || '').toUpperCase();
-    if (m === 'CLP') tot.CLP += Number(x.valor || 0);
-    if (m === 'USD') tot.USD += Number(x.valor || 0);
-    if (m === 'BRL') tot.BRL += Number(x.valor || 0);
-    if (m === 'ARS') tot.ARS += Number(x.valor || 0);
-  });
+  for (const x of list){
+    const m = String(x.moneda||'').toUpperCase();
+    if (m && m in tot) tot[m] += Number(x.valor||0);
+  }
 
-  // Render tabla
+  // header condicional: ocultar AUTOR a no-staff, pero SIEMPRE mostrar ESTADO
   box.innerHTML = '<h4>GASTOS DEL GRUPO</h4>';
+  const showAutor = !!state.is;
+
   const table = document.createElement('table');
   table.className = 'table gastos';
-  ensureGastosCompactCSS?.();
+  // compactado (si definiste ensureGastosCompactCSS)
+  if (typeof ensureGastosCompactCSS === 'function') ensureGastosCompactCSS();
 
-  const showAutor = !!state.is; // STAFF ve AUTOR; no-staff no
   table.innerHTML = `
     <thead>
       <tr>
@@ -5151,90 +5150,93 @@ async function loadGastosList(g, box, coordId, paneRef){
         ${showAutor ? '<th>AUTOR</th>' : ''}
         <th>MONEDA</th>
         <th>VALOR</th>
-        <th>ESTADO</th>        <!-- SIEMPRE mostrar ESTADO -->
+        <th>ESTADO</th>
         <th>COMPROBANTE</th>
       </tr>
     </thead>
-    <tbody></tbody>`;
-
+    <tbody></tbody>
+  `;
   const tb = table.querySelector('tbody');
 
+  // ---- FILAS ----
   list.forEach(x=>{
-    // celdas ya construidas arriba:
+    const tr = document.createElement('tr');
+
     const tdAsu = document.createElement('td');
     tdAsu.setAttribute('data-label','ASUNTO');
-    tdAsu.textContent = String(x.asunto || '').toUpperCase();
-    
-    const tdAut = document.createElement('td');
-    tdAut.setAttribute('data-label','AUTOR');
-    tdAut.textContent = String(x.byEmail || '').toUpperCase();
-    
+    tdAsu.textContent = String(x.asunto||'').toUpperCase();
+
+    let tdAut = null;
+    if (showAutor){
+      tdAut = document.createElement('td');
+      tdAut.setAttribute('data-label','AUTOR');
+      tdAut.textContent = String(x.byEmail||'').toUpperCase();
+    }
+
     const tdMon = document.createElement('td');
     tdMon.setAttribute('data-label','MONEDA');
-    tdMon.textContent = String(x.moneda || '').toUpperCase();
-    
+    tdMon.textContent = String(x.moneda||'').toUpperCase();
+
     const tdVal = document.createElement('td');
     tdVal.setAttribute('data-label','VALOR');
-    tdVal.textContent = Number(x.valor || 0).toLocaleString('es-CL');
-    
-    // ESTADO: selector si es STAFF; texto si es no-staff
+    tdVal.textContent = Number(x.valor||0).toLocaleString('es-CL');
+
     const tdEst = document.createElement('td');
     tdEst.setAttribute('data-label','ESTADO');
-    
-    if (state.is) {
+
+    if (state.is){
       const sel = document.createElement('select');
       sel.innerHTML = `
         <option value="PENDIENTE">PENDIENTE</option>
         <option value="APROBADO">APROBADO</option>
         <option value="RECHAZADO">RECHAZADO</option>
       `;
-      sel.value = String(x.estado || 'PENDIENTE').toUpperCase();
-      sel.onchange = async () => {
+      sel.value = x.estado || 'PENDIENTE';
+      sel.onchange = async ()=>{
         const nuevo = sel.value;
-        try {
+        try{
           await updateDoc(
             doc(db,'coordinadores', coordId, 'gastos', x.id),
             { estado: nuevo, estadoAt: serverTimestamp(), estadoBy: (state.user?.email||'').toLowerCase() }
           );
           x.estado = nuevo;
-          showFlash('ESTADO ACTUALIZADO', 'ok');
-          if (paneRef) renderFinanzas(g, paneRef);  // refrescar saldos
-        } catch (e) {
+          showFlash && showFlash('ESTADO ACTUALIZADO','ok');
+          // refrescar RESUMEN/SALDOS
+          if (paneRef) await renderFinanzas(g, paneRef);
+        }catch(e){
           console.error(e);
-          showFlash('NO SE PUDO ACTUALIZAR EL ESTADO', 'err');
-          sel.value = String(x.estado || 'PENDIENTE').toUpperCase();
+          showFlash && showFlash('NO SE PUDO ACTUALIZAR EL ESTADO','err');
+          sel.value = x.estado || 'PENDIENTE';
         }
       };
       tdEst.appendChild(sel);
-    } else {
+    }else{
       tdEst.textContent = String(x.estado || 'PENDIENTE').toUpperCase();
     }
-    
+
     const tdComp = document.createElement('td');
     tdComp.setAttribute('data-label','COMPROBANTE');
     tdComp.innerHTML = x.imgUrl ? `<a href="${x.imgUrl}" target="_blank">VER</a>` : '—';
-    
-    // ⬇⬇⬇ append final con AUTOR condicional
+
     tr.appendChild(tdAsu);
-    if (showAutor) tr.appendChild(tdAut);   // <<— showAutor = !!state.is
+    if (showAutor) tr.appendChild(tdAut);
     tr.appendChild(tdMon);
     tr.appendChild(tdVal);
     tr.appendChild(tdEst);
     tr.appendChild(tdComp);
+    tb.appendChild(tr);
   });
 
   box.appendChild(table);
 
-  // Totales (sin equivalencias)
   const totDiv = document.createElement('div');
   totDiv.className = 'totline gastos';
   totDiv.textContent =
-    `TOTAL — CLP: ${tot.CLP.toLocaleString('es-CL')} · USD: ${tot.USD.toLocaleString('es-CL')} · BRL: ${tot.BRL.toLocaleString('es-CL')} · ARS: ${tot.ARS.toLocaleString('es-CL')}`;
+    `TOTAL — CLP: ${fmtCL(tot.CLP||0)} · USD: ${fmtCL(tot.USD||0)} · BRL: ${fmtCL(tot.BRL||0)} · ARS: ${fmtCL(tot.ARS||0)}`;
   box.appendChild(totDiv);
 
   return hits;
 }
-
 
 /* ====== IMPRIMIR VOUCHERS (STAFF) ====== */
 function openPrintVouchersModal(){
