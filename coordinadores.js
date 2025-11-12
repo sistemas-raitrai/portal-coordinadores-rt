@@ -226,7 +226,10 @@ function ensurePrintDOM(){
 }
 
 async function preparePrintForGroup(g){
+  // Mantén tu estructura de impresión ya creada
   ensurePrintDOM();
+
+  // Referencias a los placeholders del encabezado (como ya tenías)
   const $doc   = document.getElementById('print-block');
   const $grp   = document.getElementById('ph-grupo');
   const $m1    = document.getElementById('ph-meta1');
@@ -234,42 +237,203 @@ async function preparePrintForGroup(g){
   const $fech  = document.getElementById('ph-fechas');
   const $pax   = document.getElementById('ph-pax');
 
+  // Helpers locales (sin depender de otros nombres)
+  const norm = s => String(s||'').trim().toUpperCase();
+  const dmySafe = v => {
+    try{
+      if (!v) return '';
+      const d = (v instanceof Date) ? v : new Date(v);
+      return isNaN(d) ? String(v).toUpperCase() : d.toLocaleDateString('es-CL').toUpperCase();
+    }catch{ return String(v||'').toUpperCase(); }
+  };
+  const tVal = (hhmm)=>{
+    const m = String(hhmm||'').match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return 99_999;
+    return (+m[1])*60 + (+m[2]);
+  };
+
+  // ===== Encabezado =====
   const nombre = (g.nombreGrupo||g.aliasGrupo||g.id)||'';
   const code   = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
-  const rango  = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
-  const destino= (g.destino||'').toString().toUpperCase();
-  const programa=(g.programa||'').toString().toUpperCase();
+  const rango  = `${dmySafe(g.fechaInicio||'')} — ${dmySafe(g.fechaFin||'')}`;
+  const destino= norm(g.destino||'');
+  const programa = norm(g.programa||'');
 
-  $grp.textContent  = `GRUPO: ${nombre.toUpperCase()} (${code})`;
+  $grp.textContent  = `GRUPO: ${norm(nombre)} (${code})`;
   $m1.textContent   = `DESTINO: ${destino}`;
   $m2.textContent   = `PROGRAMA: ${programa || '—'}`;
   $fech.textContent = `FECHAS: ${rango}`;
-  const real  = paxRealOf(g);
-  const plan  = paxOf(g);
-  $pax.innerHTML    = `PAX: ${real && real!==plan ? `${plan} → ${real}` : plan}`;
+  const real  = paxRealOf ? paxRealOf(g) : null;
+  const plan  = paxOf ? paxOf(g) : null;
+  $pax.innerHTML    = `PAX: ${real && plan && real!==plan ? `${plan} → ${real}` : (plan || real || '—')}`;
 
-  // Cuerpo simple: fechas + actividades ordenadas por hora
-  let body = '';
-  const fechas = rangoFechas(g.fechaInicio,g.fechaFin);
-  for (const f of fechas){
-    const actsRaw = (g.itinerario && g.itinerario[f]) ? g.itinerario[f] : [];
-    const acts = (Array.isArray(actsRaw) ? actsRaw : Object.values(actsRaw||{}))
-      .filter(a => a && typeof a==='object')
-      // Ocultar "Desayuno Hotel" en impresión simple
-      .filter(a => String(a?.actividad || '').toUpperCase() !== 'DESAYUNO HOTEL')
-      .sort((a,b)=> timeVal(a?.horaInicio)-timeVal(b?.horaInicio));
-    body += `\n\n# ${dmy(f)}\n`;
-    if (!acts.length){ body += '— SIN ACTIVIDADES —\n'; continue; }
-    for (const a of acts){
-      const hIni = (a.horaInicio||'') ? ` ${a.horaInicio}` : '';
-      const hFin = (a.horaFin||'')    ? ` — ${a.horaFin}`  : '';
-      const prov = (a.proveedor||'')  ? ` · PROV: ${a.proveedor.toString().toUpperCase()}` : '';
-      body += `• ${(a.actividad||'').toString().toUpperCase()}${hIni}${hFin}${prov}\n`;
+  // ===== Cargas seguras (si existen loaders; si no, continuamos sin romper)
+  let vuelos = [];
+  try{ if (typeof loadVuelosInfo === 'function') vuelos = await loadVuelosInfo(g) || []; }catch{}
+
+  let hoteles = [];
+  try{ if (typeof loadHotelAssignmentsForGroup === 'function') hoteles = await loadHotelAssignmentsForGroup(g) || []; }catch{}
+
+  let vouchersSet = new Set();
+  try{ if (typeof loadVouchersForGroup === 'function') vouchersSet = await loadVouchersForGroup(g) || new Set(); }catch{}
+
+  // ===== Sección: TRANSPORTE =====
+  let htmlTransp = `<h2>TRANSPORTE</h2>`;
+  if (Array.isArray(vuelos) && vuelos.length){
+    htmlTransp += vuelos.map(v=>{
+      const tipo = norm(v.tipo||'');
+      const code = String(v.codigo||'').toUpperCase();
+      const sl   = v.salida  ? ` · ${v.salida}`  : '';
+      const ll   = v.llegada ? ` → ${v.llegada}` : '';
+      const ob   = v.obs     ? ` · ${norm(v.obs)}` : '';
+      return `<div class="meta">• ${tipo}${code?(' '+code):''}${sl}${ll}${ob}</div>`;
+    }).join('');
+  } else {
+    htmlTransp += `<div class="muted">SIN REGISTROS.</div>`;
+  }
+
+  // ===== Sección: HOTELES =====
+  let htmlHoteles = `<h2>HOTELES</h2>`;
+  if (Array.isArray(hoteles) && hoteles.length){
+    htmlHoteles += hoteles.map(h=>`
+      <div class="card">
+        <div class="meta"><strong>${norm(h.nombre||'HOTEL')}</strong>${h.ciudad?(' · '+norm(h.ciudad)) : ''}</div>
+        ${(h.in||h.checkIn||h.fechaInicio) || (h.out||h.checkOut||h.fechaFin) ? 
+          `<div class="meta">CHECK-IN: ${dmySafe(h.in||h.checkIn||h.fechaInicio)} · CHECK-OUT: ${dmySafe(h.out||h.checkOut||h.fechaFin)}</div>` : ''
+        }
+        ${h.direccion ? `<div class="meta">${norm(h.direccion)}</div>` : ''}
+        ${(h.contacto||h.telefono||h.email) ? 
+          `<div class="meta">CONTACTO: ${norm(h.contacto||'')}${h.telefono?(' · '+norm(h.telefono)) : ''}${h.email?(' · '+String(h.email).toLowerCase()) : ''}</div>`
+          : ''
+        }
+      </div>
+    `).join('');
+  } else {
+    htmlHoteles += `<div class="muted">SIN ASIGNACIONES.</div>`;
+  }
+
+  // ===== Sección: ITINERARIO (oculta "DESAYUNO HOTEL", proveedor/contacto/dirección + VOUCHER + indicaciones del item) =====
+  let htmlItin = `<h2>ITINERARIO</h2>`;
+  const byDate = g.itinerario || {};
+  const fechas = Object.keys(byDate).sort();
+  if (!fechas.length){
+    htmlItin += `<div class="muted">SIN ITINERARIO.</div>`;
+  } else {
+    for (const f of fechas){
+      let acts = byDate[f];
+      if (!Array.isArray(acts)) acts = Object.values(acts||{}).filter(x=>x && typeof x==='object');
+
+      // ocultar "DESAYUNO HOTEL"
+      acts = acts.filter(a => norm(a.actividad) !== 'DESAYUNO HOTEL')
+                 .sort((a,b)=> tVal(a?.horaInicio) - tVal(b?.horaInicio));
+      if (!acts.length) continue;
+
+      htmlItin += `<h3>${dmySafe(f)}</h3>`;
+
+      for (const a of acts){
+        const actName = norm(a.actividad||'');
+        const horaL   = a.horaInicio ? ` · ${a.horaInicio}${a.horaFin?('—'+a.horaFin):''}` : '';
+
+        // Resolver datos de servicio/proveedor si existe helper; si no, usa lo que venga en el item
+        let provLines = '';
+        let markVoucher = !!a.requiereVoucher;
+
+        try{
+          if (typeof resolveServicioYProveedor === 'function'){
+            const { servicio, proveedor } = await resolveServicioYProveedor(g.destino || a.destino, a.actividad, a.servicioId);
+            const nombreProv = proveedor?.proveedor || servicio?.proveedor || a.proveedor || '';
+            const dir        = proveedor?.direccion || a.direccion || '';
+            const contacto   = proveedor?.contacto || a.contacto || '';
+            const tel        = proveedor?.telefono || proveedor?.fono || a.telefono || '';
+
+            if (nombreProv) provLines += `<div class="meta">${norm(nombreProv)}</div>`;
+            if (dir)        provLines += `<div class="meta">${norm(dir)}</div>`;
+            if (contacto || tel) provLines += `<div class="meta">CONTACTO: ${norm(contacto||'')}${tel?(' · '+norm(tel)) : ''}</div>`;
+
+            // VOUCHER: por servicio o por nombre de actividad
+            markVoucher = markVoucher
+              || (servicio?.requiereVoucher ? true : false)
+              || (servicio?.id && vouchersSet && typeof vouchersSet.has==='function' && vouchersSet.has('S:'+servicio.id))
+              || (vouchersSet && typeof vouchersSet.has==='function' && vouchersSet.has('A:'+actName));
+          } else {
+            // Fallback: sólo con lo que traiga la actividad
+            if (a.proveedor) provLines += `<div class="meta">${norm(a.proveedor)}</div>`;
+            if (a.direccion) provLines += `<div class="meta">${norm(a.direccion)}</div>`;
+            if (a.contacto || a.telefono){
+              provLines += `<div class="meta">CONTACTO: ${norm(a.contacto||'')}${a.telefono?(' · '+norm(a.telefono)) : ''}</div>`;
+            }
+          }
+        }catch{}
+
+        // Indicaciones puntuales del item (si existen en el itinerario)
+        const indic = (a.indicaciones || a.nota || '').toString().trim();
+        const indicLine = indic ? `<div class="meta">INDICACIONES: ${norm(indic)}</div>` : '';
+
+        // Render del ítem
+        htmlItin += `
+          <div class="meta">• ${actName}${horaL}${markVoucher ? ' · <span class="badge">VOUCHER</span>' : ''}</div>
+          ${provLines}
+          ${indicLine}
+        `;
+      }
     }
   }
-  $doc.textContent = body.trim();
-}
 
+  // ===== Sección: FINANZAS — SOLO ABONOS =====
+  let htmlAbonos = `<h2>FINANZAS — ABONOS</h2>`;
+  try{
+    let abonos = [];
+    if (typeof loadAbonos === 'function') abonos = await loadAbonos(g.id) || [];
+    if (abonos.length){
+      abonos.sort((a,b)=> {
+        const da = new Date(a.fecha || a.ts?.seconds*1000 || 0).getTime();
+        const db = new Date(b.fecha || b.ts?.seconds*1000 || 0).getTime();
+        return da - db;
+      });
+      htmlAbonos += `<table class="t-tight" style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:4px 6px;border-bottom:1px solid #eee">TIPO/MEDIO</th>
+            <th style="text-align:left;padding:4px 6px;border-bottom:1px solid #eee">ASUNTO</th>
+            <th style="text-align:left;padding:4px 6px;border-bottom:1px solid #eee">FECHA</th>
+            <th style="text-align:left;padding:4px 6px;border-bottom:1px solid #eee">MONEDA</th>
+            <th style="text-align:right;padding:4px 6px;border-bottom:1px solid #eee">MONTO</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${abonos.map(a=>{
+            const medio  = (a.medio||a.tipo||'').toString().toUpperCase();
+            const asunto = (a.asunto||'ABONO').toString().toUpperCase();
+            const fecha  = a.fecha ? dmySafe(a.fecha) : (a.ts?.seconds ? dmySafe(new Date(a.ts.seconds*1000)) : '');
+            const mon    = (a.moneda||'CLP').toString().toUpperCase();
+            const val    = Number(a.valor||0);
+            return `
+              <tr>
+                <td style="padding:4px 6px;border-bottom:1px solid #eee">${medio||'—'}</td>
+                <td style="padding:4px 6px;border-bottom:1px solid #eee">${asunto}</td>
+                <td style="padding:4px 6px;border-bottom:1px solid #eee">${fecha||'—'}</td>
+                <td style="padding:4px 6px;border-bottom:1px solid #eee">${mon}</td>
+                <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right">${val.toLocaleString('es-CL')}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>`;
+    } else {
+      htmlAbonos += `<div class="muted">SIN ABONOS REGISTRADOS.</div>`;
+    }
+  }catch{
+    htmlAbonos += `<div class="muted">SIN ABONOS.</div>`;
+  }
+
+  // ===== Ensamble final en el contenedor del print =====
+  $doc.innerHTML = `
+    ${htmlTransp}
+    ${htmlHoteles}
+    ${htmlItin}
+    ${htmlAbonos}
+  `;
+}
 
 /* ====== HISTORIAL VIAJE (utils) ====== */
 const HIST_ACTKEY = '_viaje_'; // o 'viaje_hist', cualquier cosa que NO sea __...__
@@ -816,6 +980,86 @@ if (typeof window !== 'undefined') {
       });
   };
 })();
+
+// ===== Helpers financieros por moneda (sin conversión) =====
+function _safeNum(x){ const n = Number(x||0); return isFinite(n) ? n : 0; }
+
+// Agrupa una lista de items (con .moneda y .valor) a totales por moneda.
+// Espera formatos: { moneda:'CLP'|'USD'|'BRL'|'ARS', valor:Number }
+function totalesPorMoneda(items){
+  const acc = { CLP:0, USD:0, BRL:0, ARS:0 };
+  for (const it of (items||[])) {
+    const m = String(it.moneda||'CLP').toUpperCase();
+    if (m in acc) acc[m] += _safeNum(it.valor);
+  }
+  return acc;
+}
+
+// Días inclusivos (ej: 1–5 = 5 días). Acepta 'YYYY-MM-DD' o Date.
+function daysBetweenInclusive(a,b){
+  const toD = (v)=> (v instanceof Date) ? v : new Date(String(v));
+  const d1 = toD(a), d2 = toD(b);
+  if (isNaN(d1) || isNaN(d2)) return 0;
+  const ONE = 24*60*60*1000;
+  const z1 = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate());
+  const z2 = new Date(d2.getFullYear(), d2.getMonth(), d2.getDate());
+  return Math.round((z2 - z1)/ONE) + 1;
+}
+
+// Carga GASTOS APROBADOS del grupo (colección estándar).
+// Lee de: grupos/{id}/gastos  (fallback: finanzas_gastos/{id}/items si existiera)
+async function loadGastosAprobados(grupoId){
+  const out = [];
+  try{
+    // ruta 1: grupos/{id}/gastos
+    const base1 = collection(db,'grupos', String(grupoId), 'gastos');
+    const qs1   = await getDocs(base1);
+    qs1.forEach(d=>{
+      const x = d.data()||{};
+      if ((String(x.estado||'PENDIENTE').toUpperCase()) === 'APROBADO') {
+        out.push({
+          id: d.id,
+          moneda: String(x.moneda||'CLP').toUpperCase(),
+          valor:  _safeNum(x.monto || x.valor || 0)
+        });
+      }
+    });
+    if (out.length) return out;
+  }catch{}
+
+  try{
+    // ruta 2: finanzas_gastos/{id}/items (si la usas)
+    const base2 = collection(db,'finanzas_gastos', String(grupoId), 'items');
+    const qs2   = await getDocs(base2);
+    qs2.forEach(d=>{
+      const x = d.data()||{};
+      if ((String(x.estado||'PENDIENTE').toUpperCase()) === 'APROBADO') {
+        out.push({
+          id: d.id,
+          moneda: String(x.moneda||'CLP').toUpperCase(),
+          valor:  _safeNum(x.monto || x.valor || 0)
+        });
+      }
+    });
+  }catch{}
+  return out;
+}
+
+// Verifica si existen gastos PENDIENTES (bloquea cierre)
+async function existsGastoPendiente(grupoId){
+  try{
+    const base = collection(db,'grupos', String(grupoId), 'gastos');
+    const qs   = await getDocs(base);
+    let found = false;
+    qs.forEach(d=>{
+      const x = d.data()||{};
+      if (String(x.estado||'PENDIENTE').toUpperCase() === 'PENDIENTE') found = true;
+    });
+    return found;
+  }catch{
+    return false;
+  }
+}
 
 window.renderFinanzas ??= async ()=>0;
 window.setEstadoServicio ??= async ()=> showFlash('ESTADO ACTUALIZADO');
@@ -4388,13 +4632,25 @@ async function renderFinanzas(g, pane){
   const qNorm = norm(state.groupQ||'');
   const tasas = await getTasas();
 
+  // 1) Carga abonos (tal cual) y gastos APROBADOS (nuevo)
   const abonos = await loadAbonos(g.id);
-  const totAb = abonos.reduce((acc,a)=>{ const m=String(a.moneda||'CLP').toUpperCase(); acc[m]=(acc[m]||0)+Number(a.valor||0); return acc; },{CLP:0,USD:0,BRL:0,ARS:0});
-  const totGa = await sumGastosPorMonedaDelGrupo(g, qNorm);
+  const gastosAprob = await loadGastosAprobados(g.id);
+  
+  // 2) Totales por moneda (sin conversión)
+  const totAb = totalesPorMoneda(abonos);       // {CLP,USD,BRL,ARS}
+  const totGa = totalesPorMoneda(gastosAprob);  // {CLP,USD,BRL,ARS}
+  
+  // 3) Saldos por moneda (aprobados)
+  const saldos = {
+    CLP: (totAb.CLP||0) - (totGa.CLP||0),
+    USD: (totAb.USD||0) - (totGa.USD||0),
+    BRL: (totAb.BRL||0) - (totGa.BRL||0),
+    ARS: (totAb.ARS||0) - (totGa.ARS||0),
+  };
+  
+  // 4) ¿Quedan gastos PENDIENTES? (bloquea cierre)
+  const hayPendientes = await existsGastoPendiente(g.id);
 
-  const abCLP = await sumCLPByMoneda(totAb, tasas);
-  const gaCLP = await sumCLPByMoneda(totGa, tasas);
-  const saldoCLP = abCLP.CLPconv - gaCLP.CLPconv;
 
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML=''; pane.appendChild(wrap);
 
@@ -4404,11 +4660,17 @@ async function renderFinanzas(g, pane){
     <h4>RESUMEN FINANZAS</h4>
     <div class="grid-mini">
       <div class="lab">ABONOS</div>
-      <div>CLP ${fmtCL(totAb.CLP||0)} · USD ${fmtCL(totAb.USD||0)} · BRL ${fmtCL(totAb.BRL||0)} · ARS ${fmtCL(totAb.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(abCLP.CLPconv)}</strong></div>
-      <div class="lab">GASTOS</div>
-      <div>CLP ${fmtCL(totGa.CLP||0)} · USD ${fmtCL(totGa.USD||0)} · BRL ${fmtCL(totGa.BRL||0)} · ARS ${fmtCL(totGa.ARS||0)} · <strong>TOTAL CLP: ${fmtCL(gaCLP.CLPconv)}</strong></div>
-      <div class="lab">SALDO</div>
-      <div><strong>${saldoCLP>=0?'TRANSFERIR A EMPRESA:':'PETICIÓN DE TRANSFERENCIA A COORDINADOR(A):'}: CLP ${fmtCL(saldoCLP)}</strong></div>
+      <div>
+        CLP ${fmtCL(totAb.CLP||0)} · USD ${fmtCL(totAb.USD||0)} · BRL ${fmtCL(totAb.BRL||0)} · ARS ${fmtCL(totAb.ARS||0)}
+      </div>
+      <div class="lab">GASTOS (APROBADOS)</div>
+      <div>
+        CLP ${fmtCL(totGa.CLP||0)} · USD ${fmtCL(totGa.USD||0)} · BRL ${fmtCL(totGa.BRL||0)} · ARS ${fmtCL(totGa.ARS||0)}
+      </div>
+      <div class="lab">SALDOS</div>
+      <div>
+        CLP ${fmtCL(saldos.CLP||0)} · USD ${fmtCL(saldos.USD||0)} · BRL ${fmtCL(saldos.BRL||0)} · ARS ${fmtCL(saldos.ARS||0)}
+      </div>
     </div>
   `;
   wrap.appendChild(resum);
@@ -4548,54 +4810,58 @@ async function renderFinanzas(g, pane){
   const isZero = v => Math.abs(Number(v||0)) < 0.005;
   
   // === Requisitos dinámicos ===
-  // - Boleta SIEMPRE obligatoria
-  // - Si sobra CLP  -> Transferencia CLP con comprobante
-  // - Si sobra USD  -> Efectivo devuelto USD con constancia
-  // - BRL/ARS deben quedar en 0 (no hay devolución en esas monedas)
   function checkReady(){
-    const needTransf = (saldos.CLP || 0) > 0;   // sobra CLP
-    const needCash   = (saldos.USD || 0) > 0;   // sobra USD
-    const brlOk      = isZero(saldos.BRL);
-    const arsOk      = isZero(saldos.ARS);
-    const restrOk    = brlOk && arsOk;
+    // Políticas por moneda
+    const needTransfCLP = (saldos.CLP || 0) > 0;  // sobra CLP → transferencia + comprobante
+    const needCashUSD   = (saldos.USD || 0) > 0;  // sobra USD → efectivo USD + constancia
+    const brlZero       = Math.abs(saldos.BRL||0) < 0.005;
+    const arsZero       = Math.abs(saldos.ARS||0) < 0.005;
   
-    // Mostrar/ocultar bloques según necesidad
+    // Mostrar/ocultar bloques según necesidad real
     const wrapTransf = cierre.querySelector('#wrapTransf');
     const wrapCash   = cierre.querySelector('#wrapCashUsd');
-    if (wrapTransf) wrapTransf.style.display = needTransf ? '' : 'none';
-    if (wrapCash)   wrapCash.style.display   = needCash   ? '' : 'none';
-
-    // (OPCIONAL) Ocultar “Datos de transferencia” si no hay CLP sobrante
-    const datos = cierre.querySelector('.card'); // es la tarjeta que contiene los datos de transferencia
-    if (datos) datos.style.display = needTransf ? '' : 'none';
+    if (wrapTransf) wrapTransf.style.display = needTransfCLP ? '' : 'none';
+    if (wrapCash)   wrapCash.style.display   = needCashUSD   ? '' : 'none';
   
-    // Validaciones de requisitos
-    const transfOk = !needTransf || !!sumPrev?.transfer?.done || (chTransf && chTransf.checked);
-    const cashOk   = !needCash   || !!sumPrev?.cashUsd?.done   || (chCash   && chCash.checked);
-    const boletaOk = !!sumPrev?.boleta?.uploaded;
+    // Datos de transferencia: solo si hace falta CLP
+    const datosTransf = cierre.querySelector('.card');
+    if (datosTransf) datosTransf.style.display = needTransfCLP ? '' : 'none';
   
-    // Habilitar botón Cerrar
+    // Flags previos (persistidos)
+    const sumPrevOkBoleta  = !!sumPrev?.boleta?.uploaded;
+    const sumPrevOkTransf  = !!sumPrev?.transfer?.done;
+    const sumPrevOkCashUsd = !!sumPrev?.cashUsd?.done;
+  
+    // Checks UI actuales
+    const okTransf = !needTransfCLP || sumPrevOkTransf || (chTransf && chTransf.checked);
+    const okCash   = !needCashUSD   || sumPrevOkCashUsd || (chCash   && chCash.checked);
+  
+    // Boleta sugerida = 70.000 x días de viaje
+    const dias = daysBetweenInclusive(g.fechaInicio, g.fechaFin);
+    const boletaSugerida = 70000 * Math.max(0, dias||0);
+  
+    // Condiciones para habilitar
+    const sinPendientes = !hayPendientes;                  // NO deben existir gastos en PENDIENTE
+    const brlOk = brlZero, arsOk = arsZero;                // BRL y ARS deben ser 0 exacto
+    const boletaOk = sumPrevOkBoleta;                      // boleta subida
+    const listo = sinPendientes && brlOk && arsOk && boletaOk && okTransf && okCash;
+  
     const btn = cierre.querySelector('#btnCloseFin');
-    if (btn) btn.disabled = !(restrOk && boletaOk && transfOk && cashOk);
+    if (btn) btn.disabled = !listo;
   
-    // Mensajes
+    // Mensajes guía
     const hints = [];
-    if (!boletaOk) hints.push('• FALTA BOLETA.');
-    if (!restrOk){
-      if (!brlOk) hints.push('• BRL debe quedar en 0 (no hay devolución en BRL).');
-      if (!arsOk) hints.push('• ARS debe quedar en 0 (no hay devolución en ARS).');
-    }
-    if (needTransf && !sumPrev?.transfer?.done && !(chTransf && chTransf.checked)){
-      hints.push('• Sobra CLP: marca TRANSFERENCIA REALIZADA (CLP) y sube comprobante.');
-    }
-    if (needCash && !sumPrev?.cashUsd?.done && !(chCash && chCash.checked)){
-      hints.push('• Sobra USD: marca EFECTIVO DEVUELTO (USD) y sube constancia.');
-    }
+    // Línea informativa de boleta
+    hints.push(`• BOLETA SUGERIDA: CLP ${fmtCL(boletaSugerida)} (${dias||0} DÍAS).`);
+    if (!boletaOk) hints.push('• FALTA SUBIR BOLETA DEL SII.');
+    if (!sinPendientes) hints.push('• HAY GASTOS PENDIENTES: DEBEN SER APROBADOS O RECHAZADOS.');
+    if (!brlOk) hints.push('• BRL DEBE QUEDAR EN 0.');
+    if (!arsOk) hints.push('• ARS DEBE QUEDAR EN 0.');
+    if (needTransfCLP && !okTransf) hints.push('• SOBRA CLP: MARCA “TRANSFERENCIA REALIZADA (CLP)” Y SUBE COMPROBANTE.');
+    if (needCashUSD   && !okCash)   hints.push('• SOBRA USD: MARCA “EFECTIVO DEVUELTO (USD)” Y SUBE CONSTANCIA.');
   
     const h = cierre.querySelector('#finHints');
-    h.innerHTML = hints.length
-      ? `<div class="muted">${hints.join('<br>')}</div>`
-      : '<div class="muted">TODO LISTO PARA CERRAR.</div>';
+    h.innerHTML = hints.length ? `<div class="muted">${hints.join('<br>')}</div>` : '<div class="muted">TODO LISTO PARA CERRAR.</div>';
   }
 
   checkReady();
