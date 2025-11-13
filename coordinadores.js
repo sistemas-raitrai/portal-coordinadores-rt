@@ -128,6 +128,73 @@ function fmtFechaHoraMs(ms){
   }
 }
 
+  // ====== DEDUP HOTELES: colapsa asignaciones por día; el último (updatedAt/createdAt) gana ======
+function collapseHotelAssignments(assigns){
+  if (!Array.isArray(assigns) || !assigns.length) return [];
+
+  const toISOday = (v)=>{
+    if (!v) return null;
+    const d = (v instanceof Date) ? v : new Date(v);
+    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${dd}`;
+  };
+  const addDays = (iso, n)=>{
+    const d = new Date(iso+'T00:00:00');
+    d.setDate(d.getDate()+n);
+    return toISOday(d);
+  };
+  const tsOf = (x)=>{
+    const u = x?.updatedAt?.seconds ? x.updatedAt.seconds*1000 :
+              x?.updatedAt?.toMillis ? x.updatedAt.toMillis() :
+              (x?.updatedAt instanceof Date ? x.updatedAt.getTime() : null);
+    const c = x?.createdAt?.seconds ? x.createdAt.seconds*1000 :
+              x?.createdAt?.toMillis ? x.createdAt.toMillis() :
+              (x?.createdAt instanceof Date ? x.createdAt.getTime() : null);
+    return Number(u || c || Date.now());
+  };
+  const getStart = (x)=> toISOday(x.checkIn || x.fechaInicio || x.inicio || x.start);
+  const getEnd   = (x)=> toISOday(x.checkOut|| x.fechaFin    || x.fin    || x.end);
+
+  // Pintamos ascendente para que lo último que venga sobreescriba noches previas
+  const ordered = [...assigns].sort((a,b)=> tsOf(a)-tsOf(b));
+  const dayMap = new Map(); // ISO → asignación final de esa noche
+
+  for (const a of ordered){
+    const ini = getStart(a), out = getEnd(a);
+    if (!ini || !out) continue;
+    let d = ini;
+    while (d && d < out){
+      dayMap.set(d, a);
+      d = addDays(d, 1);
+    }
+  }
+
+  // Compactamos noches contiguas con el mismo objeto
+  const days = [...dayMap.keys()].sort();
+  const blocks = [];
+  let i = 0;
+  while (i < days.length){
+    const start = days[i];
+    const ref = dayMap.get(start);
+    let j = i + 1;
+    while (j < days.length){
+      const prev = days[j-1], curr = days[j];
+      if (addDays(prev,1) === curr && dayMap.get(curr) === ref) j++;
+      else break;
+    }
+    const endExcl = addDays(days[j-1], 1); // checkOut
+    blocks.push({
+      ...ref,
+      checkIn:  getStart(ref) || start,
+      checkOut: getEnd(ref)   || endExcl,
+      fechaInicio: getStart(ref) || start, // por si tu renderer usa estos aliases
+      fechaFin:    getEnd(ref)   || endExcl
+    });
+    i = j;
+  }
+
+  return blocks.sort((a,b)=> (getStart(a) > getStart(b)) ? 1 : -1);
+}
 
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
@@ -284,15 +351,21 @@ async function preparePrintForGroup(g){
   const plan  = paxOf ? paxOf(g) : null;
   $pax.innerHTML    = `PAX: ${real && plan && real!==plan ? `${plan} → ${real}` : (plan || real || '—')}`;
 
+
   // ===== Cargas seguras (si existen loaders; si no, continuamos sin romper)
   let vuelos = [];
   try{ if (typeof loadVuelosInfo === 'function') vuelos = await loadVuelosInfo(g) || []; }catch{}
-
+  
   let hoteles = [];
-  try{ if (typeof loadHotelAssignmentsForGroup === 'function') hoteles = await loadHotelAssignmentsForGroup(g) || []; }catch{}
-
+  try{
+    if (typeof loadHotelAssignmentsForGroup === 'function'){
+      hoteles = collapseHotelAssignments(await loadHotelAssignmentsForGroup(g) || []);
+    }
+  }catch{}
+  
   let vouchersSet = new Set();
   try{ if (typeof loadVouchersForGroup === 'function') vouchersSet = await loadVouchersForGroup(g) || new Set(); }catch{}
+
 
   // ===== Sección: TRANSPORTE =====
   let htmlTransp = `<h2>TRANSPORTE</h2>`;
