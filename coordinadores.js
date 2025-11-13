@@ -204,9 +204,6 @@ function collapseHotelAssignments(assigns){
   return blocks.sort((a,b)=> (getStart(a) > getStart(b)) ? 1 : -1);
 }
 
-console.log('[HOTEL] RAW:', (await loadHotelAssignmentsForGroup(g)||[]));
-console.log('[HOTEL] COLLAPSED:', hoteles);
-
 
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
