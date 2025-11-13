@@ -119,6 +119,16 @@ if (typeof formatCL === 'undefined') {
     : Number(v || 0).toLocaleString('es-CL'));
 }
 
+// Fecha y hora legible desde milisegundos (ms)
+function fmtFechaHoraMs(ms){
+  try{
+    return new Date(ms).toLocaleString('es-CL', { hour12: false }).toUpperCase();
+  }catch(_){
+    return '';
+  }
+}
+
+
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const slug = s => norm(s).slice(0,60);
@@ -3708,7 +3718,7 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
       div.innerHTML = `
         <div class="meta" style="display:flex;gap:.5rem;align-items:center">
           ${x.isStaff?'<span class="badge" style="background:#1d4ed8;color:#fff">STAFF</span>':''}
-          <strong>${(x.byEmail||'').toUpperCase()}</strong> · ${fmtCL(new Date(x.tsMs||Date.now()))}
+          <strong>${(x.byEmail||'').toUpperCase()}</strong> · ${fmtFechaHoraMs(x.tsMs||Date.now())}
         </div>
         <div style="margin-top:.25rem;white-space:pre-wrap">${(x.texto||'').toString().toUpperCase()}</div>
       `;
