@@ -128,14 +128,17 @@ function fmtFechaHoraMs(ms){
   }
 }
 
-  // ====== DEDUP HOTELES: colapsa asignaciones por día; el último (updatedAt/createdAt) gana ======
+// ====== DEDUP HOTELES (último asignado gana) ======
 function collapseHotelAssignments(assigns){
   if (!Array.isArray(assigns) || !assigns.length) return [];
 
   const toISOday = (v)=>{
     if (!v) return null;
     const d = (v instanceof Date) ? v : new Date(v);
-    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
+    if (isNaN(d)) return null;
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const dd= String(d.getDate()).padStart(2,'0');
     return `${y}-${m}-${dd}`;
   };
   const addDays = (iso, n)=>{
@@ -143,6 +146,8 @@ function collapseHotelAssignments(assigns){
     d.setDate(d.getDate()+n);
     return toISOday(d);
   };
+
+  // preferimos updatedAt; si no hay, createdAt; si tampoco, 0 (y usamos el índice como desempate)
   const tsOf = (x)=>{
     const u = x?.updatedAt?.seconds ? x.updatedAt.seconds*1000 :
               x?.updatedAt?.toMillis ? x.updatedAt.toMillis() :
@@ -150,44 +155,47 @@ function collapseHotelAssignments(assigns){
     const c = x?.createdAt?.seconds ? x.createdAt.seconds*1000 :
               x?.createdAt?.toMillis ? x.createdAt.toMillis() :
               (x?.createdAt instanceof Date ? x.createdAt.getTime() : null);
-    return Number(u || c || Date.now());
+    return Number(u ?? c ?? 0);
   };
   const getStart = (x)=> toISOday(x.checkIn || x.fechaInicio || x.inicio || x.start);
   const getEnd   = (x)=> toISOday(x.checkOut|| x.fechaFin    || x.fin    || x.end);
 
-  // Pintamos ascendente para que lo último que venga sobreescriba noches previas
-  const ordered = [...assigns].sort((a,b)=> tsOf(a)-tsOf(b));
-  const dayMap = new Map(); // ISO → asignación final de esa noche
+  // orden estable: por timestamp asc, y en empate por índice original asc
+  const ordered = assigns
+    .map((a,i)=>({a,i,ts:tsOf(a)}))
+    .sort((p,q)=> (p.ts - q.ts) || (p.i - q.i))
+    .map(z=>z.a);
 
+  // “pintamos” noche por noche: el ÚLTIMO que pase por un día lo sobrescribe
+  const dayMap = new Map(); // ISO -> asignación final
   for (const a of ordered){
     const ini = getStart(a), out = getEnd(a);
     if (!ini || !out) continue;
     let d = ini;
     while (d && d < out){
-      dayMap.set(d, a);
+      dayMap.set(d, a);        // ← último gana
       d = addDays(d, 1);
     }
   }
 
-  // Compactamos noches contiguas con el mismo objeto
+  // compactamos días consecutivos con la misma asignación final
   const days = [...dayMap.keys()].sort();
   const blocks = [];
-  let i = 0;
-  while (i < days.length){
+  for (let i=0; i<days.length; ){
     const start = days[i];
-    const ref = dayMap.get(start);
-    let j = i + 1;
-    while (j < days.length){
+    const ref   = dayMap.get(start);
+    let j = i+1;
+    while (j<days.length){
       const prev = days[j-1], curr = days[j];
       if (addDays(prev,1) === curr && dayMap.get(curr) === ref) j++;
       else break;
     }
-    const endExcl = addDays(days[j-1], 1); // checkOut
+    const endExcl = addDays(days[j-1],1);
     blocks.push({
       ...ref,
-      checkIn:  getStart(ref) || start,
-      checkOut: getEnd(ref)   || endExcl,
-      fechaInicio: getStart(ref) || start, // por si tu renderer usa estos aliases
+      checkIn:     getStart(ref) || start,
+      checkOut:    getEnd(ref)   || endExcl,
+      fechaInicio: getStart(ref) || start,  // alias por compatibilidad
       fechaFin:    getEnd(ref)   || endExcl
     });
     i = j;
@@ -195,6 +203,7 @@ function collapseHotelAssignments(assigns){
 
   return blocks.sort((a,b)=> (getStart(a) > getStart(b)) ? 1 : -1);
 }
+
 
 /* ====== UTILS TEXTO/FECHAS ====== */
 const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
