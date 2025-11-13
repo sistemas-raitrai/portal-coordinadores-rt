@@ -1422,11 +1422,12 @@ async function renderOneGroup(g, preferDate){
   const btnInicioHtml = (!started)
     ? `<button id="btnInicioViaje" class="btn ok" style="width:100%;"${isStartDay ? '' : ' title="No es el día de inicio. Se pedirá confirmación."'}>INICIO DE VIAJE</button>`
     : '';
-   
-  // Botón RESTABLECER (STAFF + viaje iniciado) – gris, full width, debajo del inicio
-  const btnResetInicioHtml = (state.is && started && !finished)
-    ? `<button id="btnResetInicio" class="btn" style="width:100%;background:#64748b;color:#fff;">RESTABLECER</button>`
+  
+  // Botón RESTABLECER (solo STAFF) – gris, full width, debajo del inicio
+  const btnResetInicioHtml = state.is
+    ? `<button id="btnResetInicio" class="btn" style="width:100%;background:#64748b;color:#fff;">RESTABLECER VIAJE COMPLETO</button>`
     : '';
+
    
   // Botón TERMINAR (si está en curso)
   const btnTerminarHtml = (started && !finished)
@@ -1469,7 +1470,7 @@ async function renderOneGroup(g, preferDate){
    
   // RESTABLECER (antes "Restablecer inicio")
   const btnR0 = header.querySelector('#btnResetInicio');
-  if (btnR0) btnR0.onclick = async () => { await staffResetInicio(g); };
+  if (btnR0) btnR0.onclick = async () => { await resetViajeCompleto(g); };
 
   const histBox = header.querySelector('#viajeHistoryBox');
   renderViajeHistory(g, histBox);
@@ -4564,54 +4565,67 @@ async function updateFinanzasSummary(gid, patch){
 // =============== RESTABLECER VIAJE COMPLETO — HELPERS ===============
 async function resetViajeCompleto(g){
   if (!state.is){ alert('Solo STAFF puede restablecer.'); return; }
-  const ok = confirm('Esto borrará GASTOS, BITÁCORAS y ARCHIVOS DE CIERRE.\nDejará flags en cero y mantendrá el HISTORIAL.\n¿Continuar?');
+  const ok = confirm(
+    'Esto restablecerá el viaje COMPLETO:\n' +
+    '• Borra todos los GASTOS del grupo\n' +
+    '• Limpia Bitácora del itinerario\n' +
+    '• Elimina archivos de cierre (boleta/comprobante/constancia)\n' +
+    '• Desmarca los cierres y deja todo editable\n\n' +
+    '¿Continuar?'
+  );
   if (!ok) return;
 
   const gid = g.id;
   showFlash('REESTABLECIENDO VIAJE…', 'warn');
 
   // 1) Eliminar archivos de cierre (Storage)
-  await wipeFinanzasFiles(gid).catch(()=>{});
+  try{ await wipeFinanzasFiles(gid); }catch(e){ console.warn('[reset] wipeFinanzasFiles', e); }
 
   // 2) Eliminar todos los gastos del grupo (en cualquier coordinador)
-  const borradosGa = await wipeGastosForGroup(gid).catch(()=>0);
+  let borradosGa = 0;
+  try{ borradosGa = await wipeGastosForGroup(gid); }catch(e){ console.warn('[reset] wipeGastosForGroup', e); }
 
   // 3) Vaciar bitácora basada en itinerario del grupo
-  const borradosBit = await wipeBitacoraFromItinerario(g).catch(()=>0);
+  let borradosBit = 0;
+  try{ borradosBit = await wipeBitacoraFromItinerario(g); }catch(e){ console.warn('[reset] wipeBitacora', e); }
 
-  // 4) Quitar flags de cierre / dejar “en cero”
-  await resetGroupFlags(gid);
+  // 4) Quitar flags/summary de cierre / volver editable
+  try{ await resetGroupFlags(gid); }catch(e){ console.warn('[reset] resetGroupFlags', e); }
 
-  // 5) Registrar auditoría
-  await logHistorial(gid, 'RESTABLECER_VIAJE_COMPLETO',
-    `Se restableció el viaje: gastos borrados=${borradosGa}, bitácora borrada=${borradosBit}`);
+  // 5) Registrar auditoría (NO se borra historial)
+  try{
+    await logHistorial(gid, 'RESTABLECER_VIAJE_COMPLETO',
+      `Se restableció el viaje. gastos_borrados=${borradosGa}, bitacora_borrada=${borradosBit}`);
+  }catch(e){ console.warn('[reset] logHistorial', e); }
 
   showFlash('VIAJE RESTABLECIDO', 'ok');
 
-  // refresco
+  // refrescar UI
   try{
     if (typeof renderOneGroup === 'function') await renderOneGroup(g);
     else location.reload();
   }catch{ location.reload(); }
 }
 
-// Borra recursivamente /finanzas/{grupoId}/... (boleta, comprobantes, efectivo_usd)
+// Borra recursivamente /finanzas/{grupoId}/... (boletas, comprobantes, efectivo_usd)
 async function wipeFinanzasFiles(grupoId){
   async function delFolder(refFolder){
     const l = await listAll(refFolder);
+    // borrar archivos directos
     await Promise.all((l.items || []).map(it => deleteObject(it).catch(()=>{})));
-    for (const p of (l.prefixes || [])) await delFolder(p);
+    // bajar a subcarpetas
+    for (const p of (l.prefixes || [])){ await delFolder(p); }
   }
   return delFolder(sRef(storage, `finanzas/${grupoId}`));
 }
 
-// Borra TODOS los gastos del grupo en cualquier uid; además borra la imagen si se guardó imgPath
+// Borra TODOS los gastos del grupo en cualquier uid; borra imagen si hay imgPath
 async function wipeGastosForGroup(grupoId){
   const qs = await getDocs(query(collectionGroup(db,'gastos'), where('grupoId','==', grupoId)));
   let n = 0;
   for (const d of qs.docs){
     const x = d.data() || {};
-    if (x.imgPath) { try{ await deleteObject(sRef(storage, x.imgPath)); }catch{} }
+    if (x.imgPath){ try{ await deleteObject(sRef(storage, x.imgPath)); }catch{} }
     try{ await deleteDoc(d.ref); n++; }catch{}
   }
   return n;
@@ -4626,6 +4640,7 @@ async function wipeBitacoraFromItinerario(g){
     const arr = Array.isArray(it[f]) ? it[f] : Object.values(it[f]||{});
     for (const a of arr){
       const actKey = slugActKey(a);
+      if (!actKey) continue;
       const coll = collection(db,'grupos', g.id, 'bitacora', actKey, f);
       const qs = await getDocs(coll);
       for (const d of qs.docs){ try{ await deleteDoc(d.ref); n++; }catch{} }
@@ -4634,23 +4649,27 @@ async function wipeBitacoraFromItinerario(g){
   return n;
 }
 
-// Normaliza clave de actividad (misma lógica que usas para bitácora)
+// Normaliza clave de actividad (misma idea que usas al guardar bitácora)
 function slugActKey(a){
-  const raw = String(a?.actKey || a?.key || a?.actividad || 'ACTIVIDAD').toUpperCase();
-  return raw.replace(/[^A-Z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+  // Prioriza campos si existen en tus actos: actKey / key / servicioId / actividad
+  const raw = String(a?.actKey || a?.key || a?.servicioId || a?.actividad || '').trim();
+  if (!raw) return '';
+  return raw.toUpperCase().replace(/[^A-Z0-9]+/g,'_').replace(/^_+|_+$/g,'');
 }
 
-// Quita flags/summary y vuelve “editable”
+// Quita flags/summary y vuelve “editable” (coordinador sale de solo-lectura)
 async function resetGroupFlags(grupoId){
-  // flags del doc del grupo
+  // flags del doc del grupo usados por tu UI
   try{
     await updateDoc(doc(db,'grupos',grupoId), {
       'viaje.fin.rendicionOk': false,
       'viaje.fin.boletaOk': false
+      // Si tienes otro flag de “terminado”, desmárcalo aquí también:
+      // 'viaje.terminado': false
     });
   }catch{}
 
-  // summary de finanzas
+  // summary de finanzas (lo usas para bloquear UI con sumPrev.closed)
   try{
     await updateFinanzasSummary(grupoId, {
       closed:false,
@@ -4662,11 +4681,12 @@ async function resetGroupFlags(grupoId){
   }catch{}
 }
 
-// Auditoría
+// Auditoría (mantener historial)
 async function logHistorial(grupoId, accion, detalle){
   try{
     await addDoc(collection(db,'grupos',grupoId,'historial'), {
-      accion, detalle,
+      accion,
+      detalle,
       by: (state.user?.email||'').toLowerCase(),
       ts: serverTimestamp()
     });
@@ -4674,14 +4694,20 @@ async function logHistorial(grupoId, accion, detalle){
 }
 // =============== /HELPERS RESTABLECER ===============
 
+// (Se mantiene igual: marca cierre hecho)
 async function closeFinanzas(g){
-  await updateFinanzasSummary(g.id, { closed:true, closedAt: serverTimestamp(), closedBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() } });
+  await updateFinanzasSummary(g.id, {
+    closed:true,
+    closedAt: serverTimestamp(),
+    closedBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() }
+  });
   await updateDoc(doc(db,'grupos',g.id), {
     'viaje.fin.rendicionOk': true,
     'viaje.fin.boletaOk': true
   });
   showFlash('FINANZAS CERRADAS', 'ok');
 }
+
 
 // ====== HELPERS FINANZAS (GASTOS APROBADOS) ======
 // Devuelve SOLO gastos con estado APROBADO del grupo.
