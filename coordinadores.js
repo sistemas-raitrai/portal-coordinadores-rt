@@ -606,7 +606,7 @@ function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x
 }
 
 /* ====== ESTADO APP ====== */
-const STAFF_EMAILS = new Set(['aleoperaciones@raitrai.cl','operaciones@raitrai.cl','anamaria@raitrai.cl','tomas@raitrai.cl','sistemas@raitrai.cl, administracion@hotelbordeandino.cl'].map(x=>x.toLowerCase()));
+const STAFF_EMAILS = new Set(['aleoperaciones@raitrai.cl','operaciones@raitrai.cl','anamaria@raitrai.cl','tomas@raitrai.cl','sistemas@raitrai.cl', 'administracion@hotelbordeandino.cl'].map(x=>x.toLowerCase()));
 const state = {
   user:null,
   is:false,
