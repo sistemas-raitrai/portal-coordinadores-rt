@@ -606,7 +606,7 @@ function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x
 }
 
 /* ====== ESTADO APP ====== */
-const STAFF_EMAILS = new Set(['aleoperaciones@raitrai.cl','operaciones@raitrai.cl','anamaria@raitrai.cl','tomas@raitrai.cl','sistemas@raitrai.cl'].map(x=>x.toLowerCase()));
+const STAFF_EMAILS = new Set(['aleoperaciones@raitrai.cl','operaciones@raitrai.cl','anamaria@raitrai.cl','tomas@raitrai.cl','sistemas@raitrai.cl, administracion@hotelbordeandino.cl'].map(x=>x.toLowerCase()));
 const state = {
   user:null,
   is:false,
@@ -693,7 +693,7 @@ if (typeof window !== 'undefined') {
     'aleoperaciones@raitrai.cl',
     'sistemas@raitrai.cl',
     'tomas@raitrai.cl',
-    'administracion@bordeandino.cl',    
+    'administracion@hotelbordeandino.cl',    
   ]);
 
   const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
