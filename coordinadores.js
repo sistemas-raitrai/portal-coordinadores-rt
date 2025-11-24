@@ -4574,103 +4574,161 @@ async function deleteAbono(gid, abonoId){
   await deleteDoc(doc(db,'grupos', gid, 'finanzas_abonos', abonoId));
 }
 
-// -------- Sugerencias (CONAF / CERO GRADOS) ----------
+// -------- Sugerencias (CONAF / CERO GRADOS, EFECTIVO) ----------
+
+// Precio unitario por PAX desde el servicio
 function precioUnitarioFromServicio(svc){
-  const cands = [ svc?.precioPax, svc?.precio, svc?.tarifa, svc?.tarifaPax, svc?.valorPax,
-                  (svc?.precios && svc.precios.pax), (svc?.valores && svc.valores.pax) ];
+  const cands = [
+    svc?.precioPax,
+    svc?.precio,
+    svc?.tarifa,
+    svc?.tarifaPax,
+    svc?.valorPax,
+    svc?.precios && svc.precios.pax,
+    svc?.valores && svc.valores.pax
+  ];
   for (const c of cands){
     const n = Number(c);
-    if (!isNaN(n) && n>0) return n;
+    if (!isNaN(n) && n > 0) return n;
   }
   return 0;
 }
+
+// Moneda desde el servicio → CLP / USD / BRL / ARS
+function monedaFromServicio(svc){
+  const candidatos = [
+    svc?.moneda,
+    svc?.currency,
+    svc?.divisa,
+    svc?.monedaBase,
+    svc?.monedaPax,
+    svc?.precios && svc.precios.moneda,
+    svc?.valores && svc.valores.moneda
+  ];
+
+  for (const raw of candidatos){
+    if (!raw) continue;
+    const txt = String(raw).trim().toUpperCase();
+    if (!txt) continue;
+
+    if (txt.includes('CLP') || txt.includes('CHILE')) return 'CLP';
+    if (txt.includes('USD') || txt.includes('DOLAR') || txt.includes('DÓLAR') || txt.includes('US$') || txt.includes('U$S')) return 'USD';
+    if (txt.includes('BRL') || txt.includes('REAL') || txt.includes('R$')) return 'BRL';
+    if (txt.includes('ARS') || txt.includes('PESO AR') || txt.includes('ARG')) return 'ARS';
+  }
+
+  // Fallback si no encontramos nada claro
+  return 'CLP';
+}
+
+// Método de pago = EFECTIVO desde el servicio
+function metodoPagoEsEfectivoFromServicio(svc){
+  if (!svc) return false;
+  const candidatos = [
+    svc.metodoPago,
+    svc.medioPago,
+    svc.formaPago,
+    svc.metodo,
+    svc.metodo_de_pago,
+    svc.forma_de_pago,
+    svc.tipoPago,
+    svc.tipo_pago,
+    svc.pago,
+    svc.medio
+  ];
+  for (const raw of candidatos){
+    if (!raw) continue;
+    const txt = norm(String(raw)); // normalizado (minúsculas, sin tildes)
+    if (txt.includes('efectivo')) return true;
+  }
+  return false;
+}
+
+// Por ahora seguimos usando whitelist de proveedores (CONAF / CERO GRADOS)
 function isProveedorWhitelisted(name=''){
   const s = String(name||'').trim().toUpperCase();
-  return (s.includes('CONAF') || s.includes('CERO GRADOS') || s.includes('CERO-GRADOS') || s.includes('CERO_GRADOS'));
+  return (
+    s.includes('CONAF') ||
+    s.includes('CERO GRADOS') ||
+    s.includes('CERO-GRADOS') ||
+    s.includes('CERO_GRADOS')
+  );
 }
+
+// Sugerencias de abonos en EFECTIVO según itinerario del grupo
 async function suggestAbonosFromItin(grupo){
   const destino = (grupo?.destino||'').toString().toUpperCase();
-
-  // PAX plan (cantidadgrupo o pax) y desglose real adultos/estudiantes
-  const paxPlan = paxOf(grupo);
-  if (!paxPlan) return [];
-
-  const { A: paxAdultos, E: paxEstudiantes } = paxBreakdown(grupo);
-
   const it = grupo?.itinerario || {};
   const out = [];
 
-  // Helper local: detecta si el servicio se paga en EFECTIVO según sus campos
-  const metodoPagoEsEfectivo = (svc)=>{
-    if (!svc) return false;
-    const candidatos = [
-      svc.metodoPago,
-      svc.medioPago,
-      svc.formaPago,
-      svc.metodo,
-      svc.metodo_de_pago,
-      svc.forma_de_pago,
-      svc.tipoPago,
-      svc.tipo_pago,
-      svc.pago,
-      svc.medio
-    ];
-    for (const c of candidatos){
-      if (!c) continue;
-      const txt = norm(String(c));        // normaliza: sin tildes, minúsculas
-      if (txt.includes('efectivo')){      // ej: "efectivo", "efectivousd", etc.
-        return true;
-      }
-    }
-    return false;
-  };
+  // PAX plan / real / desglose A/E
+  const paxPlanBase = paxOf(grupo) || paxRealOf(grupo) || 0;
+  const desgl = paxBreakdown(grupo);
+  const paxAdultos     = Number(desgl.A || 0);
+  const paxEstudiantes = Number(desgl.E || 0);
+
+  if (!paxPlanBase && !paxAdultos && !paxEstudiantes) return out;
 
   for (const [fechaISO, arr] of Object.entries(it)){
-    const acts = Array.isArray(arr) ? arr : Object.values(arr||{});
+    const acts = Array.isArray(arr) ? arr : Object.values(arr || {});
     for (const a of acts){
-      const actName = (a?.actividad||'').toString();
+      const actName = (a?.actividad || '').toString();
       if (!actName) continue;
 
       const svc = await findServicio(destino, actName).catch(()=>null);
       const proveedor = (svc?.proveedor || a?.proveedor || '').toString();
       if (!svc) continue;
       if (!proveedor) continue;
+
+      // Solo ciertos proveedores (CONAF / CERO GRADOS, etc.)
       if (!isProveedorWhitelisted(proveedor)) continue;
-      if (!metodoPagoEsEfectivo(svc)) continue;
+
+      // Solo servicios cuyo método de pago sea EFECTIVO
+      if (!metodoPagoEsEfectivoFromServicio(svc)) continue;
 
       const unit = precioUnitarioFromServicio(svc);
       if (!unit) continue;
 
       // Lógica de PAX según nombre de la actividad
-      const nameNorm = norm(actName);   // sin tildes, minúsculas, sin espacios
-      let paxUsado = paxPlan;
+      const nameNorm = norm(actName);  // minúsculas, sin tildes
+      let paxUsado = paxPlanBase;
 
       if (nameNorm.includes('adult')){
-        // Actividades que en el nombre mencionan ADULTOS
-        paxUsado = paxAdultos || paxPlan;
+        // actividades que mencionan ADULTO(S)
+        paxUsado = paxAdultos || paxPlanBase;
       } else if (nameNorm.includes('estudiant')){
-        // Actividades que en el nombre mencionan ESTUDIANTES
-        paxUsado = paxEstudiantes || paxPlan;
+        // actividades que mencionan ESTUDIANTE(S)
+        paxUsado = paxEstudiantes || paxPlanBase;
       }
 
       if (!paxUsado) continue;
 
+      const moneda = monedaFromServicio(svc);
       const totalSug = unit * paxUsado;
+
       out.push({
         asunto: `ABONO ${proveedor} — ${actName.toUpperCase()} ${dmy(fechaISO)}`,
-        comentarios: `Sugerido por sistema: ${paxUsado} PAX × ${unit.toLocaleString('es-CL')} CLP`,
-        moneda: 'CLP',
+        comentarios: `Sugerido por sistema: ${paxUsado} PAX × ${unit.toLocaleString('es-CL')} ${moneda}`,
+        moneda,
         valor: totalSug,
         fecha: fechaISO,
-        medio: 'CTA CTE',
+        medio: 'EFECTIVO',
         autoCalc: true,
         provWhitelistHit: proveedor.toUpperCase(),
-        refActs: [{ fechaISO, actividad: actName, paxUsado, precioUnitario: unit, totalSug }]
+        refActs: [{
+          fechaISO,
+          actividad: actName,
+          paxUsado,
+          precioUnitario: unit,
+          totalSug
+        }]
       });
     }
   }
+
   return out;
 }
+
 
 // ==== REEMPLAZO: SOLO APROBADOS EN EL SALDO ====
 async function sumGastosPorMonedaDelGrupo(g, qNorm){
@@ -4974,10 +5032,59 @@ async function renderFinanzas(g, pane){
   pane.innerHTML='<div class="muted">CARGANDO…</div>';
   const qNorm = norm(state.groupQ||'');
 
-  // 1) Carga abonos (tal cual) y gastos APROBADOS (nuevo)
-  const abonos = await loadAbonos(g.id);
+  // 1) Carga abonos y gastos APROBADOS
+  let abonos = await loadAbonos(g.id);
   const gastosAprob = await loadGastosAprobados(g.id);
-  
+
+  // 1.b) Genera y GUARDA abonos sugeridos (EFECTIVO) según itinerario
+  try{
+    const sugeridos = await suggestAbonosFromItin(g);
+
+    if (Array.isArray(sugeridos) && sugeridos.length){
+      // Evitar duplicados: comparamos por proveedor + actividad + fecha
+      const yaExiste = (sug)=>{
+        const refSug   = (Array.isArray(sug.refActs) && sug.refActs[0]) || {};
+        const fSugRaw  = refSug.fechaISO || sug.fecha;
+        const actSug   = (refSug.actividad || '').toString();
+        const provSug  = (sug.provWhitelistHit || '').toString().toUpperCase();
+        const monSug   = (sug.moneda || '').toString().toUpperCase();
+        const valSug   = Number(sug.valor || 0);
+        const fSugISO  = toISO(fSugRaw || '');
+
+        return abonos.some(a=>{
+          const refA   = (Array.isArray(a.refActs) && a.refActs[0]) || {};
+          const fARaw  = refA.fechaISO || a.fecha;
+          const actA   = (refA.actividad || '').toString();
+          const provA  = (a.provWhitelistHit || '').toString().toUpperCase();
+          const monA   = (a.moneda || '').toString().toUpperCase();
+          const valA   = Number(a.valor || 0);
+          const fAISO  = toISO(fARaw || '');
+
+          // (1) Coincidencia fuerte por proveedor + actividad + fecha
+          if (provA && provA === provSug && fAISO === fSugISO && actA === actSug) return true;
+
+          // (2) Fallback: mismo asunto + fecha + moneda + valor
+          if (
+            fAISO === fSugISO &&
+            monA === monSug &&
+            valA === valSug &&
+            String(a.asunto || '') === String(sug.asunto || '')
+          ) return true;
+
+          return false;
+        });
+      };
+
+      for (const sug of sugeridos){
+        if (yaExiste(sug)) continue;
+        const id = await saveAbono(g.id, sug);
+        abonos.push({ id, ...sug });
+      }
+    }
+  }catch(e){
+    console.warn('[FIN] No se pudieron generar abonos sugeridos en efectivo:', e);
+  }
+
   // 2) Totales por moneda (sin conversión)
   const totAb = totalesPorMoneda(abonos);       // {CLP,USD,BRL,ARS}
   const totGa = totalesPorMoneda(gastosAprob);  // {CLP,USD,BRL,ARS}
