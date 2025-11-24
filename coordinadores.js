@@ -590,6 +590,10 @@ const timeVal = (t) => {
 const DEBUG_HOTEL = true;
 const D_HOTEL = (...args)=> { if (DEBUG_HOTEL) console.log('%c[HOTEL]', 'color:#0ff', ...args); };
 
+/* ===== DEBUG FINANZAS ===== */
+const DEBUG_FIN = true;
+const D_FIN = (...args)=> { if (DEBUG_FIN) console.log('%c[FIN]', 'color:#22c55e', ...args); };
+
 /* ====== EXTRACCIÓN TOLERANTE DESDE GRUPOS ====== */
 const arrify=v=>Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):(v?[v]:[]));
 function emailsOf(g){ const out=new Set(), push=e=>{if(e) out.add(String(e).toLowerCase());};
@@ -4575,6 +4579,7 @@ async function deleteAbono(gid, abonoId){
 }
 
 // -------- Sugerencias automáticas de abonos en EFECTIVO ----------
+// -------- Sugerencias automáticas de abonos en EFECTIVO ----------
 
 // Precio unitario por PAX desde el servicio
 function precioUnitarioFromServicio(svc){
@@ -4656,7 +4661,30 @@ async function suggestAbonosFromItin(grupo){
   const paxAdultos     = Number(desgl.A || 0);
   const paxEstudiantes = Number(desgl.E || 0);
 
-  if (!paxPlanBase && !paxAdultos && !paxEstudiantes) return out;
+  if (!paxPlanBase && !paxAdultos && !paxEstudiantes){
+    D_FIN('suggestAbonosFromItin: sin pax base', { grupoId: grupo?.id, paxPlanBase, paxAdultos, paxEstudiantes });
+    return out;
+  }
+
+  if (!Object.keys(it).length){
+    D_FIN('suggestAbonosFromItin: itinerario vacío', { grupoId: grupo?.id });
+    return out;
+  }
+
+  let totalActs = 0;
+  let actsConServicio = 0;
+  let actsMetodoEfectivo = 0;
+  let actsConPrecio = 0;
+  let actsConPax = 0;
+
+  D_FIN('suggestAbonosFromItin: inicio', {
+    grupoId: grupo?.id,
+    destino,
+    paxPlanBase,
+    paxAdultos,
+    paxEstudiantes,
+    diasItinerario: Object.keys(it).length
+  });
 
   for (const [fechaISO, arr] of Object.entries(it)){
     const acts = Array.isArray(arr) ? arr : Object.values(arr || {});
@@ -4664,16 +4692,39 @@ async function suggestAbonosFromItin(grupo){
       const actName = (a?.actividad || '').toString();
       if (!actName) continue;
 
+      totalActs++;
+
       const svc = await findServicio(destino, actName).catch(()=>null);
       const proveedor = (svc?.proveedor || a?.proveedor || '').toString();
-      if (!svc || !proveedor) continue;
+      if (!svc){
+        D_FIN('suggestAbonosFromItin: skip sin servicio', { fechaISO, actName });
+        continue;
+      }
+      actsConServicio++;
 
-      // 🔥 ahora NO hay whitelist de proveedores: cualquiera entra
-      // pero SOLO si el método de pago del servicio es EFECTIVO
-      if (!metodoPagoEsEfectivoFromServicio(svc)) continue;
+      if (!proveedor){
+        D_FIN('suggestAbonosFromItin: skip sin proveedor', { fechaISO, actName });
+        continue;
+      }
+
+      // SOLO si el método de pago del servicio es EFECTIVO
+      if (!metodoPagoEsEfectivoFromServicio(svc)){
+        D_FIN('suggestAbonosFromItin: skip no EFECTIVO', {
+          fechaISO,
+          actName,
+          proveedor,
+          metodo: svc.metodoPago || svc.medioPago || svc.formaPago || null
+        });
+        continue;
+      }
+      actsMetodoEfectivo++;
 
       const unit = precioUnitarioFromServicio(svc);
-      if (!unit) continue;
+      if (!unit){
+        D_FIN('suggestAbonosFromItin: skip sin precio unitario', { fechaISO, actName, proveedor });
+        continue;
+      }
+      actsConPrecio++;
 
       // Lógica de PAX según nombre de la actividad
       const nameNorm = norm(actName);  // minúsculas, sin tildes
@@ -4687,12 +4738,23 @@ async function suggestAbonosFromItin(grupo){
         paxUsado = paxEstudiantes || paxPlanBase;
       }
 
-      if (!paxUsado) continue;
+      if (!paxUsado){
+        D_FIN('suggestAbonosFromItin: skip sin paxUsado', {
+          fechaISO,
+          actName,
+          proveedor,
+          paxPlanBase,
+          paxAdultos,
+          paxEstudiantes
+        });
+        continue;
+      }
+      actsConPax++;
 
       const moneda = monedaFromServicio(svc);
       const totalSug = unit * paxUsado;
 
-      out.push({
+      const registro = {
         asunto: `ABONO ${proveedor} — ${actName.toUpperCase()} ${dmy(fechaISO)}`,
         comentarios: `Sugerido por sistema: ${paxUsado} PAX × ${unit.toLocaleString('es-CL')} ${moneda}`,
         moneda,
@@ -4700,7 +4762,7 @@ async function suggestAbonosFromItin(grupo){
         fecha: fechaISO,
         medio: 'EFECTIVO',
         autoCalc: true,
-        provWhitelistHit: proveedor.toUpperCase(),  // ahora solo informativo
+        provWhitelistHit: proveedor.toUpperCase(),
         refActs: [{
           fechaISO,
           actividad: actName,
@@ -4708,14 +4770,35 @@ async function suggestAbonosFromItin(grupo){
           precioUnitario: unit,
           totalSug
         }]
+      };
+
+      D_FIN('suggestAbonosFromItin: PUSH sugerido', {
+        grupoId: grupo?.id,
+        fechaISO,
+        actName,
+        proveedor,
+        moneda,
+        valor: totalSug,
+        paxUsado,
+        unit
       });
+
+      out.push(registro);
     }
   }
 
+  D_FIN('suggestAbonosFromItin: fin', {
+    grupoId: grupo?.id,
+    totalActs,
+    actsConServicio,
+    actsMetodoEfectivo,
+    actsConPrecio,
+    actsConPax,
+    sugeridos: out.length
+  });
+
   return out;
 }
-
-
 
 // ==== REEMPLAZO: SOLO APROBADOS EN EL SALDO ====
 async function sumGastosPorMonedaDelGrupo(g, qNorm){
@@ -5019,16 +5102,25 @@ async function renderFinanzas(g, pane){
   pane.innerHTML='<div class="muted">CARGANDO…</div>';
   const qNorm = norm(state.groupQ||'');
 
-  // 1) Carga abonos y gastos APROBADOS
+  // 1) Carga abonos y gastos APROBADOS (base)
   let abonos = await loadAbonos(g.id);
   const gastosAprob = await loadGastosAprobados(g.id);
 
-  // 1.b) Genera y GUARDA abonos sugeridos (EFECTIVO) según itinerario
-  try{
-    const sugeridos = await suggestAbonosFromItin(g);
+  D_FIN('renderFinanzas: abonos/gastos cargados', {
+    grupoId: g?.id,
+    abonos: abonos.length,
+    gastosAprob: gastosAprob.length
+  });
 
-    if (Array.isArray(sugeridos) && sugeridos.length){
-      // Evitar duplicados: comparamos por proveedor + actividad + fecha
+  // 1.b) Genera y GUARDA abonos sugeridos en EFECTIVO según itinerario
+  try{
+    const sugeridos = await suggestAbonosFromItin(g) || [];
+    D_FIN('renderFinanzas: sugeridos calculados', {
+      grupoId: g?.id,
+      sugeridos: sugeridos.length
+    });
+
+    if (sugeridos.length){
       const yaExiste = (sug)=>{
         const refSug   = (Array.isArray(sug.refActs) && sug.refActs[0]) || {};
         const fSugRaw  = refSug.fechaISO || sug.fecha;
@@ -5063,13 +5155,36 @@ async function renderFinanzas(g, pane){
       };
 
       for (const sug of sugeridos){
-        if (yaExiste(sug)) continue;
+        if (yaExiste(sug)){
+          D_FIN('renderFinanzas: sugerido ya existe, omitido', {
+            grupoId: g?.id,
+            asunto: sug.asunto,
+            fecha: sug.fecha,
+            moneda: sug.moneda,
+            valor: sug.valor
+          });
+          continue;
+        }
+
         const id = await saveAbono(g.id, sug);
-        abonos.push({ id, ...sug });
+        const saved = { id, ...sug };
+        abonos.push(saved);
+
+        D_FIN('renderFinanzas: abono sugerido GUARDADO', {
+          grupoId: g?.id,
+          abonoId: id,
+          asunto: sug.asunto,
+          fecha: sug.fecha,
+          moneda: sug.moneda,
+          valor: sug.valor
+        });
       }
+    }else{
+      D_FIN('renderFinanzas: no llegaron sugerencias', { grupoId: g?.id });
     }
   }catch(e){
-    console.warn('[FIN] No se pudieron generar abonos sugeridos en efectivo:', e);
+    console.warn('[FIN] Error generando abonos sugeridos en efectivo:', e);
+    D_FIN('renderFinanzas: ERROR en sugeridos', { grupoId: g?.id, error: String(e) });
   }
 
   // 2) Totales por moneda (sin conversión)
