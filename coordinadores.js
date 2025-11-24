@@ -4758,8 +4758,8 @@ async function suggestAbonosFromItin(grupo){
       const totalSug = unit * paxUsado;
 
       const registro = {
-        asunto: `ABONO ${proveedor} — ${actName.toUpperCase()} ${dmy(fechaISO)}`,
-        comentarios: `Sugerido por sistema: ${paxUsado} PAX × ${unit.toLocaleString('es-CL')} ${moneda}`,
+        asunto: `${actName.toUpperCase()} ${dmy(fechaISO)}`,
+        comentarios: `${paxUsado} PAX × ${unit.toLocaleString('es-CL')} ${moneda}`,
         moneda,
         valor: totalSug,
         fecha: fechaISO,
@@ -4775,7 +4775,7 @@ async function suggestAbonosFromItin(grupo){
         }]
       };
 
-      D_FIN('suggestAbonosFromItin: PUSH sugerido', {
+      D_FIN('suggestAbonosFromItin: PUSH POR SISTEMA', {
         grupoId: grupo?.id,
         fechaISO,
         actName,
