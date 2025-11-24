@@ -4589,6 +4589,9 @@ function precioUnitarioFromServicio(svc){
     svc?.tarifa,
     svc?.tarifaPax,
     svc?.valorPax,
+    svc?.valorServicio,   // ⬅️ nuevo: coincide con Firestore
+    svc?.valor,           // opcional, por si en algún momento cambias el nombre
+    svc?.valorUnitario, 
     svc?.precios && svc.precios.pax,
     svc?.valores && svc.valores.pax
   ];
