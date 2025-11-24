@@ -4590,11 +4590,40 @@ function isProveedorWhitelisted(name=''){
 }
 async function suggestAbonosFromItin(grupo){
   const destino = (grupo?.destino||'').toString().toUpperCase();
-  const paxPlan = Number(grupo?.cantidadgrupo || 0);
+
+  // PAX plan (cantidadgrupo o pax) y desglose real adultos/estudiantes
+  const paxPlan = paxOf(grupo);
   if (!paxPlan) return [];
+
+  const { A: paxAdultos, E: paxEstudiantes } = paxBreakdown(grupo);
 
   const it = grupo?.itinerario || {};
   const out = [];
+
+  // Helper local: detecta si el servicio se paga en EFECTIVO según sus campos
+  const metodoPagoEsEfectivo = (svc)=>{
+    if (!svc) return false;
+    const candidatos = [
+      svc.metodoPago,
+      svc.medioPago,
+      svc.formaPago,
+      svc.metodo,
+      svc.metodo_de_pago,
+      svc.forma_de_pago,
+      svc.tipoPago,
+      svc.tipo_pago,
+      svc.pago,
+      svc.medio
+    ];
+    for (const c of candidatos){
+      if (!c) continue;
+      const txt = norm(String(c));        // normaliza: sin tildes, minúsculas
+      if (txt.includes('efectivo')){      // ej: "efectivo", "efectivousd", etc.
+        return true;
+      }
+    }
+    return false;
+  };
 
   for (const [fechaISO, arr] of Object.entries(it)){
     const acts = Array.isArray(arr) ? arr : Object.values(arr||{});
@@ -4604,22 +4633,39 @@ async function suggestAbonosFromItin(grupo){
 
       const svc = await findServicio(destino, actName).catch(()=>null);
       const proveedor = (svc?.proveedor || a?.proveedor || '').toString();
+      if (!svc) continue;
+      if (!proveedor) continue;
       if (!isProveedorWhitelisted(proveedor)) continue;
+      if (!metodoPagoEsEfectivo(svc)) continue;
 
       const unit = precioUnitarioFromServicio(svc);
       if (!unit) continue;
 
-      const totalSug = unit * paxPlan;
+      // Lógica de PAX según nombre de la actividad
+      const nameNorm = norm(actName);   // sin tildes, minúsculas, sin espacios
+      let paxUsado = paxPlan;
+
+      if (nameNorm.includes('adult')){
+        // Actividades que en el nombre mencionan ADULTOS
+        paxUsado = paxAdultos || paxPlan;
+      } else if (nameNorm.includes('estudiant')){
+        // Actividades que en el nombre mencionan ESTUDIANTES
+        paxUsado = paxEstudiantes || paxPlan;
+      }
+
+      if (!paxUsado) continue;
+
+      const totalSug = unit * paxUsado;
       out.push({
         asunto: `ABONO ${proveedor} — ${actName.toUpperCase()} ${dmy(fechaISO)}`,
-        comentarios: `Sugerido por sistema: ${paxPlan} PAX × ${unit.toLocaleString('es-CL')} CLP`,
+        comentarios: `Sugerido por sistema: ${paxUsado} PAX × ${unit.toLocaleString('es-CL')} CLP`,
         moneda: 'CLP',
         valor: totalSug,
         fecha: fechaISO,
         medio: 'CTA CTE',
         autoCalc: true,
         provWhitelistHit: proveedor.toUpperCase(),
-        refActs: [{ fechaISO, actividad: actName, paxUsado: paxPlan, precioUnitario: unit, totalSug }]
+        refActs: [{ fechaISO, actividad: actName, paxUsado, precioUnitario: unit, totalSug }]
       });
     }
   }
