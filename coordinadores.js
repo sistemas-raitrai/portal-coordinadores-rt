@@ -4574,7 +4574,7 @@ async function deleteAbono(gid, abonoId){
   await deleteDoc(doc(db,'grupos', gid, 'finanzas_abonos', abonoId));
 }
 
-// -------- Sugerencias (CONAF / CERO GRADOS, EFECTIVO) ----------
+// -------- Sugerencias automáticas de abonos en EFECTIVO ----------
 
 // Precio unitario por PAX desde el servicio
 function precioUnitarioFromServicio(svc){
@@ -4644,26 +4644,15 @@ function metodoPagoEsEfectivoFromServicio(svc){
   return false;
 }
 
-// Por ahora seguimos usando whitelist de proveedores (CONAF / CERO GRADOS)
-function isProveedorWhitelisted(name=''){
-  const s = String(name||'').trim().toUpperCase();
-  return (
-    s.includes('CONAF') ||
-    s.includes('CERO GRADOS') ||
-    s.includes('CERO-GRADOS') ||
-    s.includes('CERO_GRADOS')
-  );
-}
-
-// Sugerencias de abonos en EFECTIVO según itinerario del grupo
+// Sugerencias de abonos en EFECTIVO según itinerario del grupo (para CUALQUIER proveedor)
 async function suggestAbonosFromItin(grupo){
   const destino = (grupo?.destino||'').toString().toUpperCase();
   const it = grupo?.itinerario || {};
   const out = [];
 
   // PAX plan / real / desglose A/E
-  const paxPlanBase = paxOf(grupo) || paxRealOf(grupo) || 0;
-  const desgl = paxBreakdown(grupo);
+  const paxPlanBase = paxOf(grupo) || paxRealOf(grupo) || Number(grupo?.cantidadgrupo || 0);
+  const desgl = paxBreakdown(grupo) || {};
   const paxAdultos     = Number(desgl.A || 0);
   const paxEstudiantes = Number(desgl.E || 0);
 
@@ -4677,13 +4666,10 @@ async function suggestAbonosFromItin(grupo){
 
       const svc = await findServicio(destino, actName).catch(()=>null);
       const proveedor = (svc?.proveedor || a?.proveedor || '').toString();
-      if (!svc) continue;
-      if (!proveedor) continue;
+      if (!svc || !proveedor) continue;
 
-      // Solo ciertos proveedores (CONAF / CERO GRADOS, etc.)
-      if (!isProveedorWhitelisted(proveedor)) continue;
-
-      // Solo servicios cuyo método de pago sea EFECTIVO
+      // 🔥 ahora NO hay whitelist de proveedores: cualquiera entra
+      // pero SOLO si el método de pago del servicio es EFECTIVO
       if (!metodoPagoEsEfectivoFromServicio(svc)) continue;
 
       const unit = precioUnitarioFromServicio(svc);
@@ -4714,7 +4700,7 @@ async function suggestAbonosFromItin(grupo){
         fecha: fechaISO,
         medio: 'EFECTIVO',
         autoCalc: true,
-        provWhitelistHit: proveedor.toUpperCase(),
+        provWhitelistHit: proveedor.toUpperCase(),  // ahora solo informativo
         refActs: [{
           fechaISO,
           actividad: actName,
@@ -4728,6 +4714,7 @@ async function suggestAbonosFromItin(grupo){
 
   return out;
 }
+
 
 
 // ==== REEMPLAZO: SOLO APROBADOS EN EL SALDO ====
