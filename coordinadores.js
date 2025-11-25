@@ -620,9 +620,15 @@ const state = {
   filter:{ type:'all', value:null },
   groupQ:'',
   alertsTimer:null,                 // AUTO-REFRESCO DE ALERTAS (60S)
+
   cache:{
     hotel:new Map(),
     vuelos:new Map(),
+
+    // NUEVO: catálogos en memoria
+    servicios:new Map(),    // key: 'Servicios/BRASIL/Listado' → [servicios...]
+    proveedores:new Map(),  // key: 'BRASIL::proveedor-normalizado' → doc proveedor
+
     tasas:null,
     hoteles:{ loaded:false, byId:new Map(), bySlug:new Map(), all:[] }
   }
@@ -2765,28 +2771,56 @@ function expandDestinosServicios(destinoRaw){
   return out;
 }
 
-async function findServicio(destino, nombre){
-  if (!destino || !nombre) return null;
-  const want = norm(nombre);
-  const destinos = expandDestinosServicios(destino);
-  if (!destinos.length) return null;
+// Cachea catálogos de servicios por ruta Firestore
+// key: 'Servicios/BRASIL/Listado'
+async function loadServiciosCatalog(pathArr){
+  const key = pathArr.join('/');
+  if (!state.cache.servicios) state.cache.servicios = new Map();
+  if (state.cache.servicios.has(key)) return state.cache.servicios.get(key);
 
-  for (const dest of destinos){
-    const candidates = [
-      ['Servicios', dest, 'Listado'],
-      [dest, 'Listado'],
-    ];
-    for (const path of candidates){
-      try{
-        const snap = await getDocs(collection(db, path[0], path[1], path[2]));
-        let best = null;
-        snap.forEach(d => {
-          const x = d.data() || {};
-          const serv = String(x.actividad || x.nombre || d.id || '');
-          if (norm(serv) === want) best = { id: d.id, ...x };
-        });
-        if (best) return best;
-      }catch(_){}
+  let out = [];
+  try{
+    const colRef = collection(db, ...pathArr);
+    const qs = await getDocs(colRef);
+    qs.forEach(d=>{
+      const x = d.data() || {};
+      out.push({ id:d.id, ...x });
+    });
+  }catch(e){
+    console.error('[loadServiciosCatalog]', e);
+  }
+  state.cache.servicios.set(key, out);
+  return out;
+}
+
+async function findServicio(destino, nombre){
+  const dest = String(destino||'').trim().toUpperCase();
+  const nom  = norm(nombre||'');
+  if (!dest || !nom) return null;
+
+  const base = [
+    ['Servicios', dest, 'Listado'],
+    [dest, 'Listado']
+  ];
+
+  const paths = aliasDestinosServicios[dest]
+    ? [...aliasDestinosServicios[dest], ...base]
+    : base;
+
+  for (const path of paths){
+    const servicios = await loadServiciosCatalog(path);
+    if (!Array.isArray(servicios) || !servicios.length) continue;
+
+    for (const svc of servicios){
+      const nombres = [
+        svc.servicio,
+        svc.actividad,
+        svc.nombre,
+        svc.id
+      ].map(v => (v||'').toString());
+
+      const hit = nombres.some(v => norm(v) === nom);
+      if (hit) return svc;
     }
   }
 
@@ -3741,16 +3775,29 @@ async function openPrintDespacho(g, w){
 // Busca proveedor en la ruta por DESTINO (según la actividad/servicio)
 async function fetchProveedorByDestino(destino, proveedorName){
   if (!destino || !proveedorName) return null;
+  const destKey = String(destino).toUpperCase();
+  const provKey = norm(proveedorName);
+
+  if (!state.cache.proveedores) state.cache.proveedores = new Map();
+  const cacheKey = `${destKey}::${provKey}`;
+  if (state.cache.proveedores.has(cacheKey)){
+    return state.cache.proveedores.get(cacheKey);
+  }
+
+  let hit = null;
   try{
-    const qs = await getDocs(collection(db,'Proveedores', String(destino).toUpperCase(), 'Listado'));
-    let hit = null;
+    const qs = await getDocs(collection(db,'Proveedores', destKey, 'Listado'));
     qs.forEach(d=>{
-      const x = d.data()||{};
+      const x = d.data() || {};
       const nom = (x.proveedor || d.id || '').toString();
-      if (norm(nom) === norm(proveedorName)) hit = { id:d.id, ...x };
+      if (norm(nom) === provKey) hit = { id:d.id, ...x };
     });
-    return hit;
-  }catch(_){ return null; }
+  }catch(e){
+    console.error('[fetchProveedorByDestino]', e);
+  }
+
+  state.cache.proveedores.set(cacheKey, hit);
+  return hit;
 }
 
 async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='NOAPLICA'){
@@ -4698,156 +4745,143 @@ function metodoPagoEsEfectivoFromServicio(svc){
   return false;
 }
 
-// Sugerencias de abonos en EFECTIVO según itinerario del grupo (para CUALQUIER proveedor)
+// Sugerencias automáticas de abonos en EFECTIVO
 async function suggestAbonosFromItin(grupo){
-  const destino = (grupo?.destino||'').toString().toUpperCase();
-  const it = grupo?.itinerario || {};
-  const out = [];
+  try{
+    D_FIN('suggestAbonosFromItin: inicio', {
+      grupoId: grupo?.id,
+      destino: grupo?.destino
+    });
 
-  // PAX plan / real / desglose A/E
-  const paxPlanBase = paxOf(grupo) || paxRealOf(grupo) || Number(grupo?.cantidadgrupo || 0);
-  const desgl = paxBreakdown(grupo) || {};
-  const paxAdultos     = Number(desgl.A || 0);
-  const paxEstudiantes = Number(desgl.E || 0);
-
-  if (!paxPlanBase && !paxAdultos && !paxEstudiantes){
-    D_FIN('suggestAbonosFromItin: sin pax base', { grupoId: grupo?.id, paxPlanBase, paxAdultos, paxEstudiantes });
-    return out;
-  }
-
-  if (!Object.keys(it).length){
-    D_FIN('suggestAbonosFromItin: itinerario vacío', { grupoId: grupo?.id });
-    return out;
-  }
-
-  let totalActs = 0;
-  let actsConServicio = 0;
-  let actsMetodoEfectivo = 0;
-  let actsConPrecio = 0;
-  let actsConPax = 0;
-
-  D_FIN('suggestAbonosFromItin: inicio', {
-    grupoId: grupo?.id,
-    destino,
-    paxPlanBase,
-    paxAdultos,
-    paxEstudiantes,
-    diasItinerario: Object.keys(it).length
-  });
-
-  for (const [fechaISO, arr] of Object.entries(it)){
-    const acts = Array.isArray(arr) ? arr : Object.values(arr || {});
-    for (const a of acts){
-      const actName = (a?.actividad || '').toString();
-      if (!actName) continue;
-
-      totalActs++;
-
-      const svc = await findServicio(destino, actName).catch(()=>null);
-      const proveedor = (svc?.proveedor || a?.proveedor || '').toString();
-      if (!svc){
-        D_FIN('suggestAbonosFromItin: skip sin servicio', { fechaISO, actName });
-        continue;
-      }
-      actsConServicio++;
-
-      if (!proveedor){
-        D_FIN('suggestAbonosFromItin: skip sin proveedor', { fechaISO, actName });
-        continue;
-      }
-
-      // SOLO si el método de pago del servicio es EFECTIVO
-      if (!metodoPagoEsEfectivoFromServicio(svc)){
-        D_FIN('suggestAbonosFromItin: skip no EFECTIVO', {
-          fechaISO,
-          actName,
-          proveedor,
-          metodo: svc.metodoPago || svc.medioPago || svc.formaPago || null
-        });
-        continue;
-      }
-      actsMetodoEfectivo++;
-
-      const unit = precioUnitarioFromServicio(svc);
-      if (!unit){
-        D_FIN('suggestAbonosFromItin: skip sin precio unitario', { fechaISO, actName, proveedor });
-        continue;
-      }
-      actsConPrecio++;
-
-      // Lógica de PAX según nombre de la actividad
-      const nameNorm = norm(actName);  // minúsculas, sin tildes
-      let paxUsado = paxPlanBase;
-
-      if (nameNorm.includes('adult')){
-        // actividades que mencionan ADULTO(S)
-        paxUsado = paxAdultos || paxPlanBase;
-      } else if (nameNorm.includes('estudiant')){
-        // actividades que mencionan ESTUDIANTE(S)
-        paxUsado = paxEstudiantes || paxPlanBase;
-      }
-
-      if (!paxUsado){
-        D_FIN('suggestAbonosFromItin: skip sin paxUsado', {
-          fechaISO,
-          actName,
-          proveedor,
-          paxPlanBase,
-          paxAdultos,
-          paxEstudiantes
-        });
-        continue;
-      }
-      actsConPax++;
-
-      const moneda = monedaFromServicio(svc);
-      const totalSug = unit * paxUsado;
-
-      const registro = {
-        asunto: `${actName.toUpperCase()} ${dmy(fechaISO)}`,
-        comentarios: `${paxUsado} PAX × ${unit.toLocaleString('es-CL')} ${moneda}`,
-        moneda,
-        valor: totalSug,
-        fecha: fechaISO,
-        medio: 'EFECTIVO',
-        autoCalc: true,
-        estado: 'PRECARGA',
-        provWhitelistHit: proveedor.toUpperCase(),
-        refActs: [{
-          fechaISO,
-          actividad: actName,
-          paxUsado,
-          precioUnitario: unit,
-          totalSug
-        }]
-      };
-
-      D_FIN('suggestAbonosFromItin: PUSH SUGERIDO', {
-        grupoId: grupo?.id,
-        fechaISO,
-        actName,
-        proveedor,
-        moneda,
-        valor: totalSug,
-        paxUsado,
-        unit
-      });
-
-      out.push(registro);
+    const itin = grupo?.itinerario || {};
+    if (!itin || typeof itin !== 'object' || !Object.keys(itin).length){
+      return [];
     }
+
+    const fechas = Object.keys(itin).sort();
+    const registros = [];
+    let actsTotales = 0, actsConServicio = 0, actsConPax = 0;
+
+    for (const fechaISO of fechas){
+      const acts = Array.isArray(itin[fechaISO]) ? itin[fechaISO] : [];
+      for (const a of acts){
+        actsTotales++;
+
+        const nombreAct = (a.actividad || a.nombre || '').toString().trim();
+        if (!nombreAct) continue;
+
+        // 1) Buscar servicio en catálogos (USANDO CACHE)
+        const svc = await findServicio(grupo.destino, nombreAct);
+        if (!svc){
+          D_FIN('suggestAbonosFromItin: sin servicio', { fecha:fechaISO, actividad:nombreAct });
+          continue;
+        }
+        actsConServicio++;
+
+        // 2) Sólo servicios pagados en EFECTIVO
+        if (!metodoPagoEsEfectivoFromServicio(svc)){
+          D_FIN('suggestAbonosFromItin: servicio sin EFECTIVO', { fecha:fechaISO, actividad:nombreAct, svcId:svc.id });
+          continue;
+        }
+
+        // 3) Precio unitario
+        const { unit, moneda, fuente } = precioUnitarioFromServicio(svc);
+        if (!unit || unit <= 0){
+          D_FIN('suggestAbonosFromItin: servicio sin precio usable', {
+            fecha:fechaISO, actividad:nombreAct, svcId:svc.id, fuente
+          });
+          continue;
+        }
+
+        // 4) PAX base del grupo
+        const paxPlanBase = (grupo && (grupo.cantidadgrupo != null ? grupo.cantidadgrupo : paxOf(grupo))) || 0;
+        let paxUsado = paxPlanBase;
+
+        // Filtrado por adultos / estudiantes según nombre de la actividad
+        const nombreNorm = norm(nombreAct);
+        if (nombreNorm.includes('adult')){
+          paxUsado = Number(grupo.adultos || 0) || paxPlanBase;
+        } else if (nombreNorm.includes('estudiant')){
+          paxUsado = Number(grupo.estudiantes || 0) || paxPlanBase;
+        }
+
+        if (!paxUsado || paxUsado <= 0){
+          D_FIN('suggestAbonosFromItin: sin PAX usable', {
+            fecha:fechaISO, actividad:nombreAct, svcId:svc.id, paxPlanBase
+          });
+          continue;
+        }
+        actsConPax++;
+
+        // 5) tipoCobro: POR PERSONA vs POR GRUPO
+        const tipoCobroRaw  = (svc.tipoCobro || svc.tipo_cobro || '').toString();
+        const tipoCobroNorm = norm(tipoCobroRaw);
+        const esPorGrupo    = tipoCobroNorm.includes('grupo');   // ej: "POR GRUPO"
+        const factorCobro   = esPorGrupo ? 1 : paxUsado;
+        const etiquetaCant  = esPorGrupo ? '1 GRUPO' : `${paxUsado} PAX`;
+
+        const totalSug = unit * factorCobro;
+
+        // 6) Proveedor
+        const prov = (svc.proveedor || svc.prov || '').toString().trim();
+        if (!prov){
+          D_FIN('suggestAbonosFromItin: skip sin proveedor', {
+            fecha:fechaISO, actividad:nombreAct, svcId:svc.id
+          });
+          continue;
+        }
+
+        // 7) Texto de abono: actividad + fecha
+        const asunto = `${nombreAct.toUpperCase()} – ${dmy(fechaISO)}`;
+
+        // Comentario: "X PAX × VALOR" o "1 GRUPO × VALOR"
+        const comentarios = `${etiquetaCant} × ${unit.toLocaleString('es-CL')} ${moneda}`;
+
+        const registro = {
+          grupoId: grupo.id,
+          grupoNumero: grupo.numeroNegocio || '',
+          fecha: fechaISO,
+          fechaStr: dmy(fechaISO),
+          moneda,
+          valor: totalSug,
+          medio: 'EFECTIVO',
+
+          // Ya NO usamos estado PRECARGA/CONFIRMADA, sólo marcamos que es auto
+          autoCalc: true,
+
+          proveedor: prov,
+          asunto,
+          comentarios,
+
+          provWhitelistHit: prov,
+          refActs: [{
+            fecha: fechaISO,
+            actividad: nombreAct,
+            paxBase: paxPlanBase,
+            paxUsado,
+            tipoCobro: tipoCobroRaw || null,
+            factorCobro,
+            precioUnitario: unit,
+            moneda,
+            fuentePrecio: fuente
+          }]
+        };
+
+        registros.push(registro);
+      }
+    }
+
+    D_FIN('suggestAbonosFromItin: fin', {
+      totalAct: actsTotales,
+      conServicio: actsConServicio,
+      conPax: actsConPax,
+      sugeridos: registros.length
+    });
+    return registros;
+  }catch(e){
+    console.error('[suggestAbonosFromItin]', e);
+    return [];
   }
-
-  D_FIN('suggestAbonosFromItin: fin', {
-    grupoId: grupo?.id,
-    totalActs,
-    actsConServicio,
-    actsMetodoEfectivo,
-    actsConPrecio,
-    actsConPax,
-    sugeridos: out.length
-  });
-
-  return out;
 }
 
 // ==== REEMPLAZO: SOLO APROBADOS EN EL SALDO ====
@@ -5298,23 +5332,26 @@ async function renderFinanzas(g, pane){
       const card = document.createElement('div');
       card.className = 'card';
 
-      const estado = (a.estado || 'PRECARGA').toString().toUpperCase();
-      const isPrecarga = (estado === 'PRECARGA');
-
       card.innerHTML = `
-        <div class="meta"><strong>${(a.asunto||'ABONO').toString().toUpperCase()}</strong></div>
-        <div class="meta">FECHA: ${dmy(a.fecha||'')}</div>
-        <div class="meta">MONEDA/VALOR: ${(a.moneda||'CLP').toUpperCase()} ${fmtCL(a.valor||0)}</div>
-        <div class="meta">MEDIO: ${(a.medio||'').toString().toUpperCase()}</div>
+        <div class="meta">
+          <strong>${(a.asunto||'ABONO').toString().toUpperCase()}</strong>
+        </div>
+        <div class="meta">
+          FECHA: ${dmy(a.fecha||'')}
+        </div>
+        <div class="meta">
+          MONEDA/VALOR: ${(a.moneda||'CLP').toUpperCase()} ${fmtCL(a.valor||0)}
+        </div>
+        <div class="meta">
+          MEDIO: ${(a.medio||'').toString().toUpperCase()}
+        </div>
         ${a.comentarios
           ? `<div class="meta" style="white-space:pre-wrap">${(a.comentarios||'').toString().toUpperCase()}</div>`
           : ''
         }
         ${a.autoCalc ? `
-          <div class="badge badge-abono"
-               data-id="${a.id||''}"
-               style="background:${isPrecarga ? '#334155' : '#15803d'};color:#fff;cursor:pointer">
-            ${estado}
+          <div class="badge" style="background:#1d4ed8;color:#fff">
+            AUTO
           </div>` : ''
         }
         ${state.is ? `
@@ -5326,24 +5363,6 @@ async function renderFinanzas(g, pane){
       `;
 
       if (state.is){
-        // Toggle PRECARGA ↔ CONFIRMADA solo para abonos auto-cargados
-        if (a.autoCalc){
-          const badge = card.querySelector('.badge-abono');
-          if (badge){
-            badge.onclick = async ()=>{
-              const nuevoEstado = (a.estado === 'CONFIRMADA') ? 'PRECARGA' : 'CONFIRMADA';
-              try{
-                await saveAbono(g.id, { ...a, estado: nuevoEstado });
-                a.estado = nuevoEstado;
-                renderAbonosList(items);
-              }catch(err){
-                console.error('[FIN] Error actualizando estado de abono:', err);
-                alert('No se pudo actualizar el estado del abono. Intenta nuevamente.');
-              }
-            };
-          }
-        }
-
         const bE = card.querySelector('.btnEdit');
         if (bE) bE.onclick = async ()=>{
           await openAbonoEditor(g, a, (updated)=>{
@@ -5366,6 +5385,7 @@ async function renderFinanzas(g, pane){
       cont.appendChild(card);
     });
   };
+
 
 
   if (state.is){
