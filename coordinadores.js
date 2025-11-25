@@ -4624,6 +4624,10 @@ async function sumCLPByMoneda(montos, tasasOpt){
 }
 
 // -------- ABONOS CRUD  (grupos/{gid}/finanzas_abonos) ----------
+
+// PIN para desbloquear abonos confirmados
+const ABONO_UNLOCK_PIN = '2025';
+
 async function loadAbonos(gid){
   // ojo: aquí debe usarse gid (parámetro), no g.id
   const qs = await getDocs(collection(db,'grupos', gid, 'finanzas_abonos'));
@@ -5310,15 +5314,17 @@ async function renderFinanzas(g, pane){
 
   // ABONOS (STAFF edita)
   const boxAb=document.createElement('div'); boxAb.className='act';
-  boxAb.innerHTML = `
-    <h4>ABONOS ${state.is?'<span class="muted">(STAFF PUEDE EDITAR)</span>':''}</h4>
-    ${state.is ? `
-      <div class="rowflex" style="margin:.4rem 0">
-        <button id="btnNewAbono"  class="btn ok">NUEVO ABONO</button>
-      </div>` : ''}
-    <div id="abonosList" style="display:grid;gap:.4rem"></div>
-  `;
-  wrap.appendChild(boxAb);
+    boxAb.innerHTML = `
+      <h4>ABONOS ${state.is?'<span class="muted">(STAFF PUEDE EDITAR)</span>':''}</h4>
+      ${state.is ? `
+        <div class="rowflex" style="margin:.4rem 0;gap:.4rem;flex-wrap:wrap">
+          <button id="btnNewAbono"         class="btn ok">NUEVO ABONO</button>
+          <button id="btnReloadAbonosAuto" class="btn sec">CARGAR SUGERIDOS</button>
+          <button id="btnResetAbonosAuto"  class="btn warn">RESET AUTO</button>
+        </div>` : ''}
+      <div id="abonosList" style="display:grid;gap:.4rem"></div>
+    `;
+    wrap.appendChild(boxAb);
 
   const renderAbonosList = (items)=>{
     const cont = boxAb.querySelector('#abonosList');
@@ -5333,8 +5339,18 @@ async function renderFinanzas(g, pane){
       card.className = 'card';
 
       card.innerHTML = `
-        <div class="meta">
-          <strong>${(a.asunto||'ABONO').toString().toUpperCase()}</strong>
+        <div class="meta" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap">
+          <div>
+            <strong>${(a.asunto||'ABONO').toString().toUpperCase()}</strong>
+          </div>
+          ${state.is ? `
+            <button
+              class="btn sec btnLock"
+              title="${a.locked ? 'Desbloquear abono (requiere clave)' : 'Marcar como confirmado / bloquear'}"
+            >
+              ${a.locked ? '🔒' : '🔓'}
+            </button>
+          ` : ''}
         </div>
         <div class="meta">
           FECHA: ${dmy(a.fecha||'')}
@@ -5349,8 +5365,7 @@ async function renderFinanzas(g, pane){
           ? `<div class="meta" style="white-space:pre-wrap">${(a.comentarios||'').toString().toUpperCase()}</div>`
           : ''
         }
-
-        ${state.is ? `
+        ${(state.is && !a.locked) ? `
           <div class="rowflex" style="margin-top:.4rem;gap:.4rem;flex-wrap:wrap">
             <button class="btn sec btnEdit">EDITAR</button>
             <button class="btn warn btnDel">ELIMINAR</button>
@@ -5359,33 +5374,65 @@ async function renderFinanzas(g, pane){
       `;
 
       if (state.is){
-        const bE = card.querySelector('.btnEdit');
-        if (bE) bE.onclick = async ()=>{
-          await openAbonoEditor(g, a, (updated)=>{
-            Object.assign(a, updated);
+        const bLock = card.querySelector('.btnLock');
+        if (bLock) bLock.onclick = async ()=>{
+          try{
+            if (!a.locked){
+              // Bloquear (CONFIRMAR) abono
+              if (!confirm('Este abono quedará CONFIRMADO y no se podrá editar ni eliminar sin clave. ¿Continuar?')) return;
+              await saveAbono(g.id, { ...a, locked:true });
+              a.locked = true;
+            } else {
+              // Desbloquear abono: pide PIN
+              const pin = prompt('Para desbloquear este abono ingresa la clave:');
+              if (pin === null) return; // cancelado
+              if (pin !== ABONO_UNLOCK_PIN){
+                alert('Clave incorrecta.');
+                return;
+              }
+              await saveAbono(g.id, { ...a, locked:false });
+              a.locked = false;
+            }
             renderAbonosList(items);
-          });
+          }catch(e){
+            console.error(e);
+            alert('No se pudo actualizar el estado de bloqueo de este abono.');
+          }
         };
 
-        const bD = card.querySelector('.btnDel');
-        if (bD) bD.onclick = async ()=>{
-          if (!confirm('¿Eliminar abono?')) return;
-          await deleteAbono(g.id, a.id);
-          const i = items.findIndex(x=>x.id===a.id);
-          if (i>=0) items.splice(i,1);
-          renderAbonosList(items);
-          await renderFinanzas(g, pane);
-        };
+        // Solo se puede EDITAR / ELIMINAR si el abono NO está bloqueado
+        if (!a.locked){
+          const bE = card.querySelector('.btnEdit');
+          if (bE) bE.onclick = async ()=>{
+            await openAbonoEditor(g, a, (updated)=>{
+              Object.assign(a, updated);
+              renderAbonosList(items);
+            });
+          };
+
+          const bD = card.querySelector('.btnDel');
+          if (bD) bD.onclick = async ()=>{
+            if (!confirm('¿Eliminar abono?')) return;
+            await deleteAbono(g.id, a.id);
+            const i = items.findIndex(x=>x.id===a.id);
+            if (i>=0) items.splice(i,1);
+            renderAbonosList(items);
+            await renderFinanzas(g, pane);
+          };
+        }
       }
+
 
       cont.appendChild(card);
     });
   };
 
-
-
   if (state.is){
-    const btnNew = boxAb.querySelector('#btnNewAbono');
+    const btnNew    = boxAb.querySelector('#btnNewAbono');
+    const btnReload = boxAb.querySelector('#btnReloadAbonosAuto');
+    const btnReset  = boxAb.querySelector('#btnResetAbonosAuto');
+
+    // NUEVO ABONO (igual que antes)
     if (btnNew) btnNew.onclick = async ()=>{
       await openAbonoEditor(g, null, async (saved)=>{
         abonos.unshift(saved);
@@ -5393,8 +5440,41 @@ async function renderFinanzas(g, pane){
         await renderFinanzas(g, pane);
       });
     };
+
+    // CARGAR SUGERIDOS: vuelve a correr renderFinanzas,
+    // que ya incluye la lógica de suggestAbonosFromItin + yaExiste
+    if (btnReload) btnReload.onclick = async ()=>{
+      await renderFinanzas(g, pane);
+    };
+
+    // RESET AUTO: borra todos los abonos autoCalc NO locked y recarga sugeridos
+    if (btnReset) btnReset.onclick = async ()=>{
+      if (!confirm('Esto eliminará todos los abonos automáticos NO confirmados y recargará las sugerencias del sistema. ¿Continuar?')) return;
+
+      try{
+        const actuales = await loadAbonos(g.id);
+        const aBorrar = actuales.filter(a=>a.autoCalc && !a.locked);
+
+        for (const a of aBorrar){
+          await deleteAbono(g.id, a.id);
+        }
+
+        D_FIN('renderFinanzas: reset auto abonos', {
+          grupoId: g?.id,
+          borrados: aBorrar.length
+        });
+      }catch(e){
+        console.error(e);
+        alert('No se pudo resetear los abonos automáticos.');
+        return;
+      }
+
+      // Volvemos a cargar FINANZAS: esto recrea la UI y recalcula sugeridos
+      await renderFinanzas(g, pane);
+    };
   }
   renderAbonosList(abonos);
+
 
   // GASTOS
   const paneGastos = document.createElement('div');
@@ -5655,10 +5735,15 @@ async function openAbonoEditor(g, abono, onSaved){
   const title = document.getElementById('modalTitle');
   const body  = document.getElementById('modalBody');
 
-  title.textContent = (isEdit?'EDITAR ABONO':'NUEVO ABONO');
+  title.textContent = (isEdit ? 'EDITAR ABONO' : 'NUEVO ABONO');
 
   const seed = abono || {
-    asunto:'', comentarios:'', moneda:'CLP', valor:'', fecha: todayISO(), medio:'CTA CTE', autoCalc:false, provWhitelistHit:null, refActs:[]
+    asunto:'', comentarios:'', moneda:'CLP', valor:'',
+    fecha: todayISO(), medio:'CTA CTE',
+    autoCalc:false,
+    locked:false,
+    provWhitelistHit:null,
+    refActs:[]
   };
 
   body.innerHTML = `
@@ -5671,11 +5756,21 @@ async function openAbonoEditor(g, abono, onSaved){
         <option value="ARS"${seed.moneda==='ARS'?' selected':''}>ARS</option>
       </select>
       <input id="abVal" type="number" min="0" inputmode="numeric" placeholder="VALOR" value="${seed.valor||''}"/>
-      <input id="abFec" type="date" value="${toISO(seed.fecha)||todayISO()}"/>
+      <input id="abFec" type="date" value="${toISO(seed.fecha||todayISO())}"/>
       <input id="abMed" type="text" placeholder="MEDIO (CTA CTE / EFECTIVO / ...)" value="${(seed.medio||'')}"/>
     </div>
     <div class="rowflex" style="margin-top:.5rem">
       <textarea id="abCom" placeholder="COMENTARIOS" style="width:100%">${seed.comentarios||''}</textarea>
+    </div>
+    <div class="rowflex" style="margin-top:.5rem;gap:.5rem;flex-wrap:wrap;align-items:center">
+      <label class="meta" style="display:flex;align-items:center;gap:.4rem">
+        <input id="abLock" type="checkbox"${seed.locked ? ' checked' : ''}/>
+        MARCAR COMO CONFIRMADO / INAMOVIBLE
+      </label>
+      ${seed.autoCalc ? `
+        <span class="badge" style="background:#1d4ed8;color:#fff">
+          AUTO (SUGERIDO)
+        </span>` : ''}
     </div>
     <div class="rowflex" style="margin-top:.6rem">
       <button id="abSave" class="btn ok">${isEdit?'GUARDAR':'CREAR'}</button>
@@ -5692,19 +5787,26 @@ async function openAbonoEditor(g, abono, onSaved){
       fecha: toISO(body.querySelector('#abFec').value||todayISO()),
       medio: (body.querySelector('#abMed').value||'').trim() || 'CTA CTE',
       autoCalc: !!seed.autoCalc,
+      locked: !!body.querySelector('#abLock').checked,
       provWhitelistHit: seed.provWhitelistHit || null,
       refActs: Array.isArray(seed.refActs)? seed.refActs : []
     };
-    if (!data.asunto || !data.valor){ alert('ASUNTO y VALOR son obligatorios.'); return; }
+    if (!data.asunto || !data.valor){
+      alert('ASUNTO y VALOR son obligatorios.');
+      return;
+    }
     const id = await saveAbono(g.id, data);
     const saved = { id: id || data.id, ...data };
     document.getElementById('modalBack').style.display='none';
     onSaved && onSaved(saved);
   };
 
-  document.getElementById('modalClose').onclick=()=>{ document.getElementById('modalBack').style.display='none'; };
+  document.getElementById('modalClose').onclick = ()=>{
+    document.getElementById('modalBack').style.display='none';
+  };
   back.style.display='flex';
 }
+
 
 async function getTasas(){
   if(state.cache.tasas) return state.cache.tasas;
