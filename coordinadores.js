@@ -4805,7 +4805,7 @@ async function suggestAbonosFromItin(grupo){
 
       const registro = {
         asunto: `${actName.toUpperCase()} ${dmy(fechaISO)}`,
-        comentarios: `PRECARGA: ${paxUsado} PAX × ${unit.toLocaleString('es-CL')} ${moneda}`,
+        comentarios: `${paxUsado} PAX × ${unit.toLocaleString('es-CL')} ${moneda}`,
         moneda,
         valor: totalSug,
         fecha: fechaISO,
