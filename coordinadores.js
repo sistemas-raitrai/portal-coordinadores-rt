@@ -2733,17 +2733,63 @@ async function staffReopenCierre(g){
 }
 
 /* ====== SERVICIOS / VOUCHERS ====== */
-async function findServicio(destino, nombre){
-  if(!destino||!nombre) return null;
-  const want=norm(nombre);
-  const candidates=[ ['Servicios',destino,'Listado'], [destino,'Listado'] ];
-  for(const path of candidates){
-    try{
-      const snap=await getDocs(collection(db,path[0],path[1],path[2]));
-      let best=null; snap.forEach(d=>{ const x=d.data()||{}; const serv=String(x.servicio||x.nombre||d.id||''); if(norm(serv)===want) best={id:d.id,...x}; });
-      if(best) return best;
-    }catch(_){}
+
+// Destinos "compuestos" que reutilizan catálogos de otros destinos
+const DESTINO_SERVICIOS_ALIASES = {
+  // clave: destino normalizado (con norm)
+  'sur de chile y bariloche': ['SUR DE CHILE', 'BARILOCHE'],
+};
+
+function expandDestinosServicios(destinoRaw){
+  const base = (destinoRaw || '').toString().trim();
+  if (!base) return [];
+
+  const out = [base];
+
+  // 1) alias explícitos
+  const alias = DESTINO_SERVICIOS_ALIASES[norm(base)];
+  if (alias && Array.isArray(alias)){
+    for (const d of alias){
+      if (d && !out.includes(d)) out.push(d);
+    }
+  } else {
+    // 2) fallback genérico: "SUR DE CHILE Y BARILOCHE" → ["SUR DE CHILE","BARILOCHE"]
+    const up = base.toUpperCase();
+    if (/\sY\s/.test(up)){
+      up.split(/\s+Y\s+/).forEach(part => {
+        const clean = part.trim();
+        if (clean && !out.includes(clean)) out.push(clean);
+      });
+    }
   }
+  return out;
+}
+
+async function findServicio(destino, nombre){
+  if (!destino || !nombre) return null;
+  const want = norm(nombre);
+  const destinos = expandDestinosServicios(destino);
+  if (!destinos.length) return null;
+
+  for (const dest of destinos){
+    const candidates = [
+      ['Servicios', dest, 'Listado'],
+      [dest, 'Listado'],
+    ];
+    for (const path of candidates){
+      try{
+        const snap = await getDocs(collection(db, path[0], path[1], path[2]));
+        let best = null;
+        snap.forEach(d => {
+          const x = d.data() || {};
+          const serv = String(x.actividad || x.nombre || d.id || '');
+          if (norm(serv) === want) best = { id: d.id, ...x };
+        });
+        if (best) return best;
+      }catch(_){}
+    }
+  }
+
   return null;
 }
 /* ====== HILOS GLOBALES (A/B/C) + CHEQ OUT ====== */
@@ -4759,12 +4805,13 @@ async function suggestAbonosFromItin(grupo){
 
       const registro = {
         asunto: `${actName.toUpperCase()} ${dmy(fechaISO)}`,
-        comentarios: `${paxUsado} PAX × ${unit.toLocaleString('es-CL')} ${moneda}`,
+        comentarios: `PRECARGA: ${paxUsado} PAX × ${unit.toLocaleString('es-CL')} ${moneda}`,
         moneda,
         valor: totalSug,
         fecha: fechaISO,
         medio: 'EFECTIVO',
         autoCalc: true,
+        estado: 'PRECARGA',
         provWhitelistHit: proveedor.toUpperCase(),
         refActs: [{
           fechaISO,
@@ -4775,7 +4822,7 @@ async function suggestAbonosFromItin(grupo){
         }]
       };
 
-      D_FIN('suggestAbonosFromItin: PUSH POR SISTEMA', {
+      D_FIN('suggestAbonosFromItin: PUSH SUGERIDO', {
         grupoId: grupo?.id,
         fechaISO,
         actName,
