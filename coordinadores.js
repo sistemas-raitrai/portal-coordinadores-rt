@@ -5349,11 +5349,7 @@ async function renderFinanzas(g, pane){
           ? `<div class="meta" style="white-space:pre-wrap">${(a.comentarios||'').toString().toUpperCase()}</div>`
           : ''
         }
-        ${a.autoCalc ? `
-          <div class="badge" style="background:#1d4ed8;color:#fff">
-            AUTO
-          </div>` : ''
-        }
+
         ${state.is ? `
           <div class="rowflex" style="margin-top:.4rem;gap:.4rem;flex-wrap:wrap">
             <button class="btn sec btnEdit">EDITAR</button>
