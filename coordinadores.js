@@ -2770,7 +2770,6 @@ function expandDestinosServicios(destinoRaw){
   }
   return out;
 }
-
 // Cachea catálogos de servicios por ruta Firestore
 // key: 'Servicios/BRASIL/Listado'
 async function loadServiciosCatalog(pathArr){
@@ -2794,38 +2793,39 @@ async function loadServiciosCatalog(pathArr){
 }
 
 async function findServicio(destino, nombre){
-  const dest = String(destino||'').trim().toUpperCase();
-  const nom  = norm(nombre||'');
-  if (!dest || !nom) return null;
+  if (!destino || !nombre) return null;
 
-  const base = [
-    ['Servicios', dest, 'Listado'],
-    [dest, 'Listado']
-  ];
+  const want      = norm(nombre);
+  const destinos  = expandDestinosServicios(destino);  // ← usa tus alias
+  if (!destinos.length) return null;
 
-  const paths = aliasDestinosServicios[dest]
-    ? [...aliasDestinosServicios[dest], ...base]
-    : base;
+  for (const dest of destinos){
+    const candidates = [
+      ['Servicios', dest, 'Listado'], // Servicios/DESTINO/Listado
+      [dest, 'Listado'],              // DESTINO/Listado (fallback)
+    ];
 
-  for (const path of paths){
-    const servicios = await loadServiciosCatalog(path);
-    if (!Array.isArray(servicios) || !servicios.length) continue;
+    for (const path of candidates){
+      const servicios = await loadServiciosCatalog(path);
+      if (!Array.isArray(servicios) || !servicios.length) continue;
 
-    for (const svc of servicios){
-      const nombres = [
-        svc.servicio,
-        svc.actividad,
-        svc.nombre,
-        svc.id
-      ].map(v => (v||'').toString());
-
-      const hit = nombres.some(v => norm(v) === nom);
-      if (hit) return svc;
+      let best = null;
+      for (const svc of servicios){
+        const servName = String(
+          svc.actividad || svc.nombre || svc.servicio || svc.id || ''
+        );
+        if (norm(servName) === want){
+          best = svc;
+          break;
+        }
+      }
+      if (best) return best;
     }
   }
 
   return null;
 }
+
 /* ====== HILOS GLOBALES (A/B/C) + CHEQ OUT ====== */
 
 // A: actividad con proveedor  → DEST:{dest} | PROV:{proveedorId} | SRV:{servicioId}
