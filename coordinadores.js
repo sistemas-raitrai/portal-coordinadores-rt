@@ -5289,27 +5289,69 @@ async function renderFinanzas(g, pane){
   const renderAbonosList = (items)=>{
     const cont = boxAb.querySelector('#abonosList');
     cont.innerHTML = '';
-    if (!items.length){ cont.innerHTML = '<div class="muted">SIN ABONOS.</div>'; return; }
+    if (!items.length){
+      cont.innerHTML = '<div class="muted">SIN ABONOS.</div>';
+      return;
+    }
+
     items.forEach(a=>{
-      const card=document.createElement('div'); card.className='card';
+      const card = document.createElement('div');
+      card.className = 'card';
+
+      const estado = (a.estado || 'PRECARGA').toString().toUpperCase();
+      const isPrecarga = (estado === 'PRECARGA');
+
       card.innerHTML = `
         <div class="meta"><strong>${(a.asunto||'ABONO').toString().toUpperCase()}</strong></div>
         <div class="meta">FECHA: ${dmy(a.fecha||'')}</div>
         <div class="meta">MONEDA/VALOR: ${(a.moneda||'CLP').toUpperCase()} ${fmtCL(a.valor||0)}</div>
         <div class="meta">MEDIO: ${(a.medio||'').toString().toUpperCase()}</div>
-        ${a.comentarios?`<div class="meta" style="white-space:pre-wrap">${(a.comentarios||'').toString().toUpperCase()}</div>`:''}
-        ${a.autoCalc?`<div class="badge" style="background:#334155;color:#fff">SUGERIDO</div>`:''}
-        ${state.is?`
+        ${a.comentarios
+          ? `<div class="meta" style="white-space:pre-wrap">${(a.comentarios||'').toString().toUpperCase()}</div>`
+          : ''
+        }
+        ${a.autoCalc ? `
+          <div class="badge badge-abono"
+               data-id="${a.id||''}"
+               style="background:${isPrecarga ? '#334155' : '#15803d'};color:#fff;cursor:pointer">
+            ${estado}
+          </div>` : ''
+        }
+        ${state.is ? `
           <div class="rowflex" style="margin-top:.4rem;gap:.4rem;flex-wrap:wrap">
             <button class="btn sec btnEdit">EDITAR</button>
             <button class="btn warn btnDel">ELIMINAR</button>
-          </div>`:''}
+          </div>` : ''
+        }
       `;
+
       if (state.is){
+        // Toggle PRECARGA ↔ CONFIRMADA solo para abonos auto-cargados
+        if (a.autoCalc){
+          const badge = card.querySelector('.badge-abono');
+          if (badge){
+            badge.onclick = async ()=>{
+              const nuevoEstado = (a.estado === 'CONFIRMADA') ? 'PRECARGA' : 'CONFIRMADA';
+              try{
+                await saveAbono(g.id, { ...a, estado: nuevoEstado });
+                a.estado = nuevoEstado;
+                renderAbonosList(items);
+              }catch(err){
+                console.error('[FIN] Error actualizando estado de abono:', err);
+                alert('No se pudo actualizar el estado del abono. Intenta nuevamente.');
+              }
+            };
+          }
+        }
+
         const bE = card.querySelector('.btnEdit');
         if (bE) bE.onclick = async ()=>{
-          await openAbonoEditor(g, a, (updated)=>{ Object.assign(a,updated); renderAbonosList(items); });
+          await openAbonoEditor(g, a, (updated)=>{
+            Object.assign(a, updated);
+            renderAbonosList(items);
+          });
         };
+
         const bD = card.querySelector('.btnDel');
         if (bD) bD.onclick = async ()=>{
           if (!confirm('¿Eliminar abono?')) return;
@@ -5320,9 +5362,11 @@ async function renderFinanzas(g, pane){
           await renderFinanzas(g, pane);
         };
       }
+
       cont.appendChild(card);
     });
   };
+
 
   if (state.is){
     const btnNew = boxAb.querySelector('#btnNewAbono');
