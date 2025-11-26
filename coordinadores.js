@@ -5768,6 +5768,27 @@ async function renderFinanzas(g, pane){
   checkReady();
 
   // === BLOQUEO DE CONTROLES DE CIERRE SI YA ESTÁ CERRADO (SOLO COORDINADOR) ===
+  const isReadOnlyFin = !!sumPrev?.closed && !state.is;
+  if (isReadOnlyFin){
+    // Deshabilita todos los controles del bloque de cierre
+    ['#chTransf','#upComp','#btnUpComp',
+     '#chCashUsd','#upCash','#btnUpCash',
+     '#upBoleta','#btnUpBoleta','#btnCloseFin'
+    ].forEach(sel => {
+      const el = cierre.querySelector(sel);
+      if (el){
+        el.disabled = true;
+        el.classList.add('disabled');
+      }
+    });
+
+    // Mensaje claro de estado
+    const h = cierre.querySelector('#finHints');
+    if (h){
+      h.innerHTML = '<div class="muted">VIAJE FINALIZADO · RENDICIÓN HECHA · BOLETA ENTREGADA</div>';
+    }
+  }
+
   // === Snapshot de finanzas (solo STAFF, con PIN) ===
   if (state.is && chSnap){
     chSnap.addEventListener('change', async (ev)=>{
@@ -5788,7 +5809,7 @@ async function renderFinanzas(g, pane){
             abonos,
             gastosAprob,
             totAb,
-            totGas,
+            totGa,          // 👈 corregido: antes decía "totGas"
             saldos,
             sumPrev,
             motivo: 'snapshot_manual'
@@ -5838,15 +5859,15 @@ async function renderFinanzas(g, pane){
           if (snapInfo){
             const cnt = Number(sumPrev.snapshots?.count || 0);
             snapInfo.textContent = cnt
-              ? `FOTOS GUARDADAS: ${cnt} · (sin FOTO activa marcada)`
-              : 'Aún no hay fotos guardadas.';
+              ? `FOTOS GUARDADAS: ${cnt} · Última: ${dmy(sumPrev.snapshots.lastAt || todayISO())}`
+              : 'SIN FOTOS GUARDADAS';
           }
 
-          showFlash('FOTO DE FINANZAS DESMARCADA (historial se mantiene)', 'warn');
+          showFlash('FOTO DE FINANZAS DESMARCADA', 'ok');
         }catch(e){
-          console.error('Error desmarcando snapshot de finanzas', e);
-          alert('No se pudo desmarcar la FOTO de finanzas. Revisa consola.');
-          ev.target.checked = true;
+          console.error('Error actualizando snapshot de finanzas', e);
+          alert('No se pudo actualizar el estado de la FOTO de finanzas. Revisa consola.');
+          ev.target.checked = !checked;
         }
       }
     });
