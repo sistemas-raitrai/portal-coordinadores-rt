@@ -4934,47 +4934,59 @@ async function updateFinanzasSummary(gid, patch){
 // - Abonos, gastos aprobados, totales y saldos
 // Se guarda como documento independiente en la subcolección:
 //   grupos/{gid}/finanzas_snapshots
-async function crearSnapshotFinanzas(g, {
-  abonos = [],
-  gastosAprob = [],
-  totAb = {},
-  totGas = {},
-  saldos = {},
-  sumPrev = {},
-  motivo = 'snapshot_manual'
-} = {}){
-  if (!g || !g.id) throw new Error('crearSnapshotFinanzas: falta grupo');
-
-  const gid = g.id;
-  const { itinerario, asistencias, serviciosEstado, ...restGrupo } = g || {};
-
-  const snapData = {
+// -------- FOTO DE FINANZAS (snapshot interno) ----------
+async function crearSnapshotFinanzas(grupo, ctx){
+  const payload = {
+    grupoId: grupo.id,
+    numeroNegocio: grupo.numeroNegocio || null,
+    identificador: grupo.identificador || null,
+    nombreGrupo: grupo.nombreGrupo || grupo.aliasGrupo || null,
+    destino: grupo.destino || null,
+    anoViaje: grupo.anoViaje || null,
     createdAt: serverTimestamp(),
-    createdBy: {
-      uid: state.user?.uid || null,
-      email: (state.user?.email || '').toLowerCase()
+    createdBy: (state.user?.email || '').toLowerCase(),
+    motivo: ctx.motivo || 'snapshot_manual',
+    resumen:{
+      totalesAbonos: ctx.totAb || {},
+      totalesGastos: ctx.totGa || {},
+      saldos: ctx.saldos || {}
     },
-    motivo,
-    grupo: restGrupo || {},
-    itinerario: itinerario || [],
-    asistencias: asistencias || {},
-    serviciosEstado: serviciosEstado || {},
-    finanzas: {
-      saldos: saldos || {},
-      totalesAbonos: totAb || {},
-      totalesGastosAprobados: totGas || {},
-      abonos: abonos || [],
-      gastosAprob: gastosAprob || [],
-      summaryPrevio: sumPrev || null
-    }
+    cierrePrevio: ctx.sumPrev || {},
+    abonos: (ctx.abonos || []).map(a => ({
+      id: a.id || null,
+      asunto: a.asunto || '',
+      moneda: String(a.moneda || 'CLP').toUpperCase(),
+      valor: Number(a.valor || 0),
+      medio: a.medio || '',
+      fecha: a.fecha || null,
+      autoCalc: !!a.autoCalc,
+      locked: !!a.locked
+    })),
+    gastosAprobados: (ctx.gastosAprob || []).map(x => ({
+      id: x.id || null,
+      proveedor: x.proveedor || '',
+      actividad: x.actividad || '',
+      moneda: String(x.moneda || 'CLP').toUpperCase(),
+      valor: Number(x.valor || 0),
+      fecha: x.fecha || null,
+      estado: x.estado || ''
+    }))
   };
 
-  const ref = await addDoc(
-    collection(db,'grupos',gid,'finanzas_snapshots'),
-    snapData
-  );
+  const col = collection(db,'grupos', grupo.id, 'finanzas_snapshots');
+  const ref = await addDoc(col, payload);
+
+  D_FIN('crearSnapshotFinanzas', {
+    grupoId: grupo.id,
+    snapId: ref.id,
+    totAb: ctx.totAb,
+    totGa: ctx.totGa,
+    saldos: ctx.saldos
+  });
+
   return ref.id;
 }
+
 
 // Trae las últimas fotos de finanzas de un grupo (ordenadas desc por fecha)
 async function listarSnapshotsFinanzas(gid, max = 20){
@@ -5636,6 +5648,51 @@ async function renderFinanzas(g, pane){
   if (sumPrev?.transfer?.done && chTransf) chTransf.checked = true;
   if (sumPrev?.cashUsd?.done && chCash)   chCash.checked   = true;
   if (sumPrev?.snapshots?.active && chSnap) chSnap.checked = true;
+
+    // === FOTO DE FINANZAS (STAFF, protegida con PIN) ===
+  if (state.is){
+    const snapInput  = cierre.querySelector('#finSnapshotKey');
+    const snapBtn    = cierre.querySelector('#btnFinSnapshot');
+    const snapStatus = cierre.querySelector('#finSnapshotStatus');
+
+    if (snapInput && snapBtn){
+      snapBtn.onclick = async ()=>{
+        const pin = (snapInput.value || '').trim();
+
+        // Usamos el mismo PIN que para desbloquear abonos
+        if (pin !== ABONO_UNLOCK_PIN){
+          alert('Clave incorrecta.');
+          return;
+        }
+
+        try{
+          snapBtn.disabled = true;
+          if (snapStatus) snapStatus.textContent = 'Guardando foto…';
+
+          const snapId = await crearSnapshotFinanzas(g, {
+            abonos,
+            gastosAprob,
+            totAb,
+            totGa,      // 👈 aquí va totGa, NO "totGas"
+            saldos,
+            sumPrev,
+            motivo: 'snapshot_manual'
+          });
+
+          if (snapStatus){
+            snapStatus.textContent = `Foto guardada (${snapId.slice(0,6)}…)`;
+          }
+          showFlash('FOTO DE FINANZAS GUARDADA', 'ok');
+        }catch(e){
+          console.error('Error creando snapshot de finanzas', e);
+          if (snapStatus) snapStatus.textContent = 'No se pudo guardar la foto.';
+          alert('No se pudo guardar la FOTO de finanzas. Revisa consola.');
+        }finally{
+          snapBtn.disabled = false;
+        }
+      };
+    }
+  }
 
   // helper numérico tolerante (≈0 a 2 decimales)
   const isZero = v => Math.abs(Number(v||0)) < 0.005;
