@@ -1130,10 +1130,10 @@ onAuthStateChanged(auth, async (user) => {
 
    // BOTONES SOLO PARA STAFF (en NAV solo queda imprimir; crear alerta va en Alertas)
    const btnPrint = document.getElementById('btnPrintVch');
-   if (btnPrint){
-     btnPrint.style.display = state.is ? '' : 'none';
-     if (state.is) btnPrint.textContent = 'IMPRIMIR DESPACHO';
-   }
+   // if (btnPrint){
+     // btnPrint.style.display = state.is ? '' : 'none';
+     // if (state.is) btnPrint.textContent = 'IMPRIMIR DESPACHO';
+   // } 
    const legacyNewAlert = document.getElementById('btnNewAlert');
    if (legacyNewAlert) legacyNewAlert.style.display = 'none';
 
