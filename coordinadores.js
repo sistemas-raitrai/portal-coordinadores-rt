@@ -297,7 +297,7 @@ function ensurePrintDOM(){
   sheet.innerHTML = `
     <div class="print-head">
       <div class="ph-left">
-        <div><strong>DESPACHO DE VIAJE</strong></div>
+        <div><strong id="ph-title">DESPACHO DE VIAJE</strong></div>
         <div id="ph-grupo"></div>
         <div id="ph-meta1"></div>
         <div id="ph-meta2"></div>
@@ -1486,6 +1486,152 @@ function renderNavBar(){
     const btn = document.getElementById('btnPrintVch');
     if (btn) btn.style.display = 'none';
   }
+}
+
+// ====== ACTA DE CIERRE DE FINANZAS (usa un snapshot) ======
+async function preparePrintActaFinanzas(g, snap){
+  // Reutilizamos la misma hoja oculta de impresión
+  ensurePrintDOM();
+
+  const $doc   = document.getElementById('print-block');
+  const $title = document.getElementById('ph-title');
+  const $grp   = document.getElementById('ph-grupo');
+  const $m1    = document.getElementById('ph-meta1');
+  const $m2    = document.getElementById('ph-meta2');
+  const $fech  = document.getElementById('ph-fechas');
+  const $pax   = document.getElementById('ph-pax');
+
+  const norm = s => String(s||'').trim().toUpperCase();
+  const dmySafe = v => {
+    try{
+      if (!v) return '';
+      const d = (v instanceof Date) ? v : new Date(v);
+      return isNaN(d) ? String(v).toUpperCase() : d.toLocaleDateString('es-CL').toUpperCase();
+    }catch{ return String(v||'').toUpperCase(); }
+  };
+  const fmtMon = v => {
+    const n = Number(v||0);
+    if (!isFinite(n)) return String(v||'');
+    return n.toLocaleString('es-CL',{minimumFractionDigits:0});
+  };
+
+  const s = snap || {};
+  const resumen    = s.resumen || {};
+  const saldos     = resumen.saldos || {};
+  const totAb      = resumen.totalesAbonos || {};
+  const totGas     = resumen.totalesGastos || {};
+  const cierrePrev = s.cierrePrevio || {};
+
+  const nn    = s.numeroNegocio ?? g.numeroNegocio ?? '';
+  const ident = s.identificador ?? g.identificador ?? '';
+  const code  = nn + (ident ? '-' + ident : '');
+  const nombre = s.nombreGrupo
+    || g.nombreGrupo
+    || g.aliasGrupo
+    || code
+    || g.id
+    || '';
+
+  const rango = `${dmySafe(g.fechaInicio||'')} — ${dmySafe(g.fechaFin||'')}`;
+
+  if ($title) $title.textContent = 'ACTA DE CIERRE FINANCIERO';
+  if ($grp)   $grp.textContent   = `GRUPO: ${norm(nombre)} (${code})`;
+  if ($m1)    $m1.textContent    = `DESTINO: ${norm(s.destino || g.destino || '')}`;
+  if ($m2)    $m2.textContent    = `SNAPSHOT POR: ${norm(s.createdBy || '')} · MOTIVO: ${norm(s.motivo || 'MANUAL')}`;
+  if ($fech){
+    let fechaSnap = '';
+    try{
+      const raw = s.createdAt?.toDate ? s.createdAt.toDate() : s.createdAt;
+      if (raw) fechaSnap = dmySafe(raw);
+    }catch{}
+    $fech.textContent = `FECHA SNAPSHOT: ${fechaSnap || '—'}`;
+  }
+
+  if ($pax){
+    const real  = typeof paxRealOf === 'function' ? paxRealOf(g) : null;
+    const plan  = typeof paxOf     === 'function' ? paxOf(g)     : null;
+    $pax.innerHTML = `PAX: ${
+      real && plan && real!==plan ? `${plan} → ${real}` : (plan || real || '—')
+    }`;
+  }
+
+  const lines = [];
+
+  lines.push('ACTA DE CIERRE FINANCIERO');
+  lines.push('');
+
+  // 1) Resumen por moneda
+  lines.push('1) RESUMEN POR MONEDA');
+  const monedas = new Set([
+    ...Object.keys(totAb || {}),
+    ...Object.keys(totGas || {}),
+    ...Object.keys(saldos || {})
+  ]);
+  if (monedas.size){
+    monedas.forEach(mon=>{
+      const m = String(mon||'CLP').toUpperCase();
+      const ab = totAb[m]  ?? totAb[mon]  ?? 0;
+      const ga = totGas[m] ?? totGas[mon] ?? 0;
+      const sd = saldos[m] ?? saldos[mon] ?? 0;
+      lines.push(
+        `   - ${m}: ABONOS ${fmtMon(ab)} · GASTOS ${fmtMon(ga)} · SALDO ${fmtMon(sd)}`
+      );
+    });
+  }else{
+    lines.push('   (sin totales registrados)');
+  }
+
+  // 2) Detalle de abonos
+  lines.push('');
+  lines.push('2) DETALLE DE ABONOS');
+  if (Array.isArray(s.abonos) && s.abonos.length){
+    s.abonos.forEach(a=>{
+      const f = a.fecha ? dmySafe(a.fecha) : 'S/F';
+      const mon = String(a.moneda||'CLP').toUpperCase();
+      lines.push(
+        `   - ${f} · ${mon} ${fmtMon(a.valor)} · ${norm(a.medio||'')} · ${a.asunto||''}`
+      );
+    });
+  }else{
+    lines.push('   (sin abonos registrados)');
+  }
+
+  // 3) Detalle de gastos aprobados
+  lines.push('');
+  lines.push('3) DETALLE DE GASTOS APROBADOS');
+  if (Array.isArray(s.gastosAprobados) && s.gastosAprobados.length){
+    s.gastosAprobados.forEach(x=>{
+      const f = x.fecha ? dmySafe(x.fecha) : 'S/F';
+      const mon = String(x.moneda||'CLP').toUpperCase();
+      lines.push(
+        `   - ${f} · ${mon} ${fmtMon(x.valor)} · ${x.proveedor||''} · ${x.actividad||''}`
+      );
+    });
+  }else{
+    lines.push('   (sin gastos aprobados)');
+  }
+
+  // 4) Respaldos
+  lines.push('');
+  lines.push('4) RESPALDOS CARGADOS');
+  const t = cierrePrev.transfer || {};
+  const c = cierrePrev.cashUsd || {};
+  const b = cierrePrev.boleta  || {};
+  if (t.comprobanteUrl) lines.push('   - COMPROBANTE TRANSFERENCIA: ' + t.comprobanteUrl);
+  if (c.comprobanteUrl) lines.push('   - CONSTANCIA EFECTIVO USD: ' + c.comprobanteUrl);
+  if (b.url)            lines.push('   - BOLETA: ' + b.url);
+  if (!t.comprobanteUrl && !c.comprobanteUrl && !b.url){
+    lines.push('   (sin URLs de respaldo registradas en este snapshot)');
+  }
+
+  // 5) Firmas / observaciones
+  lines.push('');
+  lines.push('5) OBSERVACIONES / FIRMAS INTERNAS');
+  lines.push('   _________________________________');
+  lines.push('   _________________________________');
+  lines.push('   _________________________________');
+
+  if ($doc) $doc.textContent = lines.join('\n');
 }
 
 /* ====== VISTA GRUPO ====== */
@@ -5612,6 +5758,10 @@ async function renderFinanzas(g, pane){
         <input id="chSnapFin" type="checkbox"/>
         <span>Marcar para guardar una FOTO del grupo, itinerario y finanzas (requiere PIN).</span>
       </label>
+      <div class="rowflex" style="margin-top:.35rem; gap:.5rem; align-items:center;">
+        <button id="btnActaFin" type="button" class="btn mini">VER ACTA DE CIERRE</button>
+        <span id="snapFinHint" class="meta muted" style="font-size:.8rem;"></span>
+      </div>
     </div>
     ` : ''}
 
@@ -5627,6 +5777,7 @@ async function renderFinanzas(g, pane){
   const chCash   = cierre.querySelector('#chCashUsd');
   const chSnap   = cierre.querySelector('#chSnapFin');
   const snapInfo = cierre.querySelector('#snapFinInfo');
+  const snapHint = cierre.querySelector('#snapFinHint');
 
   // Texto inicial del snapshot (si existe info previa)
   if (snapInfo){
@@ -5636,7 +5787,7 @@ async function renderFinanzas(g, pane){
     if (last){
       try{
         const d = last.toDate ? last.toDate() : new Date(last);
-        fechaTxt = dmy(toISO(d));
+        fechaTxt = d.toLocaleDateString('es-CL');
       }catch(_){}
     }
     snapInfo.textContent = cnt
@@ -5644,10 +5795,15 @@ async function renderFinanzas(g, pane){
       : 'Aún no hay fotos guardadas. Marca el casillero para tomar la primera.';
   }
 
+  if (snapHint){
+    snapHint.textContent = 'El ACTA se genera siempre desde la última FOTO guardada.';
+  }
+
   // Inicializa checks si ya había registros subidos
   if (sumPrev?.transfer?.done && chTransf) chTransf.checked = true;
   if (sumPrev?.cashUsd?.done && chCash)   chCash.checked   = true;
   if (sumPrev?.snapshots?.active && chSnap) chSnap.checked = true;
+
 
     // === FOTO DE FINANZAS (STAFF, protegida con PIN) ===
   if (state.is){
@@ -5773,7 +5929,8 @@ async function renderFinanzas(g, pane){
     // Deshabilita todos los controles del bloque de cierre
     ['#chTransf','#upComp','#btnUpComp',
      '#chCashUsd','#upCash','#btnUpCash',
-     '#upBoleta','#btnUpBoleta','#btnCloseFin'
+     '#upBoleta','#btnUpBoleta','#btnCloseFin',
+     '#chSnapFin','#btnActaFin'
     ].forEach(sel => {
       const el = cierre.querySelector(sel);
       if (el){
@@ -5782,7 +5939,6 @@ async function renderFinanzas(g, pane){
       }
     });
 
-    // Mensaje claro de estado
     const h = cierre.querySelector('#finHints');
     if (h){
       h.innerHTML = '<div class="muted">VIAJE FINALIZADO · RENDICIÓN HECHA · BOLETA ENTREGADA</div>';
@@ -5809,7 +5965,7 @@ async function renderFinanzas(g, pane){
             abonos,
             gastosAprob,
             totAb,
-            totGa,          // 👈 corregido: antes decía "totGas"
+            totGa,   // 👈 OJO: aquí va totGa, NO "totGas"
             saldos,
             sumPrev,
             motivo: 'snapshot_manual'
@@ -5859,21 +6015,61 @@ async function renderFinanzas(g, pane){
           if (snapInfo){
             const cnt = Number(sumPrev.snapshots?.count || 0);
             snapInfo.textContent = cnt
-              ? `FOTOS GUARDADAS: ${cnt} · Última: ${dmy(sumPrev.snapshots.lastAt || todayISO())}`
-              : 'SIN FOTOS GUARDADAS';
+              ? `FOTOS GUARDADAS: ${cnt} · (sin FOTO activa marcada)`
+              : 'Aún no hay fotos guardadas.';
           }
 
-          showFlash('FOTO DE FINANZAS DESMARCADA', 'ok');
+          showFlash('FOTO DE FINANZAS DESMARCADA (historial se mantiene)', 'warn');
         }catch(e){
-          console.error('Error actualizando snapshot de finanzas', e);
-          alert('No se pudo actualizar el estado de la FOTO de finanzas. Revisa consola.');
-          ev.target.checked = !checked;
+          console.error('Error desmarcando snapshot de finanzas', e);
+          alert('No se pudo desmarcar la FOTO de finanzas. Revisa consola.');
+          ev.target.checked = true;
         }
       }
     });
   }
 
+  // === Botón ACTA DE CIERRE: imprime usando la última FOTO ===
+  if (state.is){
+    const btnActa  = cierre.querySelector('#btnActaFin');
+    const snapHint = cierre.querySelector('#snapFinHint');
+    if (btnActa){
+      btnActa.onclick = async ()=>{
+        try{
+          btnActa.disabled = true;
+          if (snapHint) snapHint.textContent = 'Cargando última FOTO de finanzas…';
 
+          const snaps = await listarSnapshotsFinanzas(g.id, 1);
+          if (!snaps.length){
+            alert('Aún no hay FOTOS de finanzas para este grupo.');
+            if (snapHint) snapHint.textContent = 'SIN FOTOS DE FINANZAS.';
+            return;
+          }
+
+          const snap = snaps[0];
+          await preparePrintActaFinanzas(g, snap);
+          window.print();
+
+          if (snapHint){
+            let fechaTxt = '';
+            try{
+              const d = snap.createdAt?.toDate ? snap.createdAt.toDate() : snap.createdAt;
+              if (d) fechaTxt = new Date(d).toLocaleDateString('es-CL');
+            }catch{}
+            snapHint.textContent = fechaTxt
+              ? `ACTA generada desde FOTO del ${fechaTxt}.`
+              : 'ACTA generada desde última FOTO.';
+          }
+        }catch(e){
+          console.error('Error generando ACTA de finanzas', e);
+          alert('No se pudo generar el ACTA de finanzas. Revisa consola.');
+          if (snapHint) snapHint.textContent = 'Error al generar ACTA.';
+        }finally{
+          btnActa.disabled = false;
+        }
+      };
+    }
+  }
   
   // === Handlers de subida (comprobante transferencia CLP) ===
   const upCompBtn = cierre.querySelector('#btnUpComp');
