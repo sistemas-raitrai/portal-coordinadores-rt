@@ -4920,7 +4920,74 @@ async function sumGastosPorMonedaDelGrupo(g, qNorm){
 
 // -------- Summary / Cierre finanzas ----------
 async function updateFinanzasSummary(gid, patch){
-  await setDoc(doc(db,'grupos',gid,'finanzas','summary'), { ...patch, updatedAt: serverTimestamp(), updatedBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() } }, { merge:true });
+  await setDoc(
+    doc(db,'grupos',gid,'finanzas','summary'),
+    { ...(patch || {}), lastUpdate:{ ts:serverTimestamp(), uid:state.user.uid, email:(state.user.email||'').toLowerCase() } },
+    { merge:true }
+  );
+}
+
+// ===== SNAPSHOTS DE FINANZAS (HISTORIAL) — NUEVO =====
+// Crea una "foto" del estado del grupo en este momento:
+// - Datos clave del grupo
+// - Itinerario/asistencias/serviciosEstado
+// - Abonos, gastos aprobados, totales y saldos
+// Se guarda como documento independiente en la subcolección:
+//   grupos/{gid}/finanzas_snapshots
+async function crearSnapshotFinanzas(g, {
+  abonos = [],
+  gastosAprob = [],
+  totAb = {},
+  totGas = {},
+  saldos = {},
+  sumPrev = {},
+  motivo = 'snapshot_manual'
+} = {}){
+  if (!g || !g.id) throw new Error('crearSnapshotFinanzas: falta grupo');
+
+  const gid = g.id;
+  const { itinerario, asistencias, serviciosEstado, ...restGrupo } = g || {};
+
+  const snapData = {
+    createdAt: serverTimestamp(),
+    createdBy: {
+      uid: state.user?.uid || null,
+      email: (state.user?.email || '').toLowerCase()
+    },
+    motivo,
+    grupo: restGrupo || {},
+    itinerario: itinerario || [],
+    asistencias: asistencias || {},
+    serviciosEstado: serviciosEstado || {},
+    finanzas: {
+      saldos: saldos || {},
+      totalesAbonos: totAb || {},
+      totalesGastosAprobados: totGas || {},
+      abonos: abonos || [],
+      gastosAprob: gastosAprob || [],
+      summaryPrevio: sumPrev || null
+    }
+  };
+
+  const ref = await addDoc(
+    collection(db,'grupos',gid,'finanzas_snapshots'),
+    snapData
+  );
+  return ref.id;
+}
+
+// Trae las últimas fotos de finanzas de un grupo (ordenadas desc por fecha)
+async function listarSnapshotsFinanzas(gid, max = 20){
+  const qs = await getDocs(
+    query(
+      collection(db,'grupos',gid,'finanzas_snapshots'),
+      orderBy('createdAt','desc'),
+      limit(max)
+    )
+  );
+  const out = [];
+  qs.forEach(d => out.push({ id:d.id, ...(d.data() || {}) }));
+  return out;
 }
 
 // =============== RESTABLECER VIAJE COMPLETO — HELPERS ===============
@@ -5523,24 +5590,56 @@ async function renderFinanzas(g, pane){
       <input id="upBoleta" type="file" accept="image/*,application/pdf"/>
       <button id="btnUpBoleta" class="btn sec">SUBIR BOLETA</button>
     </div>
-  
+
+    ${state.is ? `
+    <!-- Snapshot de control de finanzas (solo STAFF) -->
+    <div class="card" id="snapFinBox" style="margin-top:.75rem; border:1px dashed #999; padding:.5rem .75rem;">
+      <div class="meta"><strong>FOTO DE CONTROL (SNAPSHOT) — STAFF</strong></div>
+      <div id="snapFinInfo" class="meta muted" style="margin-top:.25rem;font-size:.85rem"></div>
+      <label class="meta" style="display:flex;gap:.4rem;align-items:center;margin-top:.35rem">
+        <input id="chSnapFin" type="checkbox"/>
+        <span>Marcar para guardar una FOTO del grupo, itinerario y finanzas (requiere PIN).</span>
+      </label>
+    </div>
+    ` : ''}
+
     <div class="rowflex" style="margin-top:.6rem">
       <button id="btnCloseFin" class="btn ok" disabled>CERRAR FINANZAS</button>
     </div>
   `;
   wrap.appendChild(cierre);
-  
+
   // === Estado previo guardado (summary) ===
   const sumPrev = await ensureFinanzasSummary(g.id) || {};
   const chTransf = cierre.querySelector('#chTransf');
   const chCash   = cierre.querySelector('#chCashUsd');
-  
+  const chSnap   = cierre.querySelector('#chSnapFin');
+  const snapInfo = cierre.querySelector('#snapFinInfo');
+
+  // Texto inicial del snapshot (si existe info previa)
+  if (snapInfo){
+    const cnt  = Number(sumPrev?.snapshots?.count || 0);
+    const last = sumPrev?.snapshots?.lastAt || null;
+    let fechaTxt = '—';
+    if (last){
+      try{
+        const d = last.toDate ? last.toDate() : new Date(last);
+        fechaTxt = dmy(toISO(d));
+      }catch(_){}
+    }
+    snapInfo.textContent = cnt
+      ? `FOTOS GUARDADAS: ${cnt} · Última: ${fechaTxt}`
+      : 'Aún no hay fotos guardadas. Marca el casillero para tomar la primera.';
+  }
+
   // Inicializa checks si ya había registros subidos
   if (sumPrev?.transfer?.done && chTransf) chTransf.checked = true;
   if (sumPrev?.cashUsd?.done && chCash)   chCash.checked   = true;
-  
+  if (sumPrev?.snapshots?.active && chSnap) chSnap.checked = true;
+
   // helper numérico tolerante (≈0 a 2 decimales)
   const isZero = v => Math.abs(Number(v||0)) < 0.005;
+
   
   // === Requisitos dinámicos ===
   function checkReady(){
@@ -5612,19 +5711,90 @@ async function renderFinanzas(g, pane){
   checkReady();
 
   // === BLOQUEO DE CONTROLES DE CIERRE SI YA ESTÁ CERRADO (SOLO COORDINADOR) ===
-  const isReadOnlyFin = !!sumPrev?.closed && !state.is;
-  if (isReadOnlyFin){
-    // Deshabilita todos los controles del bloque de cierre
-    ['#chTransf','#upComp','#btnUpComp','#chCashUsd','#upCash','#btnUpCash','#upBoleta','#btnUpBoleta','#btnCloseFin']
-      .forEach(sel => {
-        const el = cierre.querySelector(sel);
-        if (el){ el.disabled = true; el.classList.add('disabled'); }
-      });
-  
-    // Mensaje claro de estado
-    const h = cierre.querySelector('#finHints');
-    if (h) h.innerHTML = '<div class="muted">VIAJE FINALIZADO · RENDICIÓN HECHA · BOLETA ENTREGADA</div>';
+  // === Snapshot de finanzas (solo STAFF, con PIN) ===
+  if (state.is && chSnap){
+    chSnap.addEventListener('change', async (ev)=>{
+      const checked = !!ev.target.checked;
+
+      const pin = prompt('PIN STAFF para marcar/desmarcar la FOTO de finanzas:');
+      // Usamos la misma clave que para abonos bloqueados
+      if (pin !== ABONO_UNLOCK_PIN){
+        alert('PIN incorrecto.');
+        ev.target.checked = !checked;
+        return;
+      }
+
+      if (checked){
+        // Al marcar: se crea una nueva FOTO (snapshot)
+        try{
+          const snapId = await crearSnapshotFinanzas(g, {
+            abonos,
+            gastosAprob,
+            totAb,
+            totGas,
+            saldos,
+            sumPrev,
+            motivo: 'snapshot_manual'
+          });
+
+          const prevCount = Number(sumPrev?.snapshots?.count || 0);
+          // Actualiza resumen en memoria
+          sumPrev.snapshots = {
+            ...(sumPrev.snapshots || {}),
+            active: true,
+            lastId: snapId,
+            lastAt: todayISO(),
+            count: prevCount + 1
+          };
+
+          if (snapInfo){
+            snapInfo.textContent = `FOTOS GUARDADAS: ${prevCount + 1} · Última: ${dmy(todayISO())}`;
+          }
+
+          await updateFinanzasSummary(g.id, {
+            snapshots: {
+              active: true,
+              lastId: snapId,
+              lastAt: serverTimestamp(),
+              count: prevCount + 1
+            }
+          });
+
+          showFlash('FOTO DE FINANZAS GUARDADA (SNAPSHOT)', 'ok');
+        }catch(e){
+          console.error('Error creando snapshot de finanzas', e);
+          alert('No se pudo guardar la FOTO de finanzas. Revisa consola.');
+          ev.target.checked = false;
+        }
+      }else{
+        // Al desmarcar: solo se baja el flag "activa", no se borran las fotos anteriores
+        try{
+          await updateFinanzasSummary(g.id, {
+            snapshots: {
+              ...(sumPrev.snapshots || {}),
+              active: false
+            }
+          });
+
+          if (sumPrev.snapshots) sumPrev.snapshots.active = false;
+
+          if (snapInfo){
+            const cnt = Number(sumPrev.snapshots?.count || 0);
+            snapInfo.textContent = cnt
+              ? `FOTOS GUARDADAS: ${cnt} · (sin FOTO activa marcada)`
+              : 'Aún no hay fotos guardadas.';
+          }
+
+          showFlash('FOTO DE FINANZAS DESMARCADA (historial se mantiene)', 'warn');
+        }catch(e){
+          console.error('Error desmarcando snapshot de finanzas', e);
+          alert('No se pudo desmarcar la FOTO de finanzas. Revisa consola.');
+          ev.target.checked = true;
+        }
+      }
+    });
   }
+
 
   
   // === Handlers de subida (comprobante transferencia CLP) ===
