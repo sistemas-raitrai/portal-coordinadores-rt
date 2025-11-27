@@ -1532,8 +1532,11 @@ async function preparePrintActaFinanzas(g, snap){
     || g.id
     || '';
 
-  const rango = `${dmySafe(g.fechaInicio||'')} — ${dmySafe(g.fechaFin||'')}`;
+  const rangoViaje = `${dmySafe(g.fechaInicio||'')} — ${dmySafe(g.fechaFin||'')}`;
+  const coordName  = g.coordinadorNombre || g.coordinador || '';
+  const programa   = g.programa || '';
 
+  // Encabezado HTML del acta
   if ($title) $title.textContent = 'ACTA DE CIERRE FINANCIERO';
   if ($grp)   $grp.textContent   = `GRUPO: ${norm(nombre)} (${code})`;
   if ($m1)    $m1.textContent    = `DESTINO: ${norm(s.destino || g.destino || '')}`;
@@ -1557,7 +1560,25 @@ async function preparePrintActaFinanzas(g, snap){
 
   const lines = [];
 
+  // Título
   lines.push('ACTA DE CIERRE FINANCIERO');
+  lines.push('');
+
+  // 0) Datos generales del grupo
+  lines.push('0) DATOS GENERALES DEL GRUPO');
+  lines.push(`   - GRUPO: ${norm(nombre)} (${code || 'SIN CÓDIGO'})`);
+  if (coordName) lines.push(`   - COORDINADOR/A PRINCIPAL: ${norm(coordName)}`);
+  lines.push(`   - DESTINO: ${norm(s.destino || g.destino || '')}`);
+  if (programa) lines.push(`   - PROGRAMA: ${norm(programa)}`);
+  if (rangoViaje.trim()) lines.push(`   - FECHAS DE VIAJE: ${rangoViaje}`);
+  if (s.anoViaje || g.anoViaje) lines.push(`   - AÑO DE VIAJE: ${s.anoViaje || g.anoViaje}`);
+  const paxPlan  = (typeof paxOf     === 'function') ? paxOf(g)     : null;
+  const paxReal2 = (typeof paxRealOf === 'function') ? paxRealOf(g) : null;
+  if (paxPlan || paxReal2){
+    const pPlan = (paxPlan  ?? '—');
+    const pReal = (paxReal2 ?? paxPlan ?? '—');
+    lines.push(`   - PAX: PLAN=${pPlan} · REAL=${pReal}`);
+  }
   lines.push('');
 
   // 1) Resumen por moneda
@@ -1631,8 +1652,108 @@ async function preparePrintActaFinanzas(g, snap){
   lines.push('   _________________________________');
   lines.push('   _________________________________');
 
-  if ($doc) $doc.textContent = lines.join('\n');
+  // 6) Resumen logístico (hoteles, vuelos, itinerario)
+  lines.push('');
+  lines.push('6) RESUMEN LOGÍSTICO DEL VIAJE');
+
+  // 6.a) Hoteles
+  try{
+    const hoteles = await loadHotelesInfo(g);
+    if (Array.isArray(hoteles) && hoteles.length){
+      lines.push('   · HOTELES ASIGNADOS:');
+      hoteles.forEach(h=>{
+        const nombreHotel = norm(h.hotelNombre || (h.hotel && h.hotel.nombre) || '');
+        const ci = dmySafe(h.checkIn || h.fechaCheckIn || h.fechaIngreso || '');
+        const co = dmySafe(h.checkOut || h.fechaCheckOut || h.fechaSalida || '');
+        const noches = (h.noches!=='' && h.noches!=null) ? ` · ${h.noches} NOCHES` : '';
+        const ciudad = norm(h.ciudad || h.ciudadHotel || '');
+        let linea = `     - ${nombreHotel}`;
+        const rangoH = [ci, co].filter(Boolean).join(' — ');
+        if (rangoH) linea += ` · ${rangoH}`;
+        if (noches) linea += noches;
+        if (ciudad) linea += ` · ${ciudad}`;
+        lines.push(linea);
+      });
+    }else{
+      lines.push('   · HOTELES ASIGNADOS: SIN REGISTROS.');
+    }
+  }catch(e){
+    console.warn('preparePrintActaFinanzas: error al cargar hoteles', e);
+    lines.push('   · HOTELES ASIGNADOS: error al cargar información.');
+  }
+
+  // 6.b) Vuelos
+  try{
+    const vuelos = await loadVuelosInfo(g);
+    if (Array.isArray(vuelos) && vuelos.length){
+      lines.push('   · VUELOS ASIGNADOS:');
+      vuelos.forEach(v=>{
+        const f = v.fecha || v.fechaISO || v.fechaVuelo || null;
+        const fTxt = f ? dmySafe(f) : '';
+        const tramo = [v.origen, v.destino].filter(Boolean).join(' → ');
+        const vueloCod = v.codigo || v.vuelo || v.codVuelo || '';
+        const aerolinea = v.aerolinea || v.compania || v.linea || '';
+        let linea = '     - ';
+        if (fTxt) linea += fTxt + ' · ';
+        if (tramo) linea += tramo + ' · ';
+        if (aerolinea) linea += aerolinea + ' ';
+        if (vueloCod) linea += vueloCod;
+        lines.push(linea.trim());
+      });
+    }else{
+      lines.push('   · VUELOS ASIGNADOS: SIN REGISTROS.');
+    }
+  }catch(e){
+    console.warn('preparePrintActaFinanzas: error al cargar vuelos', e);
+    lines.push('   · VUELOS ASIGNADOS: error al cargar información.');
+  }
+
+  // 6.c) Itinerario (resumen)
+  try{
+    const gIt = await ensureItinerarioLoaded(g);
+    const it = (gIt && gIt.itinerario) || {};
+    const fechas = Object.keys(it || {}).sort();
+    if (fechas.length){
+      lines.push('   · ITINERARIO (RESUMEN):');
+      fechas.forEach(fechaISO=>{
+        let acts = it[fechaISO];
+        if (!acts) return;
+
+        if (Array.isArray(acts)){
+          // ok
+        }else if (Array.isArray(acts.items)){
+          acts = acts.items;
+        }else if (Array.isArray(acts.actividades)){
+          acts = acts.actividades;
+        }else if (Array.isArray(acts.acts)){
+          acts = acts.acts;
+        }else{
+          return;
+        }
+
+        if (!acts.length) return;
+        const fTxt = dmySafe(fechaISO);
+        const resumenActs = acts.slice(0,3).map(a=>{
+          const h = a.horaInicio || a.hora || '';
+          const nom = a.actividad || a.nombre || a.titulo || '';
+          return (h ? `${h} ` : '') + nom;
+        }).join(' · ');
+        lines.push(`     - ${fTxt}: ${resumenActs}`);
+        if (acts.length > 3){
+          lines.push(`       (+${acts.length-3} actividades más)`);
+        }
+      });
+    }else{
+      lines.push('   · ITINERARIO: SIN ACTIVIDADES REGISTRADAS.');
+    }
+  }catch(e){
+    console.warn('preparePrintActaFinanzas: error al cargar itinerario', e);
+    lines.push('   · ITINERARIO: error al cargar información.');
+  }
+
+  if ($doc) $doc.textContent = lines.join('\\n');
 }
+
 
 /* ====== VISTA GRUPO ====== */
 async function renderOneGroup(g, preferDate){
