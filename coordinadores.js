@@ -5537,12 +5537,22 @@ async function wipeBitacoraFromItinerario(g){
   return n;
 }
 
-// Normaliza clave de actividad (misma idea que usas al guardar bitácora)
+// Normaliza clave de actividad usando EXACTAMENTE la misma lógica
+// que cuando guardas bitácora (slug(actividad) → minúsculas sin espacios)
 function slugActKey(a){
-  // Prioriza campos si existen en tus actos: actKey / key / servicioId / actividad
-  const raw = String(a?.actKey || a?.key || a?.servicioId || a?.actividad || '').trim();
-  if (!raw) return '';
-  return raw.toUpperCase().replace(/[^A-Z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+  // nombre de actividad o claves alternativas
+  const nombreAct =
+    a?.actKey ||
+    a?.actividad ||
+    a?.nombre ||
+    a?.titulo ||
+    a?.servicio ||
+    '';
+
+  if (!nombreAct) return '';
+  // Usa la función slug que ya tienes definida arriba:
+  // const slug = s => norm(s).slice(0,60);
+  return slug(nombreAct);
 }
 
 // Quita flags/summary y vuelve “editable” (coordinador sale de solo-lectura)
