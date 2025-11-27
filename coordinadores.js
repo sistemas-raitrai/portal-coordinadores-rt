@@ -5318,44 +5318,36 @@ function slugActKey(a){
 // Quita flags de cierre, reabre summary y
 // deja el viaje como PENDIENTE (sin inicio/fin/pax)
 async function resetGroupFlags(grupoId){
-  // 1) Doc del grupo → estado de viaje “desde cero”
   try{
-    await updateDoc(doc(db,'grupos',grupoId), {
-      // estado de viaje
-      paxViajando: deleteField(),
-      'viaje.inicio': deleteField(),
-      'viaje.fin': deleteField(),
-      'viaje.estado': 'PENDIENTE',
+    const ref = doc(db,'grupos',grupoId);
 
-      // flags de cierre de finanzas
+    await updateDoc(ref, {
+      // Volver al estado inicial de viaje
+      paxViajando: deleteField(),
+      'viaje.inicio': deleteField(),          // sin hora de inicio
+      'viaje.fin.at': deleteField(),          // quitamos solo el timestamp de fin
+      'viaje.estado': 'PENDIENTE',           // vuelve al estado inicial
+
+      // Flags de rendición / boleta en falso (siguen existiendo, pero “no hechos”)
       'viaje.fin.rendicionOk': false,
       'viaje.fin.boletaOk': false,
+      'viaje.fin.cierreFinanzas': deleteField(),
 
-      // campos legacy (por compatibilidad hacia atrás)
+      // Campos legacy que usabas antes
       viajeInicioAt: deleteField(),
       viajeFinAt: deleteField(),
       viajeInicioBy: deleteField(),
       viajeFinBy: deleteField(),
-      trip: deleteField()
+
+      // “trip” y resumen de finanzas también vuelven a cero
+      trip: deleteField(),
+      finanzasSummary: deleteField()
     });
-  }catch(e){
+
+  } catch (e) {
     console.warn('[reset] resetGroupFlags.updateDoc', e);
   }
-
-  // 2) Summary de finanzas (reabre cierre)
-  try{
-    await updateFinanzasSummary(grupoId, {
-      closed:false,
-      totals: deleteField(),
-      transfer: deleteField(),
-      cashUsd: deleteField(),
-      boleta: deleteField()
-    });
-  }catch(e){
-    console.warn('[reset] resetGroupFlags.updateFinanzasSummary', e);
-  }
 }
-
 
 // Auditoría (mantener historial)
 async function logHistorial(grupoId, accion, detalle){
