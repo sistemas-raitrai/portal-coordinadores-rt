@@ -1730,13 +1730,14 @@ async function preparePrintActaFinanzas(g, snap){
     lines.push('   · VUELOS ASIGNADOS: error al cargar información.');
   }
 
-  // 6.c) Itinerario (resumen de actividades)
+  // 6.c) Itinerario (detalle por día y actividad)
   try{
     const gIt = await ensureItinerarioLoaded(g);
-    const it = (gIt && gIt.itinerario) || g.itinerario || {};
+    const it = (gIt && gIt.itinerario) || {};
     const fechas = Object.keys(it || {}).sort();
+
     if (fechas.length){
-      lines.push('   · ITINERARIO (RESUMEN):');
+      lines.push('   · ITINERARIO (DETALLE POR DÍA):');
       fechas.forEach(fechaISO=>{
         let acts = it[fechaISO];
         if (!acts) return;
@@ -1754,16 +1755,22 @@ async function preparePrintActaFinanzas(g, snap){
         }
 
         if (!acts.length) return;
+
         const fTxt = dmySafe(fechaISO);
-        const resumenActs = acts.slice(0,3).map(a=>{
-          const h = a.horaInicio || a.hora || '';
+        // encabezado del día
+        lines.push(`     - ${fTxt}:`);
+
+        // TODAS las actividades de ese día, una por línea
+        acts.forEach(a=>{
+          const h   = a.horaInicio || a.hora || '';
           const nom = a.actividad || a.nombre || a.titulo || '';
-          return (h ? `${h} ` : '') + nom;
-        }).join(' · ');
-        lines.push(`     - ${fTxt}: ${resumenActs}`);
-        if (acts.length > 3){
-          lines.push(`       (+${acts.length-3} actividades más)`);
-        }
+          const prov = (a.proveedor || a.proveedorNombre || a.provNombre || '');
+          let linea = '       · ';
+          if (h)   linea += `${h} `;
+          if (nom) linea += nom.toString().toUpperCase();
+          if (prov) linea += ` · ${prov.toString().toUpperCase()}`;
+          lines.push(linea);
+        });
       });
     }else{
       lines.push('   · ITINERARIO: SIN ACTIVIDADES REGISTRADAS.');
@@ -1772,6 +1779,7 @@ async function preparePrintActaFinanzas(g, snap){
     console.warn('preparePrintActaFinanzas: error al cargar itinerario', e);
     lines.push('   · ITINERARIO: error al cargar información.');
   }
+
 
   // 7) Actividades y bitácora detallada
   lines.push('');
