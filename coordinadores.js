@@ -1506,13 +1506,17 @@ async function preparePrintActaFinanzas(g, snap){
     try{
       if (!v) return '';
       const d = (v instanceof Date) ? v : new Date(v);
-      return isNaN(d) ? String(v).toUpperCase() : d.toLocaleDateString('es-CL').toUpperCase();
-    }catch{ return String(v||'').toUpperCase(); }
+      return isNaN(d)
+        ? String(v).toUpperCase()
+        : d.toLocaleDateString('es-CL').toUpperCase();
+    }catch{
+      return String(v||'').toUpperCase();
+    }
   };
   const fmtMon = v => {
     const n = Number(v||0);
     if (!isFinite(n)) return String(v||'');
-    return n.toLocaleString('es-CL',{minimumFractionDigits:0});
+    return n.toLocaleString('es-CL',{ minimumFractionDigits: 0 });
   };
 
   const s = snap || {};
@@ -1532,14 +1536,16 @@ async function preparePrintActaFinanzas(g, snap){
     || g.id
     || '';
 
-  const rangoViaje = `${dmySafe(g.fechaInicio||'')} — ${dmySafe(g.fechaFin||'')}`;
+  const destino    = s.destino || g.destino || '';
+  const anoViaje   = s.anoViaje || g.anoViaje || '';
   const coordName  = g.coordinadorNombre || g.coordinador || '';
   const programa   = g.programa || '';
+  const rangoViaje = `${dmySafe(g.fechaInicio||'')} — ${dmySafe(g.fechaFin||'')}`;
 
-  // Encabezado HTML del acta
+  // Encabezado HTML del acta (bloque arriba del PRE)
   if ($title) $title.textContent = 'ACTA DE CIERRE FINANCIERO';
-  if ($grp)   $grp.textContent   = `GRUPO: ${norm(nombre)} (${code})`;
-  if ($m1)    $m1.textContent    = `DESTINO: ${norm(s.destino || g.destino || '')}`;
+  if ($grp)   $grp.textContent   = `GRUPO: ${norm(nombre)} (${code || 'SIN CÓDIGO'})`;
+  if ($m1)    $m1.textContent    = `DESTINO: ${norm(destino || '')}`;
   if ($m2)    $m2.textContent    = `SNAPSHOT POR: ${norm(s.createdBy || '')} · MOTIVO: ${norm(s.motivo || 'MANUAL')}`;
   if ($fech){
     let fechaSnap = '';
@@ -1551,16 +1557,29 @@ async function preparePrintActaFinanzas(g, snap){
   }
 
   if ($pax){
-    const real  = typeof paxRealOf === 'function' ? paxRealOf(g) : null;
-    const plan  = typeof paxOf     === 'function' ? paxOf(g)     : null;
-    $pax.innerHTML = `PAX: ${
-      real && plan && real!==plan ? `${plan} → ${real}` : (plan || real || '—')
-    }`;
+    let plan = null, real = null;
+    try{
+      if (typeof paxOf === 'function')     plan = paxOf(g);
+      if (typeof paxRealOf === 'function') real = paxRealOf(g);
+    }catch{}
+    let txt = 'PAX: ';
+    if (plan!=null && real!=null && plan!==real){
+      txt += `${plan} → ${real}`;
+    }else if (real!=null){
+      txt += `${real}`;
+    }else if (plan!=null){
+      txt += `${plan}`;
+    }else{
+      txt += '—';
+    }
+    $pax.textContent = txt;
   }
 
   const lines = [];
 
+  // ────────────────────────────────
   // Título
+  // ────────────────────────────────
   lines.push('ACTA DE CIERRE FINANCIERO');
   lines.push('');
 
@@ -1568,17 +1587,10 @@ async function preparePrintActaFinanzas(g, snap){
   lines.push('0) DATOS GENERALES DEL GRUPO');
   lines.push(`   - GRUPO: ${norm(nombre)} (${code || 'SIN CÓDIGO'})`);
   if (coordName) lines.push(`   - COORDINADOR/A PRINCIPAL: ${norm(coordName)}`);
-  lines.push(`   - DESTINO: ${norm(s.destino || g.destino || '')}`);
-  if (programa) lines.push(`   - PROGRAMA: ${norm(programa)}`);
+  if (destino)   lines.push(`   - DESTINO: ${norm(destino)}`);
+  if (programa)  lines.push(`   - PROGRAMA: ${norm(programa)}`);
+  if (anoViaje)  lines.push(`   - AÑO DE VIAJE: ${anoViaje}`);
   if (rangoViaje.trim()) lines.push(`   - FECHAS DE VIAJE: ${rangoViaje}`);
-  if (s.anoViaje || g.anoViaje) lines.push(`   - AÑO DE VIAJE: ${s.anoViaje || g.anoViaje}`);
-  const paxPlan  = (typeof paxOf     === 'function') ? paxOf(g)     : null;
-  const paxReal2 = (typeof paxRealOf === 'function') ? paxRealOf(g) : null;
-  if (paxPlan || paxReal2){
-    const pPlan = (paxPlan  ?? '—');
-    const pReal = (paxReal2 ?? paxPlan ?? '—');
-    lines.push(`   - PAX: PLAN=${pPlan} · REAL=${pReal}`);
-  }
   lines.push('');
 
   // 1) Resumen por moneda
@@ -1590,7 +1602,7 @@ async function preparePrintActaFinanzas(g, snap){
   ]);
   if (monedas.size){
     monedas.forEach(mon=>{
-      const m = String(mon||'CLP').toUpperCase();
+      const m  = String(mon||'CLP').toUpperCase();
       const ab = totAb[m]  ?? totAb[mon]  ?? 0;
       const ga = totGas[m] ?? totGas[mon] ?? 0;
       const sd = saldos[m] ?? saldos[mon] ?? 0;
@@ -1607,11 +1619,15 @@ async function preparePrintActaFinanzas(g, snap){
   lines.push('2) DETALLE DE ABONOS');
   if (Array.isArray(s.abonos) && s.abonos.length){
     s.abonos.forEach(a=>{
-      const f = a.fecha ? dmySafe(a.fecha) : 'S/F';
+      const f   = a.fecha ? dmySafe(a.fecha) : 'S/F';
       const mon = String(a.moneda||'CLP').toUpperCase();
-      lines.push(
-        `   - ${f} · ${mon} ${fmtMon(a.valor)} · ${norm(a.medio||'')} · ${a.asunto||''}`
-      );
+      const v   = fmtMon(a.valor);
+      const medio  = norm(a.medio || '');
+      const asunto = (a.asunto || '').toString().toUpperCase();
+      const parts = [`${f}`, `${mon} ${v}`];
+      if (medio)  parts.push(medio);
+      if (asunto) parts.push(asunto);
+      lines.push('   - ' + parts.join(' · '));
     });
   }else{
     lines.push('   (sin abonos registrados)');
@@ -1622,17 +1638,23 @@ async function preparePrintActaFinanzas(g, snap){
   lines.push('3) DETALLE DE GASTOS APROBADOS');
   if (Array.isArray(s.gastosAprobados) && s.gastosAprobados.length){
     s.gastosAprobados.forEach(x=>{
-      const f = x.fecha ? dmySafe(x.fecha) : 'S/F';
+      const f   = x.fecha ? dmySafe(x.fecha) : 'S/F';
       const mon = String(x.moneda||'CLP').toUpperCase();
-      lines.push(
-        `   - ${f} · ${mon} ${fmtMon(x.valor)} · ${x.proveedor||''} · ${x.actividad||''}`
-      );
+      const v   = fmtMon(x.valor);
+      const prov = (x.proveedor || '').toString().toUpperCase();
+      const act  = (x.actividad || '').toString().toUpperCase();
+      const asu  = (x.asunto || '').toString().toUpperCase();
+      const parts = [`${f}`, `${mon} ${v}`];
+      if (prov) parts.push(prov);
+      if (act)  parts.push(act);
+      if (asu)  parts.push(asu);
+      lines.push('   - ' + parts.join(' · '));
     });
   }else{
     lines.push('   (sin gastos aprobados)');
   }
 
-  // 4) Respaldos
+  // 4) Respaldos cargados
   lines.push('');
   lines.push('4) RESPALDOS CARGADOS');
   const t = cierrePrev.transfer || {};
@@ -1652,7 +1674,7 @@ async function preparePrintActaFinanzas(g, snap){
   lines.push('   _________________________________');
   lines.push('   _________________________________');
 
-  // 6) Resumen logístico (hoteles, vuelos, itinerario)
+  // 6) Resumen logístico del viaje (hoteles + vuelos + resumen de itinerario)
   lines.push('');
   lines.push('6) RESUMEN LOGÍSTICO DEL VIAJE');
 
@@ -1708,10 +1730,10 @@ async function preparePrintActaFinanzas(g, snap){
     lines.push('   · VUELOS ASIGNADOS: error al cargar información.');
   }
 
-  // 6.c) Itinerario (resumen)
+  // 6.c) Itinerario (resumen de actividades)
   try{
     const gIt = await ensureItinerarioLoaded(g);
-    const it = (gIt && gIt.itinerario) || {};
+    const it = (gIt && gIt.itinerario) || g.itinerario || {};
     const fechas = Object.keys(it || {}).sort();
     if (fechas.length){
       lines.push('   · ITINERARIO (RESUMEN):');
@@ -1751,8 +1773,96 @@ async function preparePrintActaFinanzas(g, snap){
     lines.push('   · ITINERARIO: error al cargar información.');
   }
 
-  if ($doc) $doc.textContent = lines.join('\\n');
+  // 7) Actividades y bitácora detallada
+  lines.push('');
+  lines.push('7) ACTIVIDADES Y BITÁCORA DE COORDINACIÓN');
+
+  try{
+    // Itinerario normalizado para recorrer fechas y actos
+    const gIt = await ensureItinerarioLoaded(g);
+    const normIt = normalizeItinerario((gIt && gIt.itinerario) || g.itinerario || {});
+    const fechas = Object.keys(normIt || {}).sort();
+
+    if (!fechas.length){
+      lines.push('   (sin itinerario cargado)');
+    }else{
+      for (const fechaISO of fechas){
+        const acts = normIt[fechaISO] || [];
+        if (!Array.isArray(acts) || !acts.length) continue;
+
+        const fechaLabel = dmySafe(fechaISO) || fechaISO;
+        lines.push(`   • ${fechaLabel}`);
+
+        for (const a of acts){
+          const actName = (a.actividad || a.nombre || a.titulo || '').toString().toUpperCase();
+          const hora    = (a.horaInicio || a.hora || '').toString();
+          const prov    = (a.proveedor || a.proveedorNombre || a.provNombre || '').toString().toUpperCase();
+
+          const headParts = [];
+          if (hora)    headParts.push(hora);
+          if (actName) headParts.push(actName);
+          if (prov)    headParts.push(prov);
+          lines.push('      - ' + headParts.join(' · '));
+
+          const actKey = slugActKey(a);
+          if (!actKey){
+            lines.push('           · (sin clave de actividad para bitácora)');
+            continue;
+          }
+
+          try{
+            const coll = collection(db,'grupos', g.id, 'bitacora', actKey, fechaISO);
+            const qs = await getDocs(coll);
+
+            if (qs.empty){
+              lines.push('           · (sin notas de bitácora)');
+            }else{
+              const notas = [];
+              qs.forEach(d=>{
+                const x = d.data() || {};
+                notas.push(x);
+              });
+
+              // Ordena por timestamp si existe
+              notas.sort((a,b)=>{
+                const ta = a.ts?.seconds || a.ts?.toMillis?.() || 0;
+                const tb = b.ts?.seconds || b.ts?.toMillis?.() || 0;
+                return ta - tb;
+              });
+
+              notas.forEach(note=>{
+                const quien = String(note.byEmail || note.byUid || 'USUARIO').toUpperCase();
+                let cuandoTxt = '';
+                try{
+                  const tv = note.ts?.seconds
+                    ? new Date(note.ts.seconds*1000)
+                    : (note.ts?.toDate ? note.ts.toDate() : null);
+                  if (tv) cuandoTxt = tv.toLocaleString('es-CL').toUpperCase();
+                }catch{}
+                const txt = String(note.texto || note.text || '').trim().toUpperCase();
+                if (!txt) return;
+
+                let linea = `           · ${txt} — ${quien}`;
+                if (cuandoTxt) linea += ` · ${cuandoTxt}`;
+                lines.push(linea);
+              });
+            }
+          }catch(eBit){
+            console.error('[ACTA] Error cargando bitácora', {grupoId:g.id, fechaISO, actKey, e:eBit});
+            lines.push('           · (no se pudo cargar la bitácora)');
+          }
+        }
+      }
+    }
+  }catch(e){
+    console.error('[ACTA] Error al preparar sección de actividades/bitácora', e);
+    lines.push('   (no se pudo cargar el itinerario / bitácora)');
+  }
+
+  // OJO: acá va '\n' (salto real), no '\\n'
+  if ($doc) $doc.textContent = lines.join('\n');
 }
+
 
 
 /* ====== VISTA GRUPO ====== */
