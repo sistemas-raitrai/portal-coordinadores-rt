@@ -5156,6 +5156,7 @@ async function resetViajeCompleto(g){
     '• Borra todos los GASTOS del grupo\n' +
     '• Limpia Bitácora del itinerario\n' +
     '• Elimina archivos de cierre (boleta/comprobante/constancia)\n' +
+    '• Reinicia el estado del viaje (vuelve a PENDIENTE)\n' +
     '• Desmarca los cierres y deja todo editable\n\n' +
     '¿Continuar?'
   );
@@ -5175,22 +5176,37 @@ async function resetViajeCompleto(g){
   let borradosBit = 0;
   try{ borradosBit = await wipeBitacoraFromItinerario(g); }catch(e){ console.warn('[reset] wipeBitacora', e); }
 
-  // 4) Quitar flags/summary de cierre / volver editable
+  // 4) Quitar flags de cierre / summary y reiniciar estado de viaje
   try{ await resetGroupFlags(gid); }catch(e){ console.warn('[reset] resetGroupFlags', e); }
 
-  // 5) Registrar auditoría (NO se borra historial)
+  // 5) Registrar auditoría en HISTORIAL DEL VIAJE (viajeLog)
   try{
-    await logHistorial(gid, 'RESTABLECER_VIAJE_COMPLETO',
-      `Se restableció el viaje. gastos_borrados=${borradosGa}, bitacora_borrada=${borradosBit}`);
-  }catch(e){ console.warn('[reset] logHistorial', e); }
+    await appendViajeLog(
+      gid,
+      'RESTABLECER_VIAJE_COMPLETO',
+      `SE RESTABLECIÓ EL VIAJE · GASTOS_BORRADOS=${borradosGa} · BITACORA_BORRADA=${borradosBit}`
+    );
+  }catch(e){
+    console.warn('[reset] appendViajeLog', e);
+  }
 
   showFlash('VIAJE RESTABLECIDO', 'ok');
 
-  // refrescar UI
+  // 6) Refrescar UI con datos actualizados
   try{
-    if (typeof renderOneGroup === 'function') await renderOneGroup(g);
-    else location.reload();
-  }catch{ location.reload(); }
+    if (typeof reloadGroupAndRender === 'function') {
+      await reloadGroupAndRender(gid);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(()=> document.getElementById('btnInicioViaje')?.focus?.(), 80);
+    } else if (typeof renderOneGroup === 'function') {
+      await renderOneGroup(g);
+    } else {
+      location.reload();
+    }
+  }catch(e){
+    console.warn('[reset] refresh UI', e);
+    location.reload();
+  }
 }
 
 // Borra recursivamente /finanzas/{grupoId}/... (boletas, comprobantes, efectivo_usd)
@@ -5270,15 +5286,23 @@ function slugActKey(a){
 
 // Quita flags/summary y vuelve “editable” (coordinador sale de solo-lectura)
 async function resetGroupFlags(grupoId){
-  // flags del doc del grupo usados por tu UI
+  // flags del doc del grupo usados por tu UI + estado de inicio/fin
   try{
     await updateDoc(doc(db,'grupos',grupoId), {
-      'viaje.fin.rendicionOk': false,
-      'viaje.fin.boletaOk': false
-      // Si tienes otro flag de “terminado”, desmárcalo aquí también:
-      // 'viaje.terminado': false
+      paxViajando: deleteField(),
+      'viaje.inicio': deleteField(),
+      'viaje.fin': deleteField(),
+      'viaje.estado': 'PENDIENTE',
+      // legacy
+      viajeInicioAt: deleteField(),
+      viajeFinAt: deleteField(),
+      viajeInicioBy: deleteField(),
+      viajeFinBy: deleteField(),
+      trip: deleteField()
     });
-  }catch{}
+  }catch(e){
+    console.warn('[reset] resetGroupFlags.updateDoc', e);
+  }
 
   // summary de finanzas (lo usas para bloquear UI con sumPrev.closed)
   try{
@@ -5289,8 +5313,11 @@ async function resetGroupFlags(grupoId){
       cashUsd: deleteField(),
       boleta: deleteField()
     });
-  }catch{}
+  }catch(e){
+    console.warn('[reset] resetGroupFlags.updateFinanzasSummary', e);
+  }
 }
+
 
 // Auditoría (mantener historial)
 async function logHistorial(grupoId, accion, detalle){
