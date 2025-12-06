@@ -206,7 +206,44 @@ function collapseHotelAssignments(assigns){
 
 
 /* ====== UTILS TEXTO/FECHAS ====== */
-const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'');
+// Convierte un SOLO valor de teléfono en link WhatsApp
+const fmtTelWhats = (raw='')=>{
+  const s = String(raw || '').trim();
+  if (!s) return '';
+
+  // limpiamos: dejamos solo dígitos y +
+  const cleaned = s.replace(/[^\d+]/g,'');
+  if (!cleaned) return s;
+
+  // quitamos el + para wa.me
+  const digits = cleaned.replace('+','');
+
+  // si es muy corto, no lo tratamos como teléfono
+  if (digits.length < 8) return s;
+
+  const wa = `https://wa.me/${digits}`;
+  return `<a href="${wa}" target="_blank" rel="noopener">${s}</a>`;
+};
+
+// Reemplaza TODOS los teléfonos tipo +54 / +55 / +56 etc. dentro de un texto
+const autoLinkPhones = (txt='')=>{
+  const s = String(txt || '');
+  if (!s) return '';
+
+  // Busca secuencias con + y al menos 8 caracteres numéricos (permitiendo espacios/guiones)
+  return s.replace(/(\+?\d[\d\s-]{7,})/g, (match)=>{
+    const digits = match.replace(/[^\d]/g,''); // solo dígitos
+    if (digits.length < 8) return match;      // muy corto, lo dejamos tal cual
+
+    const wa = `https://wa.me/${digits}`;
+    return `<a href="${wa}" target="_blank" rel="noopener">${match}</a>`;
+  });
+};
+
+const norm = (s='') => s.toString()
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase().replace(/[^a-z0-9]+/g,'');
+
 const slug = s => norm(s).slice(0,60);
 const toISO = (x) => {
   if (!x) return '';
@@ -402,7 +439,7 @@ async function preparePrintForGroup(g){
         }
         ${h.direccion ? `<div class="meta">${norm(h.direccion)}</div>` : ''}
         ${(h.contacto||h.telefono||h.email) ? 
-          `<div class="meta">CONTACTO: ${norm(h.contacto||'')}${h.telefono?(' · '+norm(h.telefono)) : ''}${h.email?(' · '+String(h.email).toLowerCase()) : ''}</div>`
+          `<div class="meta">CONTACTO: ${norm(h.contacto||'')}${h.telefono?(' · '+fmtTelWhats(h.telefono)) : ''}${h.email?(' · '+String(h.email).toLowerCase()) : ''}</div>`
           : ''
         }
       </div>
@@ -447,7 +484,7 @@ async function preparePrintForGroup(g){
 
             if (nombreProv) provLines += `<div class="meta">${norm(nombreProv)}</div>`;
             if (dir)        provLines += `<div class="meta">${norm(dir)}</div>`;
-            if (contacto || tel) provLines += `<div class="meta">CONTACTO: ${norm(contacto||'')}${tel?(' · '+norm(tel)) : ''}</div>`;
+            if (contacto || tel) provLines += `<div class="meta">CONTACTO: ${norm(contacto||'')}${tel?(' · '+fmtTelWhats(tel)) : ''}</div>`;
 
             // VOUCHER: por servicio o por nombre de actividad
             markVoucher = markVoucher
@@ -459,7 +496,7 @@ async function preparePrintForGroup(g){
             if (a.proveedor) provLines += `<div class="meta">${norm(a.proveedor)}</div>`;
             if (a.direccion) provLines += `<div class="meta">${norm(a.direccion)}</div>`;
             if (a.contacto || a.telefono){
-              provLines += `<div class="meta">CONTACTO: ${norm(a.contacto||'')}${a.telefono?(' · '+norm(a.telefono)) : ''}</div>`;
+              provLines += `<div class="meta">CONTACTO: ${norm(a.contacto||'')}${a.telefono?(' · '+fmtTelWhats(a.telefono)) : ''}</div>`;
             }
           }
         }catch{}
@@ -619,6 +656,7 @@ const state = {
   grupos:[], ados:[], idx:0,
   filter:{ type:'all', value:null },
   groupQ:'',
+  lastTab:'resumen',                // ⬅️ NUEVO: recuerda la pestaña activa
   alertsTimer:null,                 // AUTO-REFRESCO DE ALERTAS (60S)
 
   cache:{
@@ -1987,19 +2025,21 @@ async function renderOneGroup(g, preferDate){
   const btnResumen=tabs.querySelector('#tabResumen');
   const btnItin=tabs.querySelector('#tabItin');
   const btnFin=tabs.querySelector('#tabFin');
-
+  
   const setTabLabel=(btn, base, n)=>{
     const q=(state.groupQ||'').trim();
     btn.textContent = (q && n>0) ? `${base} (${n})` : base;
   };
   const show = (w)=>{ 
-    paneResumen.style.display=w==='resumen'?'':'none';
-    paneItin.style.display   =w==='itin'   ?'':'none';
-    paneFin.style.display    =w==='fin'    ?'':'none';
+    state.lastTab = w || 'resumen';   // ⬅️ recuerda la última pestaña
+    paneResumen.style.display = (w==='resumen') ? '' : 'none';
+    paneItin.style.display    = (w==='itin')    ? '' : 'none';
+    paneFin.style.display     = (w==='fin')     ? '' : 'none';
   };
   btnResumen.onclick=()=>show('resumen');
   btnItin.onclick   =()=>show('itin');
   btnFin.onclick    =()=>show('fin');
+
 
   // Render y contadores
   const resumenHits = await renderResumen(g, paneResumen);
@@ -2009,7 +2049,10 @@ async function renderOneGroup(g, preferDate){
   setTabLabel(btnItin,    'ITINERARIO', itinHits);
   setTabLabel(btnFin,     'FINANZAS', finHits);
 
-  show('resumen');
+  // si viene desde una fecha (ej. click en día), priorizamos ITINERARIO
+  // si no, usamos la última pestaña usada; fallback: RESUMEN
+  const initialTab = preferDate ? 'itin' : (state.lastTab || 'resumen');
+  show(initialTab);
 
   // BÚSQUEDA INTERNA
   const input=header.querySelector('#searchTrips');
@@ -2017,8 +2060,7 @@ async function renderOneGroup(g, preferDate){
   let tmr=null;
   input.oninput=()=>{ clearTimeout(tmr); tmr=setTimeout(async ()=>{
     state.groupQ=input.value||'';
-    const active = paneItin.style.display !== 'none' ? 'itin' :
-                   (paneFin.style.display !== 'none' ? 'fin' : 'resumen');
+    const active = state.lastTab || 'resumen';
    
     const r = await renderResumen(g, paneResumen);
     const i = renderItinerario(g, paneItin, localStorage.getItem('rt_last_date_'+g.id) || preferDate);
@@ -2029,7 +2071,7 @@ async function renderOneGroup(g, preferDate){
     setTabLabel(btnFin,     'FINANZAS', f);
    
     show(active);
-
+  
   },180); };
 
 ensurePrintDOM();
@@ -4216,6 +4258,10 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
     }
   }catch(_){}
 
+  const indicacionesHTML = indicaciones
+  ? autoLinkPhones(indicaciones.toString().toUpperCase())
+  : '';
+
   // Proveedor por DESTINO (Proveedores/{destino}/Listado)
   let proveedorDoc = null;
   try{
@@ -4225,7 +4271,7 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
 
   const nombreProv  = (proveedorDoc?.proveedor || act?.proveedor || '—').toString().toUpperCase();
   const contactoNom = (proveedorDoc?.contacto  || '').toString().toUpperCase();
-  const contactoTel = (proveedorDoc?.telefono  || '').toString().toUpperCase();
+  const contactoTel = (proveedorDoc?.telefono  || '').toString(); // ⬅️ SIN toUpperCase()
   const contactoMail= (proveedorDoc?.correo    || '').toString().toUpperCase();
 
   title.textContent = `DETALLE — ${actName.toUpperCase()} — ${dmy(fechaISO)}`;
@@ -4237,15 +4283,19 @@ async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='
      <div class="card">
        <div class="meta"><strong>PROVEEDOR:</strong> ${nombreProv}</div>
        ${contactoNom ? `<div class="meta"><strong>CONTACTO:</strong> ${contactoNom}</div>` : ''}
-       ${contactoTel ? `<div class="meta"><strong>TELÉFONO:</strong> ${contactoTel}</div>` : ''}
+       ${contactoTel ? `<div class="meta"><strong>TELÉFONO:</strong> ${fmtTelWhats(contactoTel)}</div>` : ''}
        ${contactoMail? `<div class="meta"><strong>CORREO:</strong> ${contactoMail}</div>` : ''}
        <div class="meta"><strong>VOUCHER:</strong> ${voucherLabel}</div>
        <div class="meta"><strong>HORARIO:</strong> ${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')}</div>
      </div>
-     <div class="act">
-       <h4>INDICACIONES</h4>
-       ${indicaciones ? `<div class="meta" style="white-space:pre-wrap">${indicaciones.toUpperCase()}</div>` : '<div class="muted">SIN INDICACIONES.</div>'}
-     </div>
+    <div class="act">
+      <h4>INDICACIONES</h4>
+      ${indicacionesHTML
+        ? `<div class="meta" style="white-space:pre-wrap">${indicacionesHTML}</div>`
+        : '<div class="muted">SIN INDICACIONES.</div>'
+      }
+    </div>
+
      <div class="act" id="foroBox">
        <h4>TIPS O COMENTARIOS</h4>
        <div class="rowflex" style="margin:.35rem 0">
@@ -4880,8 +4930,9 @@ async function renderGastos(g, pane, paneRef){
         <option value="CLP">CLP</option><option value="USD">USD</option><option value="BRL">BRL</option><option value="ARS">ARS</option>
       </select>
       <input id="spValor" type="number" min="0" inputmode="numeric" placeholder="VALOR"/>
-      <input id="spImg" type="file" accept="image/*" capture="environment"/>
-      <button id="spSave" class="btn ok">GUARDAR GASTO</button>
+            <!-- QUITAMOS capture PARA PERMITIR GALERÍA / ARCHIVOS EN CELULAR -->
+            <input id="spImg" type="file" accept="image/*"/>
+            <button id="spSave" class="btn ok">GUARDAR GASTO</button>
     </div>`;
   pane.appendChild(form);
 
