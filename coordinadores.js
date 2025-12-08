@@ -5541,41 +5541,36 @@ async function wipeFinanzasFiles(grupoId){
   return delFolder(sRef(storage, `finanzas/${grupoId}`));
 }
 
-// Borra TODOS los gastos del grupo; si falta índice de collectionGroup, usa fallback por coordinador
+// Borra TODOS los gastos reales del grupo SIN depender de collectionGroup ni índices
 async function wipeGastosForGroup(grupoId){
   let n = 0;
 
-  // 1) Intento con collectionGroup (rápido)
+  // Ruta real: grupos/{grupoId}/gastos/*
   try{
-    const q1 = query(collectionGroup(db,'gastos'), where('grupoId','==', grupoId));
-    const qs = await getDocs(q1);
+    const colG = collection(db, 'grupos', grupoId, 'gastos');
+    const qs = await getDocs(colG);
+
     for (const d of qs.docs){
       const x = d.data() || {};
-      if (x.imgPath){ try{ await deleteObject(sRef(storage, x.imgPath)); }catch{} }
-      try{ await deleteDoc(d.ref); n++; }catch{}
+
+      // eliminar archivo si existe
+      if (x.imgPath){
+        try{ await deleteObject(sRef(storage, x.imgPath)); }catch(_){}
+      }
+
+      // eliminar documento
+      try{ await deleteDoc(d.ref); n++; }catch(_){}
     }
+
     return n;
   }catch(e){
-    console.warn('[reset] collectionGroup requiere índice, usando fallback por coordinador:', e?.message||e);
+    console.warn('[wipeGastosForGroup] error en gastos del grupo:', e);
   }
 
-  // 2) Fallback sin índices: recorre cada coordinador y su subcolección /gastos
-  try{
-    const coords = await getDocs(collection(db,'coordinadores'));
-    for (const c of coords.docs){
-      const sub = collection(db,'coordinadores', c.id, 'gastos');
-      const qs  = await getDocs(query(sub, where('grupoId','==', grupoId)));
-      for (const d of qs.docs){
-        const x = d.data() || {};
-        if (x.imgPath){ try{ await deleteObject(sRef(storage, x.imgPath)); }catch{} }
-        try{ await deleteDoc(d.ref); n++; }catch{}
-      }
-    }
-  }catch(e){
-    console.error('[reset] wipeGastosForGroup fallback error:', e);
-  }
+  // fallback final (no debería ejecutarse nunca, pero por seguridad)
   return n;
 }
+
 
 
 // Borra entradas de bitácora recorriendo el itinerario del grupo
