@@ -5541,35 +5541,41 @@ async function wipeFinanzasFiles(grupoId){
   return delFolder(sRef(storage, `finanzas/${grupoId}`));
 }
 
-// Borra TODOS los gastos reales del grupo SIN depender de collectionGroup ni índices
 async function wipeGastosForGroup(grupoId){
   let n = 0;
 
-  // Ruta real: grupos/{grupoId}/gastos/*
+  // 1) Intento con collectionGroup (rápido)
   try{
-    const colG = collection(db, 'grupos', grupoId, 'gastos');
-    const qs = await getDocs(colG);
-
+    const q1 = query(collectionGroup(db,'gastos'), where('grupoId','==', grupoId));
+    const qs = await getDocs(q1);
     for (const d of qs.docs){
       const x = d.data() || {};
-
-      // eliminar archivo si existe
-      if (x.imgPath){
-        try{ await deleteObject(sRef(storage, x.imgPath)); }catch(_){}
-      }
-
-      // eliminar documento
-      try{ await deleteDoc(d.ref); n++; }catch(_){}
+      if (x.imgPath){ try{ await deleteObject(sRef(storage, x.imgPath)); }catch{} }
+      try{ await deleteDoc(d.ref); n++; }catch{}
     }
-
     return n;
   }catch(e){
-    console.warn('[wipeGastosForGroup] error en gastos del grupo:', e);
+    console.warn('[reset] collectionGroup requiere índice, usando fallback por coordinador:', e?.message||e);
   }
 
-  // fallback final (no debería ejecutarse nunca, pero por seguridad)
+  // 2) Fallback: escanear por coordinador
+  try{
+    for (const c of (state.coordinadores || [])){
+      const base = collection(db,'coordinadores', c.id, 'gastos');
+      const qs = await getDocs(base);
+      for (const d of qs.docs){
+        const x = d.data() || {};
+        if (x.grupoId !== grupoId) continue;
+        if (x.imgPath){ try{ await deleteObject(sRef(storage, x.imgPath)); }catch{} }
+        try{ await deleteDoc(d.ref); n++; }catch{}
+      }
+    }
+  }catch(e){
+    console.warn('[reset] fallback coordinador error', e);
+  }
   return n;
 }
+
 
 
 
