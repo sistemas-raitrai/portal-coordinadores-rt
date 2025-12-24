@@ -6645,7 +6645,7 @@ async function loadGastosList(g, box, coordId, paneRef){
       list.push({
         id: d.id,
         ...x,
-        estado: String(x.estado || 'APROBADO').toUpperCase()
+        estado: String(x.estado || 'GUARDADO').toUpperCase()
       });
     }
   });
