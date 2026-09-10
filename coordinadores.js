@@ -383,7 +383,7 @@ async function preparePrintForGroup(g){
   };
 
   // ===== Encabezado =====
-  const nombre = (g.nombreGrupo||g.aliasGrupo||g.id)||'';
+  const nombre = (nombreOperativoGrupo(g))||'';
   const code   = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
   const rango  = `${dmySafe(g.fechaInicio||'')} — ${dmySafe(g.fechaFin||'')}`;
   const destino= norm(g.destino||'');
@@ -639,10 +639,60 @@ function emailsOf(g){ const out=new Set(), push=e=>{if(e) out.add(String(e).toLo
   arrify(g?.coordinadores).forEach(x=>{ if(x?.email) push(x.email); else if(typeof x==='string'&&x.includes('@')) push(x); });
   return [...out];
 }
-function coordDocIdsOf(g){ const out=new Set(), push=x=>{ if(x) out.add(String(x)); };
-  push(g?.coordinadorId); arrify(g?.coordinadoresIds).forEach(push);
-  const mapEmailToId = new Map((state.coordinadores || []).map(c => [String(c.email || '').toLowerCase(), c.id]));
-  emailsOf(g).forEach(e=>{ if(mapEmailToId.has(e)) out.add(mapEmailToId.get(e)); });
+function coordDocIdsOf(g) {
+  const out = new Set();
+
+  const push = valor => {
+    if (valor) {
+      out.add(String(valor));
+    }
+  };
+
+  push(g?.coordinadorId);
+
+  arrify(
+    g?.coordinadorIds
+  ).forEach(push);
+
+  arrify(
+    g?.coordinadoresIds
+  ).forEach(push);
+
+  arrify(
+    g?.coordinadores
+  ).forEach(item => {
+    if (
+      item &&
+      typeof item === 'object'
+    ) {
+      push(
+        item.id ||
+        item.coordinadorId
+      );
+    }
+  });
+
+  const mapEmailToId =
+    new Map(
+      (state.coordinadores || [])
+        .map(coordinador => [
+          String(
+            coordinador.email ||
+            ''
+          ).toLowerCase(),
+
+          coordinador.id
+        ])
+    );
+
+  emailsOf(g).forEach(email => {
+    if (mapEmailToId.has(email)) {
+      out.add(
+        mapEmailToId.get(email)
+      );
+    }
+  });
+
   return [...out];
 }
 
@@ -658,6 +708,10 @@ const state = {
   groupQ:'',
   lastTab:'resumen',                // ⬅️ NUEVO: recuerda la pestaña activa
   alertsTimer:null,                 // AUTO-REFRESCO DE ALERTAS (60S)
+  anoViajeActivo:
+    obtenerAnoViajeActivoChile(),
+  
+  coordinadorActual: null,
 
   cache:{
     hotel:new Map(),
@@ -666,6 +720,12 @@ const state = {
     // NUEVO: catálogos en memoria
     servicios:new Map(),    // key: 'Servicios/BRASIL/Listado' → [servicios...]
     proveedores:new Map(),  // key: 'BRASIL::proveedor-normalizado' → doc proveedor
+
+    resumenesPorAno:
+      new Map(),
+    
+    gruposDetalle:
+      new Map(),
 
     tasas:null,
     hoteles:{ loaded:false, byId:new Map(), bySlug:new Map(), all:[] }
@@ -1203,6 +1263,594 @@ onAuthStateChanged(auth, async (user) => {
       }
 });
 
+function obtenerFechaChile(
+  fecha = new Date()
+) {
+  const partes =
+    new Intl.DateTimeFormat(
+      'en-CA',
+      {
+        timeZone:
+          'America/Santiago',
+
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }
+    ).formatToParts(fecha);
+
+  const valores = {};
+
+  partes.forEach(parte => {
+    if (parte.type !== 'literal') {
+      valores[parte.type] =
+        parte.value;
+    }
+  });
+
+  return {
+    ano: Number(valores.year),
+    mes: Number(valores.month),
+    dia: Number(valores.day)
+  };
+}
+
+function obtenerAnoViajeActivoChile(
+  fecha = new Date()
+) {
+  const {
+    ano,
+    mes
+  } = obtenerFechaChile(fecha);
+
+  return mes >= 7
+    ? ano
+    : ano - 1;
+}
+
+function nombreOperativoGrupo(g) {
+  return String(
+    g?.aliasGrupo ||
+    g?.nombreGrupo ||
+    g?.grupoId ||
+    g?.id ||
+    ''
+  ).trim();
+}
+
+function normalizarResumenCoordinadores(
+  datos
+) {
+  const coordinadores =
+    Array.isArray(datos?.coordinadores)
+      ? datos.coordinadores
+          .filter(
+            coordinador =>
+              coordinador &&
+              typeof coordinador ===
+                'object'
+          )
+          .map(coordinador => ({
+            id: String(
+              coordinador.id ||
+              coordinador.coordinadorId ||
+              ''
+            ).trim(),
+
+            nombre: String(
+              coordinador.nombre ||
+              ''
+            ).trim(),
+
+            email: String(
+              coordinador.email ||
+              coordinador.correo ||
+              ''
+            )
+              .trim()
+              .toLowerCase(),
+
+            telefono: String(
+              coordinador.telefono ||
+              coordinador.fono ||
+              coordinador.celular ||
+              ''
+            ).trim()
+          }))
+      : [];
+
+  const coordinadorIds = [
+    ...new Set([
+      ...(Array.isArray(
+        datos?.coordinadorIds
+      )
+        ? datos.coordinadorIds
+        : []),
+
+      ...(Array.isArray(
+        datos?.coordinadoresIds
+      )
+        ? datos.coordinadoresIds
+        : []),
+
+      ...coordinadores.map(
+        coordinador =>
+          coordinador.id
+      )
+    ]
+      .map(String)
+      .filter(Boolean))
+  ];
+
+  const coordinadoresEmails = [
+    ...new Set([
+      ...(Array.isArray(
+        datos?.coordinadoresEmails
+      )
+        ? datos.coordinadoresEmails
+        : []),
+
+      ...coordinadores.map(
+        coordinador =>
+          coordinador.email
+      )
+    ]
+      .map(email =>
+        String(email)
+          .trim()
+          .toLowerCase()
+      )
+      .filter(Boolean))
+  ];
+
+  return {
+    coordinadores,
+    coordinadorIds,
+    coordinadoresIds:
+      coordinadorIds,
+    coordinadoresEmails
+  };
+}
+
+function prepararGrupoDesdeResumen(
+  docSnap
+) {
+  const datos =
+    docSnap.data() || {};
+
+  const grupoId = String(
+    datos.grupoId ||
+    docSnap.id
+  ).trim();
+
+  const numeroNegocio = String(
+    datos.numeroNegocio ||
+    ''
+  ).trim();
+
+  const coordinacion =
+    normalizarResumenCoordinadores(
+      datos
+    );
+
+  return {
+    id: grupoId,
+    grupoId,
+
+    numeroNegocio,
+
+    identificador: String(
+      datos.identificador ||
+      (
+        numeroNegocio &&
+        grupoId.startsWith(
+          `${numeroNegocio}-`
+        )
+          ? grupoId.slice(
+              numeroNegocio.length + 1
+            )
+          : ''
+      )
+    ).trim(),
+
+    nombreGrupo: String(
+      datos.nombreGrupo ||
+      ''
+    ).trim(),
+
+    aliasGrupo: String(
+      datos.aliasGrupo ||
+      datos.nombreGrupo ||
+      ''
+    ).trim(),
+
+    colegio: String(
+      datos.colegio ||
+      ''
+    ).trim(),
+
+    curso: String(
+      datos.curso ||
+      ''
+    ).trim(),
+
+    anoViaje: Number(
+      datos.anoViaje ||
+      0
+    ),
+
+    destino: String(
+      datos.destino ||
+      ''
+    ).trim(),
+
+    programa: String(
+      datos.programa ||
+      ''
+    ).trim(),
+
+    fechaInicio:
+      toISO(datos.fechaInicio),
+
+    fechaFin:
+      toISO(datos.fechaFin),
+
+    cantidadgrupo:
+      Number(
+        datos?.pax?.total ||
+        0
+      ),
+
+    adultos:
+      Number(
+        datos?.pax?.adultos ||
+        0
+      ),
+
+    estudiantes:
+      Number(
+        datos?.pax?.estudiantes ||
+        0
+      ),
+
+    paxResumen:
+      datos.pax || {},
+
+    hotelesResumen:
+      Array.isArray(datos.hoteles)
+        ? datos.hoteles
+        : [],
+
+    vuelosResumen:
+      Array.isArray(datos.vuelos)
+        ? datos.vuelos
+        : [],
+
+    itinerario:
+      normalizeItinerario(
+        datos.itinerario || {}
+      ),
+
+    fechasItinerario:
+      Array.isArray(
+        datos.fechasItinerario
+      )
+        ? datos.fechasItinerario
+        : [],
+
+    ...coordinacion,
+
+    _desdeResumen: true,
+    _detalleCargado: false
+  };
+}
+
+async function cargarResumenesAno(
+  anoViaje,
+  {
+    force = false
+  } = {}
+) {
+  const ano = Number(anoViaje);
+
+  if (
+    !force &&
+    state.cache
+      .resumenesPorAno
+      .has(ano)
+  ) {
+    return state.cache
+      .resumenesPorAno
+      .get(ano);
+  }
+
+  const snapshot =
+    await getDocs(
+      query(
+        collection(
+          db,
+          'operaciones_calendario_resumen'
+        ),
+
+        where(
+          'anoViaje',
+          '==',
+          ano
+        )
+      )
+    );
+
+  const grupos =
+    snapshot.docs.map(
+      prepararGrupoDesdeResumen
+    );
+
+  state.cache
+    .resumenesPorAno
+    .set(
+      ano,
+      grupos
+    );
+
+  return grupos;
+}
+
+function grupoPerteneceCoordinador(
+  grupo,
+  coordinador,
+  user
+) {
+  if (
+    coordinador?.id ===
+    '__ALL__'
+  ) {
+    return true;
+  }
+
+  const coordinadorId =
+    String(
+      coordinador?.id ||
+      ''
+    ).trim();
+
+  const email = String(
+    coordinador?.email ||
+    user?.email ||
+    ''
+  )
+    .trim()
+    .toLowerCase();
+
+  const ids = new Set([
+    ...(grupo.coordinadorIds || []),
+    ...(grupo.coordinadoresIds || [])
+  ].map(String));
+
+  const emails = new Set(
+    (grupo.coordinadoresEmails || [])
+      .map(valor =>
+        String(valor)
+          .trim()
+          .toLowerCase()
+      )
+  );
+
+  return (
+    (
+      coordinadorId &&
+      ids.has(coordinadorId)
+    ) ||
+    (
+      email &&
+      emails.has(email)
+    )
+  );
+}
+
+async function ensureGrupoDetalleLoaded(
+  grupo
+) {
+  if (!grupo) {
+    return grupo;
+  }
+
+  if (grupo._detalleCargado) {
+    return grupo;
+  }
+
+  if (
+    state.cache.gruposDetalle.has(
+      grupo.id
+    )
+  ) {
+    return state.cache
+      .gruposDetalle
+      .get(grupo.id);
+  }
+
+  try {
+    const snapshot =
+      await getDoc(
+        doc(
+          db,
+          'grupos',
+          grupo.id
+        )
+      );
+
+    if (!snapshot.exists()) {
+      grupo._detalleCargado = true;
+
+      state.cache
+        .gruposDetalle
+        .set(
+          grupo.id,
+          grupo
+        );
+
+      return grupo;
+    }
+
+    const raw =
+      snapshot.data() || {};
+
+    const coordinadoresResumen =
+      grupo.coordinadores || [];
+
+    const idsResumen =
+      grupo.coordinadorIds || [];
+
+    const emailsResumen =
+      grupo.coordinadoresEmails || [];
+
+    const itinerarioResumen =
+      grupo.itinerario || {};
+
+    const fusionado = {
+      ...grupo,
+      ...raw,
+
+      id: grupo.id,
+      grupoId: grupo.id,
+
+      aliasGrupo:
+        grupo.aliasGrupo ||
+        raw.aliasGrupo ||
+        raw.nombreGrupo ||
+        grupo.id,
+
+      numeroNegocio: String(
+        raw.numeroNegocio ||
+        grupo.numeroNegocio ||
+        ''
+      ),
+
+      identificador: String(
+        raw.identificador ||
+        grupo.identificador ||
+        ''
+      ),
+
+      fechaInicio:
+        toISO(
+          raw.fechaInicio ||
+          grupo.fechaInicio
+        ),
+
+      fechaFin:
+        toISO(
+          raw.fechaFin ||
+          grupo.fechaFin
+        ),
+
+      itinerario:
+        Object.keys(
+          itinerarioResumen
+        ).length
+          ? itinerarioResumen
+          : normalizeItinerario(
+              raw.itinerario || {}
+            ),
+
+      asistencias:
+        raw.asistencias || {},
+
+      serviciosEstado:
+        raw.serviciosEstado || {},
+
+      coordinadores:
+        coordinadoresResumen.length
+          ? coordinadoresResumen
+          : (
+              Array.isArray(
+                raw.coordinadores
+              )
+                ? raw.coordinadores
+                : []
+            ),
+
+      coordinadorIds:
+        idsResumen.length
+          ? idsResumen
+          : (
+              Array.isArray(
+                raw.coordinadorIds
+              )
+                ? raw.coordinadorIds
+                : []
+            ),
+
+      coordinadoresIds:
+        idsResumen.length
+          ? idsResumen
+          : (
+              Array.isArray(
+                raw.coordinadoresIds
+              )
+                ? raw.coordinadoresIds
+                : []
+            ),
+
+      coordinadoresEmails:
+        emailsResumen.length
+          ? emailsResumen
+          : (
+              Array.isArray(
+                raw.coordinadoresEmails
+              )
+                ? raw.coordinadoresEmails
+                : []
+            ),
+
+      _desdeResumen: true,
+      _detalleCargado: true
+    };
+
+    state.cache
+      .gruposDetalle
+      .set(
+        grupo.id,
+        fusionado
+      );
+
+    return fusionado;
+  } catch (error) {
+    console.error(
+      '[COORDINADORES] No se pudo cargar detalle',
+      {
+        grupoId: grupo.id,
+        error
+      }
+    );
+
+    grupo._detalleCargado = true;
+    return grupo;
+  }
+}
+
+function reemplazarGrupoEnEstado(
+  grupo
+) {
+  const reemplazar = lista => {
+    if (!Array.isArray(lista)) {
+      return;
+    }
+
+    const indice =
+      lista.findIndex(
+        item =>
+          item?.id === grupo.id
+      );
+
+    if (indice >= 0) {
+      lista[indice] = grupo;
+    }
+  };
+
+  reemplazar(state.grupos);
+  reemplazar(state.ordenados);
+}
+
 /* ====== CARGAS FIRESTORE ====== */
 async function loadCoordinadores(){
   const snap = await getDocs(collection(db,'coordinadores'));
@@ -1222,96 +1870,450 @@ function findCoordinadorForUser(coordinadores, user){
 }
 
 /* ====== SELECTOR  (CON "TODOS") ====== */
-async function showSelector(coordinadores){
-  const bar=ensurePanel('staffBar',
-    '<label style="display:block;margin-bottom:6px;color:#cbd5e1">COORDINADOR(A):</label>'+
-    '<select id="coordSelect"></select>'
+async function showSelector(
+  coordinadores
+) {
+  const anoActivo =
+    obtenerAnoViajeActivoChile();
+
+  const anos = [
+    anoActivo - 1,
+    anoActivo,
+    anoActivo + 1,
+    anoActivo + 2
+  ];
+
+  const bar = ensurePanel(
+    'staffBar',
+
+    `
+      <div
+        style="
+          display:grid;
+          grid-template-columns:
+            minmax(0,2fr)
+            minmax(150px,1fr);
+          gap:.65rem;
+          align-items:end
+        "
+      >
+        <label>
+          <span
+            style="
+              display:block;
+              margin-bottom:6px;
+              color:var(--muted)
+            "
+          >
+            COORDINADOR(A):
+          </span>
+
+          <select id="coordSelect">
+          </select>
+        </label>
+
+        <label>
+          <span
+            style="
+              display:block;
+              margin-bottom:6px;
+              color:var(--muted)
+            "
+          >
+            AÑO DE VIAJE:
+          </span>
+
+          <select id="coordAnoSelect">
+          </select>
+        </label>
+      </div>
+    `
   );
-  const sel=bar.querySelector('#coordSelect');
-  sel.innerHTML =
-    '<option value="__ALL__">TODOS</option>' +
-    coordinadores.map(c => `<option value="${c.id}">${(c.nombre||'').toUpperCase()} — ${(c.email||'').toUpperCase()}</option>`).join('');
-  sel.onchange = async ()=> {
-    const id = sel.value || '';
-    const elegido = (id==='__ALL__') ? { id:'__ALL__' } : (coordinadores.find(c=>c.id===id) || null);
-    state.viewingCoordId = id || null;
-    localStorage.setItem('rt__coord', id);
-    await loadGruposForCoordinador(elegido, state.user);
-    await window.renderGlobalAlertsV2();
+
+  const selectorCoord =
+    bar.querySelector(
+      '#coordSelect'
+    );
+
+  const selectorAno =
+    bar.querySelector(
+      '#coordAnoSelect'
+    );
+
+  selectorCoord.innerHTML = [
+    '<option value="__ALL__">TODOS</option>',
+
+    ...coordinadores.map(
+      coordinador =>
+        `
+          <option
+            value="${coordinador.id}"
+          >
+            ${(
+              coordinador.nombre ||
+              ''
+            ).toUpperCase()}
+            —
+            ${(
+              coordinador.email ||
+              ''
+            ).toUpperCase()}
+          </option>
+        `
+    )
+  ].join('');
+
+  selectorAno.innerHTML =
+    anos.map(
+      ano =>
+        `
+          <option value="${ano}">
+            ${ano}${
+              ano === anoActivo
+                ? ' · ACTIVO'
+                : ''
+            }
+          </option>
+        `
+    ).join('');
+
+  const coordinadorGuardado =
+    localStorage.getItem(
+      'rt__coord'
+    );
+
+  const anoGuardado = Number(
+    localStorage.getItem(
+      'rt__ano_viaje'
+    )
+  );
+
+  selectorCoord.value =
+    coordinadores.some(
+      coordinador =>
+        coordinador.id ===
+        coordinadorGuardado
+    ) ||
+    coordinadorGuardado ===
+      '__ALL__'
+      ? coordinadorGuardado
+      : '__ALL__';
+
+  selectorAno.value = String(
+    anos.includes(anoGuardado)
+      ? anoGuardado
+      : anoActivo
+  );
+
+  const obtenerCoordinador =
+    () => {
+      const id =
+        selectorCoord.value ||
+        '__ALL__';
+
+      if (id === '__ALL__') {
+        return {
+          id: '__ALL__',
+          nombre: 'TODOS',
+          email: ''
+        };
+      }
+
+      return (
+        coordinadores.find(
+          coordinador =>
+            coordinador.id === id
+        ) ||
+        {
+          id,
+          nombre: '',
+          email: ''
+        }
+      );
+    };
+
+  const recargar = async ({
+    force = false
+  } = {}) => {
+    const coordinador =
+      obtenerCoordinador();
+
+    const ano = Number(
+      selectorAno.value ||
+      anoActivo
+    );
+
+    state.viewingCoordId =
+      coordinador.id;
+
+    state.coordinadorActual =
+      coordinador;
+
+    state.anoViajeActivo =
+      ano;
+
+    localStorage.setItem(
+      'rt__coord',
+      coordinador.id
+    );
+
+    localStorage.setItem(
+      'rt__ano_viaje',
+      String(ano)
+    );
+
+    if (force) {
+      state.cache
+        .resumenesPorAno
+        .delete(ano);
+    }
+
+    await loadGruposForCoordinador(
+      coordinador,
+      state.user
+    );
+
+    await window
+      .renderGlobalAlertsV2();
   };
-  const last=localStorage.getItem('rt__coord');
-  if (last){
-    sel.value=last;
-    const elegido = (last==='__ALL__') ? { id:'__ALL__' } : (coordinadores.find(c=>c.id===last) || null);
-    state.viewingCoordId=last;
-    await loadGruposForCoordinador(elegido, state.user);
-  }
+
+  selectorCoord.onchange =
+    () => recargar();
+
+  selectorAno.onchange =
+    () => recargar();
+
+  await recargar();
 }
 
 /* ====== GRUPOS PARA EL COORDINADOR EN CONTEXTO (O "TODOS") ====== */
-async function loadGruposForCoordinador(coord, user){
-  const cont=document.getElementById('grupos'); if (cont) cont.textContent='CARGANDO GRUPOS…';
+async function loadGruposForCoordinador(
+  coord,
+  user
+) {
+  const cont =
+    document.getElementById(
+      'grupos'
+    );
 
-  const allSnap=await getDocs(collection(db,'grupos'));
-  const wanted=[];
-  const isAll = coord && coord.id==='__ALL__';
+  if (cont) {
+    cont.textContent =
+      'CARGANDO GRUPOS…';
+  }
 
-  const emailElegido=(coord?.email||'').toLowerCase();
-  const docIdElegido=(coord?.id||'').toString();
-  const isSelf = !coord || coord.id==='self' || emailElegido===(user.email||'').toLowerCase();
+  const anoViaje = Number(
+    state.anoViajeActivo ||
+    obtenerAnoViajeActivoChile()
+  );
 
-  allSnap.forEach(d=>{
-    const raw={id:d.id, ...d.data()};
-    const g={
-      ...raw,
-      fechaInicio: toISO(raw.fechaInicio||raw.inicio||raw.fecha_ini),
-      fechaFin: toISO(raw.fechaFin||raw.fin||raw.fecha_fin),
-      itinerario: normalizeItinerario(raw.itinerario),
-      asistencias: raw.asistencias || {},
-      serviciosEstado: raw.serviciosEstado || {},
-      numeroNegocio: String(raw.numeroNegocio || raw.numNegocio || raw.idNegocio || raw.id || d.id),
-      identificador: String(raw.identificador || raw.codigo || '')
-    };
-    if (isAll){ wanted.push(g); return; }
-    const gEmails=emailsOf(raw), gDocIds=coordDocIdsOf(raw);
-    const match=(emailElegido && gEmails.includes(emailElegido)) ||
-                (docIdElegido && gDocIds.includes(docIdElegido)) ||
-                (isSelf && gEmails.includes((user.email||'').toLowerCase()));
-    if (match) wanted.push(g);
-  });
+  state.anoViajeActivo =
+    anoViaje;
 
-  // ORDENAR (FUTUROS → PASADOS)
-  const hoy=toISO(new Date());
-  const futuros=wanted.filter(g=>(g.fechaInicio||'')>=hoy).sort((a,b)=>(a.fechaInicio||'').localeCompare(b.fechaInicio||''));
-  const pasados=wanted.filter(g=>(g.fechaInicio||'')<hoy).sort((a,b)=>(a.fechaInicio||'').localeCompare(b.fechaInicio||''));
-  state.grupos=wanted; state.ordenados=[...futuros,...pasados];
+  state.coordinadorActual =
+    coord || null;
 
-  state.filter={type:'all',value:null};
-  state.groupQ='';
+  let resumenes = [];
+
+  try {
+    resumenes =
+      await cargarResumenesAno(
+        anoViaje
+      );
+  } catch (error) {
+    console.error(
+      '[COORDINADORES] Error leyendo resumen',
+      error
+    );
+
+    if (cont) {
+      cont.innerHTML =
+        `
+          <div class="muted">
+            NO SE PUDO CARGAR EL
+            RESUMEN OPERATIVO.
+          </div>
+        `;
+    }
+
+    return;
+  }
+
+  const isAll =
+    coord?.id === '__ALL__';
+
+  const wanted = isAll
+    ? resumenes.slice()
+    : resumenes.filter(
+        grupo =>
+          grupoPerteneceCoordinador(
+            grupo,
+            coord,
+            user
+          )
+      );
+
+  const hoy =
+    obtenerFechaChile();
+
+  const hoyISO = [
+    hoy.ano,
+    String(hoy.mes)
+      .padStart(2, '0'),
+    String(hoy.dia)
+      .padStart(2, '0')
+  ].join('-');
+
+  const futuros = wanted
+    .filter(
+      grupo =>
+        (
+          grupo.fechaInicio ||
+          ''
+        ) >= hoyISO
+    )
+    .sort(
+      (a, b) =>
+        (
+          a.fechaInicio ||
+          '9999-12-31'
+        ).localeCompare(
+          b.fechaInicio ||
+          '9999-12-31'
+        )
+    );
+
+  const pasados = wanted
+    .filter(
+      grupo =>
+        (
+          grupo.fechaInicio ||
+          ''
+        ) < hoyISO
+    )
+    .sort(
+      (a, b) =>
+        (
+          b.fechaInicio ||
+          ''
+        ).localeCompare(
+          a.fechaInicio ||
+          ''
+        )
+    );
+
+  state.grupos =
+    wanted;
+
+  state.ordenados = [
+    ...futuros,
+    ...pasados
+  ];
+
+  state.filter = {
+    type: 'all',
+    value: null
+  };
+
+  state.groupQ = '';
 
   renderStatsFiltered();
   renderNavBar();
 
-  const { g:qsG, f:qsF } = parseQS();
-  let idx=0;
-  if (qsG){
-    const byNum=state.ordenados.findIndex(x=> String(x.numeroNegocio)===qsG);
-    const byId=state.ordenados.findIndex(x=> String(x.id)===qsG);
-    idx=byNum>=0?byNum:(byId>=0?byId:0);
-  }else{
-    const last=localStorage.getItem('rt_last_group');
-    if(last){ const i=state.ordenados.findIndex(x=> x.id===last || x.numeroNegocio===last); if(i>=0) idx=i; }
+  if (!state.ordenados.length) {
+    state.idx = 0;
+
+    if (cont) {
+      cont.innerHTML =
+        `
+          <div class="muted">
+            NO HAY VIAJES ASIGNADOS
+            PARA EL AÑO ${anoViaje}.
+          </div>
+        `;
+    }
+
+    return;
   }
-  state.idx = Math.max(0, Math.min(idx, state.ordenados.length - 1));
 
-  // AÑADIDO: garantizar itinerario antes de renderizar
-  const target = state.ordenados[state.idx];
-  await ensureItinerarioLoaded(target);
+  const {
+    g: qsG,
+    f: qsF
+  } = parseQS();
 
-  await renderOneGroup(target, qsF);
+  let idx = 0;
+
+  if (qsG) {
+    const byNum =
+      state.ordenados.findIndex(
+        grupo =>
+          String(
+            grupo.numeroNegocio
+          ) === qsG
+      );
+
+    const byId =
+      state.ordenados.findIndex(
+        grupo =>
+          String(grupo.id) === qsG
+      );
+
+    idx =
+      byNum >= 0
+        ? byNum
+        : (
+            byId >= 0
+              ? byId
+              : 0
+          );
+  } else {
+    const last =
+      localStorage.getItem(
+        'rt_last_group'
+      );
+
+    if (last) {
+      const encontrado =
+        state.ordenados.findIndex(
+          grupo =>
+            grupo.id === last ||
+            grupo.numeroNegocio ===
+              last
+        );
+
+      if (encontrado >= 0) {
+        idx = encontrado;
+      }
+    }
+  }
+
+  state.idx = Math.max(
+    0,
+    Math.min(
+      idx,
+      state.ordenados.length - 1
+    )
+  );
+
+  let target =
+    state.ordenados[state.idx];
+
+  target =
+    await ensureGrupoDetalleLoaded(
+      target
+    );
+
+  reemplazarGrupoEnEstado(target);
+
+  await ensureItinerarioLoaded(
+    target
+  );
+
+  await renderOneGroup(
+    target,
+    qsF
+  );
 }
 
-/* ====== NORMALIZADOR DE ITINERARIO (multiesquema) ====== */
 /* ====== NORMALIZADOR DE ITINERARIO (multiesquema, robusto) ====== */
 function normalizeItinerario(raw){
   if (!raw) return {};
@@ -1477,7 +2479,7 @@ function renderNavBar(){
   // VIAJES
   const ogTrips = document.createElement('optgroup'); ogTrips.label = 'VIAJES';
   state.ordenados.forEach((g,i)=>{
-    const name=(g.nombreGrupo||g.aliasGrupo||g.id);
+    const name=(nombreOperativoGrupo(g));
     const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
     const opt=new Option(`${(g.destino||'').toUpperCase()} · ${(name||'').toUpperCase()} (${code}) | IDA: ${dmy(g.fechaInicio||'')}  VUELTA: ${dmy(g.fechaFin||'')}`, `trip:${i}`);
     ogTrips.appendChild(opt);
@@ -1913,12 +2915,42 @@ async function preparePrintActaFinanzas(g, snap){
 
 
 /* ====== VISTA GRUPO ====== */
-async function renderOneGroup(g, preferDate){
-  const cont=document.getElementById('grupos'); if(!cont) return; cont.innerHTML='';
-  if(!g){ cont.innerHTML='<p class="muted">NO HAY VIAJES.</p>'; return; }
+async function renderOneGroup(
+  g,
+  preferDate
+) {
+  const cont =
+    document.getElementById(
+      'grupos'
+    );
+
+  if (!cont) {
+    return;
+  }
+
+  cont.innerHTML = '';
+
+  if (!g) {
+    cont.innerHTML =
+      `
+        <p class="muted">
+          NO HAY VIAJES.
+        </p>
+      `;
+
+    return;
+  }
+
+  g =
+    await ensureGrupoDetalleLoaded(
+      g
+    );
+
+  reemplazarGrupoEnEstado(g);
   localStorage.setItem('rt_last_group', g.id);
 
-  const name=(g.nombreGrupo||g.aliasGrupo||g.id);
+  const name =
+   nombreOperativoGrupo(g);
   const code=(g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):'');
   const rango = `${dmy(g.fechaInicio||'')} — ${dmy(g.fechaFin||'')}`;
 
@@ -2924,7 +3956,7 @@ async function renderActs(grupo, fechaISO, cont){
             readBy:{},
             groupInfo:{
               grupoId:grupo.id,
-              nombre: (grupo.nombreGrupo||grupo.aliasGrupo||grupo.id),
+              nombre: (nombreOperativoGrupo(grupo)),
               code: (grupo.numeroNegocio||'')+(grupo.identificador?('-'+grupo.identificador):''),
               destino: (grupo.destino||null),
               programa: (grupo.programa||null),
@@ -3424,7 +4456,7 @@ function renderVoucherHTMLSync(g, fechaISO, act, proveedorDoc=null, compact=fals
     <div class="card">
       <h3>${(act.actividad||'SERVICIO').toString().toUpperCase()}</h3>
       <div class="meta">PROVEEDOR: ${provTexto||'—'}</div>
-      <div class="meta">GRUPO: ${(g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase()} (${code})</div>
+      <div class="meta">GRUPO: ${(nombreOperativoGrupo(g)).toString().toUpperCase()} (${code})</div>
       <div class="meta">FECHA: ${dmy(fechaISO)}</div>
       <div class="meta">PAX PLAN: ${paxPlan} · PAX ASISTENTES: ${paxAsist}</div>
       ${compact?'':'<hr><div class="meta">FIRMA COORDINADOR: ________________________________</div>'}
@@ -3479,7 +4511,7 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
   // ——— 3) Datos base ———
   const code        = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
   const actividadTX = (act.actividad||'').toString().toUpperCase();
-  const grupoTX     = (g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase();
+  const grupoTX     = (nombreOperativoGrupo(g)).toString().toUpperCase();
   const destinoTX   = (g.destino||'—').toString().toUpperCase();
   const programaTX  = (g.programa||'—').toString().toUpperCase();
   const fechaTX     = dmy(fechaISO);
@@ -3596,7 +4628,7 @@ OBSERVACIONES:
           readBy:{},
           groupInfo:{
             grupoId:g.id,
-            nombre:(g.nombreGrupo||g.aliasGrupo||g.id),
+            nombre:(nombreOperativoGrupo(g)),
             code: (g.numeroNegocio||'')+(g.identificador?('-'+g.identificador):''),
             destino:(g.destino||null),
             programa:(g.programa||null),
@@ -3675,7 +4707,7 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
 
   const code = (grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'');
   const asunto =
-    `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${code})`;
+    `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(nombreOperativoGrupo(grupo)).toString().toUpperCase()} (${code})`;
 
   title.textContent = 'ENVIAR CONFIRMACIÓN POR CORREO';
 
@@ -3707,7 +4739,7 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
        const nota = (document.getElementById('rt-nota-extra').value || '').trim();
    
        const asunto =
-         `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})`;
+         `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(nombreOperativoGrupo(grupo)).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})`;
    
        const htmlBody =
          `<p>Estimados ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:</p>
@@ -3715,7 +4747,7 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
           <ul>
             <li><b>Actividad:</b> ${(act.actividad||'').toString().toUpperCase()}</li>
             <li><b>Fecha:</b> ${dmy(fechaISO)}</li>
-            <li><b>Grupo:</b> ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})</li>
+            <li><b>Grupo:</b> ${(nombreOperativoGrupo(grupo)).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})</li>
             <li><b>Destino / Programa:</b> ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}</li>
             <li><b>Pax asistentes:</b> ${getSavedAsistencia(grupo, fechaISO, act.actividad)?.paxFinal ?? '—'}</li>
             <li><b>Coordinador(a):</b> ${coordNom || '—'}</li>
@@ -3747,7 +4779,7 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
        // — Fallback: abre cliente de correo del usuario SIEMPRE con asunto/cuerpo correctos
        const nota = (document.getElementById('rt-nota-extra').value || '').trim();
        const fallbackSubject =
-         `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})`;
+         `CONFIRMACIÓN DE ASISTENCIA — ${(act.actividad||'').toString().toUpperCase()} — ${dmy(fechaISO)} — ${(nombreOperativoGrupo(grupo)).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})`;
    
        const fallbackBody =
    `ESTIMADOS ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:
@@ -3756,7 +4788,7 @@ async function openCorreoConfirmModal(grupo, fechaISO, act, proveedorEmail) {
    
    • ACTIVIDAD: ${(act.actividad||'').toString().toUpperCase()}
    • FECHA: ${dmy(fechaISO)}
-   • GRUPO: ${(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})
+   • GRUPO: ${(nombreOperativoGrupo(grupo)).toString().toUpperCase()} (${(grupo.numeroNegocio||'') + (grupo.identificador?('-'+grupo.identificador):'')})
    • DESTINO / PROGRAMA: ${(grupo.destino||'—').toString().toUpperCase()} / ${(grupo.programa||'—').toString().toUpperCase()}
    • PAX ASISTENTES: ${getSavedAsistencia(grupo, fechaISO, act.actividad)?.paxFinal ?? '—'}
    • COORDINADOR(A): ${(grupo.coordinadorNombre || '—').toString().toUpperCase()}
@@ -3821,7 +4853,7 @@ function buildPrintTextDespacho(grupo, opts){
    // ===== Encabezado (HTML) =====
    let out = '';
    out += '<div class="h1">DESPACHO DE VIAJE</div>\n';
-   out += `<div><span class="b">GRUPO:</span> ${up(grupo.nombreGrupo||grupo.aliasGrupo||grupo.id)}  ·  <span class="b">CÓDIGO:</span> ${code}</div>\n`;
+   out += `<div><span class="b">GRUPO:</span> ${up(nombreOperativoGrupo(grupo))}  ·  <span class="b">CÓDIGO:</span> ${code}</div>\n`;
    out += `<div><span class="b">DESTINO:</span> ${up(grupo.destino||'—')}  ·  <span class="b">PROGRAMA:</span> ${up(grupo.programa||'—')}</div>\n`;
    out += `<div><span class="b">FECHAS:</span> ${dmy(grupo.fechaInicio||'')} — ${dmy(grupo.fechaFin||'')}  ·  <span class="b">PAX:</span> ${paxPlan}${paxReal?`  <span class="muted">(REAL ${paxReal} · A:${A_real} · E:${E_real})</span>`:''}</div>\n`;
    out += '<div>────────────────────────────────────────────────────────</div>\n\n';
@@ -4117,7 +5149,7 @@ async function openPrintDespacho(g, w){
     </div>
 
     <div class="grid2">
-      <div><strong>GRUPO:</strong> ${(g.nombreGrupo||g.aliasGrupo||g.id).toString().toUpperCase()}</div>
+      <div><strong>GRUPO:</strong> ${(nombreOperativoGrupo(g)).toString().toUpperCase()}</div>
       <div><strong>CÓDIGO:</strong> ${code.toUpperCase()}</div>
       <div><strong>DESTINO:</strong> ${(g.destino||'—').toString().toUpperCase()}</div>
       <div><strong>PROGRAMA:</strong> ${(g.programa||'—').toString().toUpperCase()}</div>
@@ -4974,7 +6006,7 @@ async function renderGastos(g, pane, paneRef){
       await addDoc(collection(db,'coordinadores',coordId,'gastos'),{
         asunto, moneda, valor, imgUrl, imgPath,
         grupoId:g.id, numeroNegocio:g.numeroNegocio, identificador:g.identificador||null,
-        grupoNombre:g.nombreGrupo||g.aliasGrupo||g.id, destino:g.destino||null, programa:g.programa||null,
+        grupoNombre:nombreOperativoGrupo(g), destino:g.destino||null, programa:g.programa||null,
         fechaInicio:g.fechaInicio||null, fechaFin:g.fechaFin||null,
         byUid: state.user.uid, byEmail:(state.user.email||'').toLowerCase(),
         createdAt: serverTimestamp()
