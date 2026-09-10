@@ -4870,40 +4870,40 @@ async function renderOneGroup(
       >
         RESUMEN
       </button>
-  
-      <button
-        id="tabItin"
-        class="btn sec"
-      >
-        ITINERARIO
-      </button>
-  
-      <button
-        id="tabFin"
-        class="btn sec"
-      >
-        FINANZAS
-      </button>
-  
-      <button
-        id="tabDocs"
-        class="btn sec"
-      >
-        DOCUMENTOS
-      </button>
-  
+    
       <button
         id="tabNomina"
         class="btn sec"
       >
         NÓMINA
       </button>
-  
+    
+      <button
+        id="tabDocs"
+        class="btn sec"
+      >
+        DOCUMENTOS
+      </button>
+    
+      <button
+        id="tabItin"
+        class="btn sec"
+      >
+        ITINERARIO
+      </button>
+    
       <button
         id="tabEncuesta"
         class="btn sec"
       >
         ENCUESTA
+      </button>
+    
+      <button
+        id="tabFin"
+        class="btn sec"
+      >
+        FINANZAS
       </button>
     </div>
   
