@@ -586,6 +586,70 @@
           repeat(6, minmax(0, 1fr));
       }
     }
+
+    .group-tabs .btn.active {
+      color: #fff;
+      background: var(--rt-blue);
+      border-color: var(--rt-navy-dark);
+    }
+    
+    .nfc-credential {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .7rem;
+      margin-top: .35rem;
+    }
+    
+    .nfc-credential strong {
+      min-width: 0;
+      color: var(--rt-navy);
+      font-size: clamp(1.15rem, 5vw, 1.5rem);
+      overflow-wrap: anywhere;
+    }
+    
+    .nfc-credential .btn {
+      flex: 0 0 auto;
+    }
+    
+    .nfc-warning {
+      padding: .75rem;
+      color: var(--warning);
+      background: var(--warning-soft);
+      border: 1px solid
+        rgba(138, 90, 0, .25);
+      border-radius: 10px;
+    }
+    
+    .nfc-actions {
+      grid-template-columns: 1fr;
+    }
+    
+    #btnOpenNfc {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+    }
+    
+    @media (min-width: 620px) {
+      .nfc-access-grid {
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+      }
+    
+      .nfc-actions {
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+      }
+    }
+    
+    @media (min-width: 1000px) {
+      .group-tabs {
+        grid-template-columns:
+          repeat(7, minmax(0, 1fr));
+      }
+    }
   </style>
 </head>
 <body>
