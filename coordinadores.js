@@ -2232,51 +2232,53 @@ async function loadGruposForCoordinador(
       .padStart(2, '0')
   ].join('-');
 
-  const futuros = wanted
-    .filter(
-      grupo =>
-        (
-          grupo.fechaInicio ||
-          ''
-        ) >= hoyISO
-    )
-    .sort(
-      (a, b) =>
-        (
-          a.fechaInicio ||
-          '9999-12-31'
-        ).localeCompare(
-          b.fechaInicio ||
-          '9999-12-31'
-        )
-    );
-
-  const pasados = wanted
-    .filter(
-      grupo =>
-        (
-          grupo.fechaInicio ||
-          ''
-        ) < hoyISO
-    )
-    .sort(
-      (a, b) =>
-        (
-          b.fechaInicio ||
-          ''
-        ).localeCompare(
-          a.fechaInicio ||
-          ''
-        )
-    );
-
   state.grupos =
     wanted;
-
-  state.ordenados = [
-    ...futuros,
-    ...pasados
-  ];
+  
+  state.ordenados =
+    wanted
+      .slice()
+      .sort(
+        (a, b) => {
+          const inicioA =
+            toISO(
+              a.fechaInicio
+            ) ||
+            "9999-12-31";
+  
+          const inicioB =
+            toISO(
+              b.fechaInicio
+            ) ||
+            "9999-12-31";
+  
+          const porInicio =
+            inicioA.localeCompare(
+              inicioB
+            );
+  
+          if (porInicio !== 0) {
+            return porInicio;
+          }
+  
+          return String(
+            a.numeroNegocio ||
+            a.id ||
+            ""
+          ).localeCompare(
+            String(
+              b.numeroNegocio ||
+              b.id ||
+              ""
+            ),
+            "es",
+            {
+              numeric:
+                true
+            }
+          );
+        }
+      );
 
   state.filter = {
     type: 'all',
@@ -2286,7 +2288,6 @@ async function loadGruposForCoordinador(
   state.groupQ = '';
 
   renderStatsFiltered();
-  renderNavBar();
 
   if (!state.ordenados.length) {
     state.idx = 0;
@@ -2339,16 +2340,23 @@ async function loadGruposForCoordinador(
       idx = byId;
     }
   }
-  state.idx = Math.max(
-    0,
-    Math.min(
-      idx,
-      state.ordenados.length - 1
-    )
-  );
-
+  state.idx =
+    Math.max(
+      0,
+      Math.min(
+        idx,
+        state.ordenados.length - 1
+      )
+    );
+  
+  // El selector se construye después de conocer
+  // el índice definitivo.
+  renderNavBar();
+  
   let target =
-    state.ordenados[state.idx];
+    state.ordenados[
+      state.idx
+    ];
 
   target =
     await ensureGrupoDetalleLoaded(
@@ -2966,7 +2974,7 @@ async function preparePrintActaFinanzas(g, snap){
 }
 
 const URL_SEGUIMIENTO_ENCUESTA =
-  "https://southamerica-west1-sist-op-rt.cloudfunctions.net/obtenerSeguimientoEncuestaCoordinador";
+  "https://obtenergestionencuestaviaje-r3llfis4wa-tl.a.run.app";
 
 function escapePortalHTML(
   value = ""
@@ -4257,6 +4265,153 @@ async function renderDocumentosViaje(
   }
 }
 
+async function buscarGrupoVentasParaNomina(
+  g
+) {
+  const numeroTexto =
+    String(
+      g.numeroNegocio ||
+      ""
+    ).trim();
+
+  const numeroNumerico =
+    Number(
+      numeroTexto
+    );
+
+  if (!numeroTexto) {
+    return null;
+  }
+
+  const condiciones = [
+    [
+      "numeroNegocio",
+      numeroTexto
+    ],
+
+    [
+      "negocio_id",
+      numeroTexto
+    ]
+  ];
+
+  if (
+    Number.isFinite(
+      numeroNumerico
+    )
+  ) {
+    condiciones.push(
+      [
+        "numeroNegocio",
+        numeroNumerico
+      ],
+
+      [
+        "negocio_id",
+        numeroNumerico
+      ]
+    );
+  }
+
+  const encontrados =
+    new Map();
+
+  for (
+    const [
+      campo,
+      valor
+    ] of condiciones
+  ) {
+    try {
+      const snapshot =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "ventas_cotizaciones"
+            ),
+
+            where(
+              campo,
+              "==",
+              valor
+            ),
+
+            limit(10)
+          )
+        );
+
+      snapshot.docs.forEach(
+        documento => {
+          encontrados.set(
+            documento.id,
+            {
+              id:
+                documento.id,
+
+              ...documento.data()
+            }
+          );
+        }
+      );
+    } catch (error) {
+      console.warn(
+        "[NÓMINA] Consulta no disponible",
+        campo,
+        valor,
+        error
+      );
+    }
+  }
+
+  const candidatos = [
+    ...encontrados.values()
+  ];
+
+  const anoViaje =
+    Number(
+      g.anoViaje ||
+      0
+    );
+
+  const identificador =
+    String(
+      g.identificador ||
+      ""
+    ).trim();
+
+  return (
+    candidatos.find(
+      item =>
+        Number(
+          item.anoViaje ||
+          0
+        ) ===
+          anoViaje &&
+        (
+          !identificador ||
+          String(
+            item.identificador ||
+            ""
+          ).trim() ===
+            identificador
+        )
+    ) ||
+
+    candidatos.find(
+      item =>
+        Number(
+          item.anoViaje ||
+          0
+        ) ===
+        anoViaje
+    ) ||
+
+    candidatos[0] ||
+    null
+  );
+}
+
 async function renderNominaCoordinador(
   g,
   pane,
@@ -4293,72 +4448,10 @@ async function renderNominaCoordinador(
         : null;
 
     if (!data) {
-      let ventasSnap =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "ventas_cotizaciones"
-            ),
-            where(
-              "numeroNegocio",
-              "==",
-              String(
-                g.numeroNegocio ||
-                ""
-              )
-            ),
-            limit(10)
-          )
-        );
-
-      if (
-        ventasSnap.empty
-      ) {
-        ventasSnap =
-          await getDocs(
-            query(
-              collection(
-                db,
-                "ventas_cotizaciones"
-              ),
-              where(
-                "negocio_id",
-                "==",
-                String(
-                  g.numeroNegocio ||
-                  ""
-                )
-              ),
-              limit(10)
-            )
-          );
-      }
-
-      const candidatos =
-        ventasSnap.docs.map(
-          documento => ({
-            id:
-              documento.id,
-
-            ...documento.data()
-          })
-        );
-
       const grupoVentas =
-        candidatos.find(
-          item =>
-            Number(
-              item.anoViaje ||
-              0
-            ) ===
-            Number(
-              g.anoViaje ||
-              0
-            )
-        ) ||
-        candidatos[0] ||
-        null;
+        await buscarGrupoVentasParaNomina(
+          g
+        );
 
       if (!grupoVentas) {
         throw new Error(
