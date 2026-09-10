@@ -3092,6 +3092,9 @@ async function postSeguimientoEncuesta(
 
         body:
           JSON.stringify({
+            modo:
+              "seguimiento_coordinador",
+        
             grupoDocId
           }),
 
