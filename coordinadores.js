@@ -727,6 +727,9 @@ const state = {
     gruposDetalle:
       new Map(),
 
+    gruposVentas:
+      new Map(),
+
     tasas:null,
     hoteles:{ loaded:false, byId:new Map(), bySlug:new Map(), all:[] },
     documentosViaje:
@@ -3131,6 +3134,334 @@ async function postSeguimientoEncuesta(
   return data;
 }
 
+async function renderAccesoNFC(
+  g,
+  pane,
+  {
+    force = false
+  } = {}
+) {
+  if (!g || !pane) {
+    return;
+  }
+
+  pane.innerHTML = `
+    <div class="act">
+      <h4>NFC / PULSERAS</h4>
+
+      <div class="muted">
+        CARGANDO DATOS DE ACCESO…
+      </div>
+    </div>
+  `;
+
+  try {
+    const grupoVentas =
+      await buscarGrupoVentasParaNomina(
+        g,
+        {
+          force
+        }
+      );
+
+    if (!grupoVentas) {
+      throw new Error(
+        "NO SE ENCONTRÓ EL GRUPO CORRESPONDIENTE EN VENTAS."
+      );
+    }
+
+    const usuario =
+      String(
+        grupoVentas.idGrupo ||
+        grupoVentas.id ||
+        ""
+      )
+        .trim()
+        .replace(
+          /\D/g,
+          ""
+        );
+
+    const claveRaw =
+      grupoVentas.numeroNegocio ??
+      grupoVentas.negocio_id ??
+      g.numeroNegocio ??
+      "";
+
+    const clave =
+      Array.isArray(
+        claveRaw
+      )
+        ? claveRaw
+            .map(
+              value =>
+                String(
+                  value
+                ).trim()
+            )
+            .filter(Boolean)
+            .join(" ")
+        : String(
+            claveRaw
+          ).trim();
+
+    const grupoNombre =
+      nombreOperativoGrupo(g) ||
+      g.nombreGrupo ||
+      g.aliasGrupo ||
+      "";
+
+    if (!usuario) {
+      throw new Error(
+        "EL GRUPO NO TIENE UN ID DE ACCESO VÁLIDO."
+      );
+    }
+
+    if (!clave) {
+      throw new Error(
+        "EL GRUPO NO TIENE NÚMERO DE NEGOCIO."
+      );
+    }
+
+    const mensaje =
+      construirMensajeAccesoNFC({
+        grupoNombre:
+          String(
+            grupoNombre
+          ).toUpperCase(),
+
+        usuario,
+
+        clave
+      });
+
+    pane.innerHTML = `
+      <div class="act">
+        <h4>
+          LECTOR DE PULSERAS NFC
+        </h4>
+
+        <div class="meta">
+          ACCESO AL SISTEMA DE FICHAS MÉDICAS
+          Y CONTROL DE ASISTENCIA.
+        </div>
+
+        <div
+          class="nfc-access-grid"
+          style="
+            display:grid;
+            gap:.6rem;
+            margin-top:.8rem;
+          "
+        >
+          <div class="card">
+            <div class="lab">
+              USUARIO / ID GRUPO
+            </div>
+
+            <div class="nfc-credential">
+              <strong id="nfcUsuario">
+                ${escapePortalHTML(
+                  usuario
+                )}
+              </strong>
+
+              <button
+                id="btnCopyNfcUsuario"
+                class="btn sec"
+                type="button"
+              >
+                COPIAR
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="lab">
+              CLAVE / N° NEGOCIO
+            </div>
+
+            <div class="nfc-credential">
+              <strong id="nfcClave">
+                ${escapePortalHTML(
+                  clave
+                )}
+              </strong>
+
+              <button
+                id="btnCopyNfcClave"
+                class="btn sec"
+                type="button"
+              >
+                COPIAR
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          class="nfc-warning"
+          style="margin-top:.8rem"
+        >
+          <strong>
+            ACCESO CONFIDENCIAL
+          </strong>
+
+          <div class="meta">
+            COMPARTIR SOLAMENTE CON COORDINADORES,
+            PROFESORES O ADULTOS RESPONSABLES
+            AUTORIZADOS DEL VIAJE.
+          </div>
+        </div>
+
+        <div
+          class="nfc-actions"
+          style="
+            display:grid;
+            gap:.5rem;
+            margin-top:.8rem;
+          "
+        >
+          <a
+            id="btnOpenNfc"
+            class="btn ok"
+            href="https://comunicaciones-raitrai.vercel.app/"
+            target="_blank"
+            rel="noopener"
+          >
+            ABRIR LECTOR NFC
+          </a>
+
+          <button
+            id="btnCopyNfcCompleto"
+            class="btn sec"
+            type="button"
+          >
+            COPIAR ACCESO COMPLETO
+          </button>
+
+          <button
+            id="btnShareNfc"
+            class="btn sec"
+            type="button"
+          >
+            COMPARTIR ACCESO
+          </button>
+
+          <button
+            id="btnRefreshNfc"
+            class="btn sec"
+            type="button"
+          >
+            ACTUALIZAR DATOS
+          </button>
+        </div>
+      </div>
+    `;
+
+    pane
+      .querySelector(
+        "#btnCopyNfcUsuario"
+      )
+      .onclick =
+        () =>
+          copiarTextoPortal(
+            usuario,
+            "USUARIO COPIADO"
+          );
+
+    pane
+      .querySelector(
+        "#btnCopyNfcClave"
+      )
+      .onclick =
+        () =>
+          copiarTextoPortal(
+            clave,
+            "CLAVE COPIADA"
+          );
+
+    pane
+      .querySelector(
+        "#btnCopyNfcCompleto"
+      )
+      .onclick =
+        () =>
+          copiarTextoPortal(
+            mensaje,
+            "ACCESO COPIADO"
+          );
+
+    pane
+      .querySelector(
+        "#btnShareNfc"
+      )
+      .onclick =
+        () =>
+          compartirAccesoNFC(
+            mensaje
+          );
+
+    pane
+      .querySelector(
+        "#btnRefreshNfc"
+      )
+      .onclick =
+        () =>
+          renderAccesoNFC(
+            g,
+            pane,
+            {
+              force: true
+            }
+          );
+  } catch (error) {
+    console.error(
+      "[NFC PULSERAS]",
+      error
+    );
+
+    pane.innerHTML = `
+      <div class="act">
+        <h4>NFC / PULSERAS</h4>
+
+        <div class="muted">
+          ${escapePortalHTML(
+            error.message ||
+            "NO SE PUDIERON CARGAR LOS DATOS DE ACCESO."
+          )}
+        </div>
+
+        <button
+          id="btnRetryNfc"
+          class="btn sec"
+          style="
+            width:100%;
+            margin-top:.7rem;
+          "
+          type="button"
+        >
+          REINTENTAR
+        </button>
+      </div>
+    `;
+
+    pane
+      .querySelector(
+        "#btnRetryNfc"
+      )
+      .onclick =
+        () =>
+          renderAccesoNFC(
+            g,
+            pane,
+            {
+              force: true
+            }
+          );
+  }
+}
+
 async function renderEncuestaCoordinador(
   g,
   pane,
@@ -4391,8 +4722,33 @@ async function renderDocumentosViaje(
 }
 
 async function buscarGrupoVentasParaNomina(
-  g
+  g,
+  {
+    force = false
+  } = {}
 ) {
+  if (!g) {
+    return null;
+  }
+
+  const cacheKey =
+    String(
+      g.id ||
+      g.numeroNegocio ||
+      ""
+    );
+
+  if (
+    !force &&
+    state.cache
+      .gruposVentas
+      .has(cacheKey)
+  ) {
+    return state.cache
+      .gruposVentas
+      .get(cacheKey);
+  }
+
   const numeroTexto =
     String(
       g.numeroNegocio ||
@@ -4481,7 +4837,7 @@ async function buscarGrupoVentasParaNomina(
       );
     } catch (error) {
       console.warn(
-        "[NÓMINA] Consulta no disponible",
+        "[VENTAS] Consulta no disponible",
         campo,
         valor,
         error
@@ -4505,7 +4861,7 @@ async function buscarGrupoVentasParaNomina(
       ""
     ).trim();
 
-  return (
+  const grupoVentas =
     candidatos.find(
       item =>
         Number(
@@ -4533,7 +4889,117 @@ async function buscarGrupoVentasParaNomina(
     ) ||
 
     candidatos[0] ||
-    null
+    null;
+
+  if (grupoVentas) {
+    state.cache
+      .gruposVentas
+      .set(
+        cacheKey,
+        grupoVentas
+      );
+  }
+
+  return grupoVentas;
+}
+
+async function copiarTextoPortal(
+  texto,
+  mensaje = "COPIADO"
+) {
+  const valor =
+    String(
+      texto ||
+      ""
+    ).trim();
+
+  if (!valor) {
+    return false;
+  }
+
+  try {
+    await navigator.clipboard
+      .writeText(valor);
+
+    showFlash(
+      mensaje,
+      "ok"
+    );
+
+    return true;
+  } catch (_) {
+    window.prompt(
+      "COPIA EL TEXTO:",
+      valor
+    );
+
+    return false;
+  }
+}
+
+function construirMensajeAccesoNFC({
+  grupoNombre,
+  usuario,
+  clave
+}) {
+  return [
+    "ACCESO COMUNICACIONES RAI TRAI",
+    "",
+    grupoNombre
+      ? `GRUPO: ${grupoNombre}`
+      : "",
+
+    `USUARIO / ID GRUPO: ${usuario}`,
+    `CLAVE / N° NEGOCIO: ${clave}`,
+    "",
+    "INGRESAR EN:",
+    "https://comunicaciones-raitrai.vercel.app/",
+    "",
+    "ACCESO CONFIDENCIAL. COMPARTIR SOLO CON ADULTOS RESPONSABLES AUTORIZADOS DEL VIAJE."
+  ]
+    .filter(
+      linea =>
+        linea !== null &&
+        linea !== undefined
+    )
+    .join("\n");
+}
+
+async function compartirAccesoNFC(
+  mensaje
+) {
+  if (
+    navigator.share
+  ) {
+    try {
+      await navigator.share({
+        title:
+          "ACCESO COMUNICACIONES RAI TRAI",
+
+        text:
+          mensaje
+      });
+
+      return;
+    } catch (error) {
+      if (
+        error?.name ===
+        "AbortError"
+      ) {
+        return;
+      }
+    }
+  }
+
+  const whatsappUrl =
+    `https://wa.me/?text=${encodeURIComponent(
+      mensaje
+    )}`;
+
+  window.open(
+    whatsappUrl,
+    "_blank",
+    "noopener"
   );
 }
 
@@ -4995,35 +5461,42 @@ async function renderOneGroup(
       >
         RESUMEN
       </button>
-    
+  
       <button
         id="tabNomina"
         class="btn sec"
       >
         NÓMINA
       </button>
-    
+  
       <button
         id="tabDocs"
         class="btn sec"
       >
         DOCUMENTOS
       </button>
-    
+  
       <button
         id="tabItin"
         class="btn sec"
       >
         ITINERARIO
       </button>
-    
+  
+      <button
+        id="tabNfc"
+        class="btn sec"
+      >
+        NFC-PULSERAS
+      </button>
+  
       <button
         id="tabEncuesta"
         class="btn sec"
       >
         ENCUESTA
       </button>
-    
+  
       <button
         id="tabFin"
         class="btn sec"
@@ -5035,12 +5508,7 @@ async function renderOneGroup(
     <div id="paneResumen"></div>
   
     <div
-      id="paneItin"
-      style="display:none"
-    ></div>
-  
-    <div
-      id="paneFin"
+      id="paneNomina"
       style="display:none"
     ></div>
   
@@ -5050,12 +5518,22 @@ async function renderOneGroup(
     ></div>
   
     <div
-      id="paneNomina"
+      id="paneItin"
+      style="display:none"
+    ></div>
+  
+    <div
+      id="paneNfc"
       style="display:none"
     ></div>
   
     <div
       id="paneEncuesta"
+      style="display:none"
+    ></div>
+  
+    <div
+      id="paneFin"
       style="display:none"
     ></div>
   `;
@@ -5064,75 +5542,128 @@ async function renderOneGroup(
     tabs
   );
   
-  const paneResumen =
-    tabs.querySelector(
-      "#paneResumen"
-    );
-  
-  const paneItin =
-    tabs.querySelector(
-      "#paneItin"
-    );
-  
-  const paneFin =
-    tabs.querySelector(
-      "#paneFin"
-    );
-  
-  const paneDocs =
-    tabs.querySelector(
-      "#paneDocs"
-    );
-  
-  const paneNomina =
-    tabs.querySelector(
-      "#paneNomina"
-    );
-  
-  const paneEncuesta =
-    tabs.querySelector(
-      "#paneEncuesta"
-    );
-  
-  const btnResumen =
-    tabs.querySelector(
-      "#tabResumen"
-    );
-  
-  const btnItin =
-    tabs.querySelector(
-      "#tabItin"
-    );
-  
-  const btnFin =
-    tabs.querySelector(
-      "#tabFin"
-    );
-  
-  const btnDocs =
-    tabs.querySelector(
-      "#tabDocs"
-    );
-  
-  const btnNomina =
-    tabs.querySelector(
-      "#tabNomina"
-    );
-  
-  const btnEncuesta =
-    tabs.querySelector(
-      "#tabEncuesta"
-    );
-  
-  const lazyLoaded = {
-    docs:
-      false,
+  const panes = {
+    resumen:
+      tabs.querySelector(
+        "#paneResumen"
+      ),
   
     nomina:
-      false,
+      tabs.querySelector(
+        "#paneNomina"
+      ),
+  
+    docs:
+      tabs.querySelector(
+        "#paneDocs"
+      ),
+  
+    itin:
+      tabs.querySelector(
+        "#paneItin"
+      ),
+  
+    nfc:
+      tabs.querySelector(
+        "#paneNfc"
+      ),
   
     encuesta:
-      false
+      tabs.querySelector(
+        "#paneEncuesta"
+      ),
+  
+    fin:
+      tabs.querySelector(
+        "#paneFin"
+      )
+  };
+  
+  const buttons = {
+    resumen:
+      tabs.querySelector(
+        "#tabResumen"
+      ),
+  
+    nomina:
+      tabs.querySelector(
+        "#tabNomina"
+      ),
+  
+    docs:
+      tabs.querySelector(
+        "#tabDocs"
+      ),
+  
+    itin:
+      tabs.querySelector(
+        "#tabItin"
+      ),
+  
+    nfc:
+      tabs.querySelector(
+        "#tabNfc"
+      ),
+  
+    encuesta:
+      tabs.querySelector(
+        "#tabEncuesta"
+      ),
+  
+    fin:
+      tabs.querySelector(
+        "#tabFin"
+      )
+  };
+  
+  // Alias para conservar el código existente.
+  const paneResumen =
+    panes.resumen;
+  
+  const paneItin =
+    panes.itin;
+  
+  const paneFin =
+    panes.fin;
+  
+  const paneDocs =
+    panes.docs;
+  
+  const paneNomina =
+    panes.nomina;
+  
+  const paneNfc =
+    panes.nfc;
+  
+  const paneEncuesta =
+    panes.encuesta;
+  
+  const btnResumen =
+    buttons.resumen;
+  
+  const btnItin =
+    buttons.itin;
+  
+  const btnFin =
+    buttons.fin;
+  
+  const btnDocs =
+    buttons.docs;
+  
+  const btnNomina =
+    buttons.nomina;
+  
+  const btnNfc =
+    buttons.nfc;
+  
+  const btnEncuesta =
+    buttons.encuesta;
+  
+  const lazyLoaded = {
+    docs: false,
+    nomina: false,
+    nfc: false,
+    encuesta: false
   };
   
   const setTabLabel =
@@ -5142,60 +5673,59 @@ async function renderOneGroup(
       n
     ) => {
       const q =
-        (
+        String(
           state.groupQ ||
           ""
         ).trim();
   
       btn.textContent =
-        q &&
-        n > 0
+        q && n > 0
           ? `${base} (${n})`
           : base;
     };
   
   const show =
-    async w => {
-      state.lastTab =
-        w ||
+    async tabName => {
+      const selected =
+        tabName ||
         "resumen";
   
-      paneResumen.style.display =
-        w === "resumen"
-          ? ""
-          : "none";
+      state.lastTab =
+        selected;
   
-      paneItin.style.display =
-        w === "itin"
-          ? ""
-          : "none";
+      Object.entries(
+        panes
+      ).forEach(
+        ([
+          nombre,
+          panel
+        ]) => {
+          panel.style.display =
+            nombre === selected
+              ? ""
+              : "none";
+        }
+      );
   
-      paneFin.style.display =
-        w === "fin"
-          ? ""
-          : "none";
-  
-      paneDocs.style.display =
-        w === "docs"
-          ? ""
-          : "none";
-  
-      paneNomina.style.display =
-        w === "nomina"
-          ? ""
-          : "none";
-  
-      paneEncuesta.style.display =
-        w === "encuesta"
-          ? ""
-          : "none";
+      Object.entries(
+        buttons
+      ).forEach(
+        ([
+          nombre,
+          button
+        ]) => {
+          button.classList.toggle(
+            "active",
+            nombre === selected
+          );
+        }
+      );
   
       if (
-        w === "docs" &&
+        selected === "docs" &&
         !lazyLoaded.docs
       ) {
-        lazyLoaded.docs =
-          true;
+        lazyLoaded.docs = true;
   
         await renderDocumentosViaje(
           g,
@@ -5204,11 +5734,10 @@ async function renderOneGroup(
       }
   
       if (
-        w === "nomina" &&
+        selected === "nomina" &&
         !lazyLoaded.nomina
       ) {
-        lazyLoaded.nomina =
-          true;
+        lazyLoaded.nomina = true;
   
         await renderNominaCoordinador(
           g,
@@ -5217,11 +5746,22 @@ async function renderOneGroup(
       }
   
       if (
-        w === "encuesta" &&
+        selected === "nfc" &&
+        !lazyLoaded.nfc
+      ) {
+        lazyLoaded.nfc = true;
+  
+        await renderAccesoNFC(
+          g,
+          paneNfc
+        );
+      }
+  
+      if (
+        selected === "encuesta" &&
         !lazyLoaded.encuesta
       ) {
-        lazyLoaded.encuesta =
-          true;
+        lazyLoaded.encuesta = true;
   
         await renderEncuestaCoordinador(
           g,
@@ -5230,41 +5770,37 @@ async function renderOneGroup(
       }
     };
   
-  btnResumen.onclick =
-    () =>
-      show(
-        "resumen"
-      );
+  Object.entries(
+    buttons
+  ).forEach(
+    ([
+      nombre,
+      button
+    ]) => {
+      button.onclick =
+        () =>
+          show(nombre);
+    }
+  );
+
+  const resumenHits =
+    await renderResumen(
+      g,
+      paneResumen
+    );
   
-  btnItin.onclick =
-    () =>
-      show(
-        "itin"
-      );
+  const itinHits =
+    renderItinerario(
+      g,
+      paneItin,
+      preferDate
+    );
   
-  btnFin.onclick =
-    () =>
-      show(
-        "fin"
-      );
-  
-  btnDocs.onclick =
-    () =>
-      show(
-        "docs"
-      );
-  
-  btnNomina.onclick =
-    () =>
-      show(
-        "nomina"
-      );
-  
-  btnEncuesta.onclick =
-    () =>
-      show(
-        "encuesta"
-      );
+  const finHits =
+    await renderFinanzas(
+      g,
+      paneFin
+    );
 
 
   // Render y contadores
