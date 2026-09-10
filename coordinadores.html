@@ -491,6 +491,43 @@
         color: #000 !important;
       }
     }
+
+    /* ===== PESTAÑAS DEL GRUPO ===== */
+    
+    .group-tabs {
+      display: grid;
+      grid-template-columns:
+        repeat(2, minmax(0, 1fr));
+      gap: .5rem;
+      margin: .6rem 0;
+    }
+    
+    .group-tabs .btn {
+      width: 100%;
+      min-width: 0;
+      padding-inline: .45rem;
+    }
+    
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: .65rem;
+      background: rgba(15, 26, 56, .72);
+    }
+    
+    @media (min-width: 720px) {
+      .group-tabs {
+        grid-template-columns:
+          repeat(3, minmax(0, 1fr));
+      }
+    }
+    
+    @media (min-width: 1000px) {
+      .group-tabs {
+        grid-template-columns:
+          repeat(6, minmax(0, 1fr));
+      }
+    }
   </style>
 </head>
 <body>
