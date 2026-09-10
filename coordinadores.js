@@ -3135,25 +3135,20 @@ async function renderEncuestaCoordinador(
   g,
   pane,
   {
-    force =
-      false
+    force = false
   } = {}
 ) {
-  if (
-    !g ||
-    !pane
-  ) {
+  if (!g || !pane) {
     return;
   }
 
   const cacheKey =
-    String(
-      g.id
-    );
+    String(g.id);
 
   pane.innerHTML = `
     <div class="act">
       <h4>ENCUESTA DEL VIAJE</h4>
+
       <div class="muted">
         CARGANDO SEGUIMIENTO…
       </div>
@@ -3182,10 +3177,7 @@ async function renderEncuestaCoordinador(
         );
     }
 
-    if (
-      data.existe !==
-      true
-    ) {
+    if (data.existe !== true) {
       pane.innerHTML = `
         <div class="act">
           <h4>ENCUESTA DEL VIAJE</h4>
@@ -3215,8 +3207,7 @@ async function renderEncuestaCoordinador(
               g,
               pane,
               {
-                force:
-                  true
+                force: true
               }
             );
 
@@ -3224,34 +3215,33 @@ async function renderEncuestaCoordinador(
     }
 
     const encuesta =
-      data.encuesta ||
-      {};
+      data.encuesta || {};
 
     const seguimiento =
-      data.seguimiento ||
-      {};
+      data.seguimiento || {};
 
     const respondieron =
       Array.isArray(
-        seguimiento
-          .respondieronLista
+        seguimiento.respondieronLista
       )
-        ? seguimiento
-            .respondieronLista
+        ? seguimiento.respondieronLista
         : [];
 
     const pendientes =
       Array.isArray(
-        seguimiento
-          .pendientesLista
+        seguimiento.pendientesLista
       )
-        ? seguimiento
-            .pendientesLista
+        ? seguimiento.pendientesLista
         : [];
 
     const preguntas =
-      encuesta.preguntas ||
-      {};
+      encuesta.preguntas || {};
+
+    const tieneLink =
+      !!String(
+        encuesta.linkPublico ||
+        ""
+      ).trim();
 
     pane.innerHTML = `
       <div class="act">
@@ -3300,7 +3290,7 @@ async function renderEncuestaCoordinador(
             grid-template-columns:
               repeat(2,minmax(0,1fr));
             gap:.5rem;
-            margin-top:.8rem
+            margin-top:.8rem;
           "
         >
           <div class="card">
@@ -3310,8 +3300,7 @@ async function renderEncuestaCoordinador(
 
             <strong>
               ${Number(
-                seguimiento.total ||
-                0
+                seguimiento.total || 0
               )}
             </strong>
           </div>
@@ -3360,7 +3349,8 @@ async function renderEncuestaCoordinador(
           class="rowflex"
           style="
             gap:.5rem;
-            margin-top:.7rem
+            margin-top:.7rem;
+            flex-wrap:wrap;
           "
         >
           <button
@@ -3371,18 +3361,56 @@ async function renderEncuestaCoordinador(
           </button>
 
           ${
-            encuesta.linkPublico
+            tieneLink
               ? `
+                <a
+                  id="btnOpenEncuesta"
+                  class="btn sec"
+                  href="${escapePortalHTML(
+                    encuesta.linkPublico
+                  )}"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  ABRIR ENCUESTA
+                </a>
+
                 <button
                   id="btnCopyEncuesta"
                   class="btn ok"
                 >
                   COPIAR ENLACE
                 </button>
+
+                <button
+                  id="btnQrEncuesta"
+                  class="btn sec"
+                >
+                  MOSTRAR QR
+                </button>
               `
               : ""
           }
         </div>
+
+        ${
+          tieneLink
+            ? `
+              <div
+                id="encuestaQrBox"
+                class="encuesta-qr-box"
+                style="display:none"
+              >
+                <div id="encuestaQr"></div>
+
+                <div class="meta muted">
+                  ESCANEA ESTE CÓDIGO
+                  DESDE OTRO CELULAR
+                </div>
+              </div>
+            `
+            : ""
+        }
       </div>
 
       ${
@@ -3407,13 +3435,14 @@ async function renderEncuestaCoordinador(
       }
 
       <div class="act">
-        <h4>
-          SEGUIMIENTO
-        </h4>
+        <h4>SEGUIMIENTO</h4>
 
         <div
           class="rowflex"
-          style="gap:.5rem"
+          style="
+            gap:.5rem;
+            flex-wrap:wrap;
+          "
         >
           <button
             id="btnEncuestaPendientes"
@@ -3437,7 +3466,7 @@ async function renderEncuestaCoordinador(
           style="
             display:grid;
             gap:.45rem;
-            margin-top:.7rem
+            margin-top:.7rem;
           "
         ></div>
       </div>
@@ -3451,16 +3480,17 @@ async function renderEncuestaCoordinador(
           <div class="lab">
             GENERALES
           </div>
+
           <div>
             ${Number(
-              preguntas.generales ||
-              0
+              preguntas.generales || 0
             )}
           </div>
 
           <div class="lab">
             ACTIVIDADES
           </div>
+
           <div>
             ${Number(
               preguntas.actividades ||
@@ -3471,16 +3501,17 @@ async function renderEncuestaCoordinador(
           <div class="lab">
             HOTELES
           </div>
+
           <div>
             ${Number(
-              preguntas.hoteles ||
-              0
+              preguntas.hoteles || 0
             )}
           </div>
 
           <div class="lab">
-            BUSES/TRANSPORTE
+            BUSES EN DESTINO
           </div>
+
           <div>
             ${Number(
               preguntas.transportes ||
@@ -3491,6 +3522,7 @@ async function renderEncuestaCoordinador(
           <div class="lab">
             COORDINADORES
           </div>
+
           <div>
             ${Number(
               preguntas.coordinadores ||
@@ -3501,6 +3533,7 @@ async function renderEncuestaCoordinador(
           <div class="lab">
             ORGANIZACIÓN
           </div>
+
           <div>
             ${Number(
               preguntas.organizacion ||
@@ -3511,6 +3544,7 @@ async function renderEncuestaCoordinador(
           <div class="lab">
             ASISTENCIA MÉDICA
           </div>
+
           <div>
             ${
               preguntas.asistenciaMedica
@@ -3522,11 +3556,11 @@ async function renderEncuestaCoordinador(
           <div class="lab">
             TOTAL
           </div>
+
           <div>
             <strong>
               ${Number(
-                preguntas.total ||
-                0
+                preguntas.total || 0
               )}
             </strong>
           </div>
@@ -3539,51 +3573,50 @@ async function renderEncuestaCoordinador(
         "#encuestaPersonas"
       );
 
-    const pintarPersonas =
-      (
-        items,
-        respondidas
-      ) => {
-        if (!items.length) {
-          personas.innerHTML = `
-            <div class="muted">
-              SIN PERSONAS EN ESTA LISTA.
-            </div>
-          `;
+    function pintarPersonas(
+      items,
+      respondidas
+    ) {
+      if (!items.length) {
+        personas.innerHTML = `
+          <div class="muted">
+            SIN PERSONAS EN ESTA LISTA.
+          </div>
+        `;
 
-          return;
-        }
+        return;
+      }
 
-        personas.innerHTML =
-          items.map(
-            item => `
-              <div class="card">
-                <div>
-                  <strong>
-                    ${escapePortalHTML(
-                      item.nombre
-                    )}
-                  </strong>
-                </div>
-
-                <div class="meta muted">
-                  ${etiquetaTipoPasajero(
-                    item.tipoPasajero
+      personas.innerHTML =
+        items.map(
+          item => `
+            <div class="card">
+              <div>
+                <strong>
+                  ${escapePortalHTML(
+                    item.nombre
                   )}
-
-                  ${
-                    respondidas &&
-                    item.respondidoEn
-                      ? ` · ${fechaHoraPortal(
-                          item.respondidoEn
-                        )}`
-                      : ""
-                  }
-                </div>
+                </strong>
               </div>
-            `
-          ).join("");
-      };
+
+              <div class="meta muted">
+                ${etiquetaTipoPasajero(
+                  item.tipoPasajero
+                )}
+
+                ${
+                  respondidas &&
+                  item.respondidoEn
+                    ? ` · ${fechaHoraPortal(
+                        item.respondidoEn
+                      )}`
+                    : ""
+                }
+              </div>
+            </div>
+          `
+        ).join("");
+    }
 
     pane
       .querySelector(
@@ -3617,8 +3650,7 @@ async function renderEncuestaCoordinador(
             g,
             pane,
             {
-              force:
-                true
+              force: true
             }
           );
 
@@ -3631,8 +3663,7 @@ async function renderEncuestaCoordinador(
       btnCopy.onclick =
         async () => {
           try {
-            await navigator
-              .clipboard
+            await navigator.clipboard
               .writeText(
                 encuesta.linkPublico
               );
@@ -3650,7 +3681,99 @@ async function renderEncuestaCoordinador(
         };
     }
 
-    // Vista inicial prioritaria.
+    const btnQr =
+      pane.querySelector(
+        "#btnQrEncuesta"
+      );
+
+    const qrBox =
+      pane.querySelector(
+        "#encuestaQrBox"
+      );
+
+    const qrContainer =
+      pane.querySelector(
+        "#encuestaQr"
+      );
+
+    if (
+      btnQr &&
+      qrBox &&
+      qrContainer
+    ) {
+      let qrCreado = false;
+
+      btnQr.onclick =
+        () => {
+          const estaVisible =
+            qrBox.style.display !==
+            "none";
+
+          if (estaVisible) {
+            qrBox.style.display =
+              "none";
+
+            btnQr.textContent =
+              "MOSTRAR QR";
+
+            return;
+          }
+
+          qrBox.style.display =
+            "grid";
+
+          btnQr.textContent =
+            "OCULTAR QR";
+
+          if (qrCreado) {
+            return;
+          }
+
+          qrContainer.innerHTML =
+            "";
+
+          if (
+            typeof window.QRCode !==
+            "function"
+          ) {
+            qrContainer.innerHTML = `
+              <div class="muted">
+                NO SE PUDO CARGAR
+                EL GENERADOR QR.
+              </div>
+            `;
+
+            return;
+          }
+
+          new window.QRCode(
+            qrContainer,
+            {
+              text:
+                encuesta.linkPublico,
+
+              width: 220,
+
+              height: 220,
+
+              colorDark:
+                "#151c40",
+
+              colorLight:
+                "#ffffff",
+
+              correctLevel:
+                window.QRCode
+                  .CorrectLevel
+                  .H
+            }
+          );
+
+          qrCreado = true;
+        };
+    }
+
+    // Por defecto mostramos las personas pendientes.
     pintarPersonas(
       pendientes,
       false
@@ -3675,7 +3798,10 @@ async function renderEncuestaCoordinador(
         <button
           id="btnRetryEncuesta"
           class="btn sec"
-          style="width:100%;margin-top:.6rem"
+          style="
+            width:100%;
+            margin-top:.6rem;
+          "
         >
           REINTENTAR
         </button>
@@ -3692,8 +3818,7 @@ async function renderEncuestaCoordinador(
             g,
             pane,
             {
-              force:
-                true
+              force: true
             }
           );
   }
