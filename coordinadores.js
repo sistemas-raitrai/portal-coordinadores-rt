@@ -5783,6 +5783,7 @@ async function renderOneGroup(
     }
   );
 
+  // Render inicial de las pestañas principales.
   const resumenHits =
     await renderResumen(
       g,
@@ -5801,16 +5802,25 @@ async function renderOneGroup(
       g,
       paneFin
     );
-
-
-  // Render y contadores
-  const resumenHits = await renderResumen(g, paneResumen);
-  const itinHits    = renderItinerario(g, paneItin, preferDate);
-  const finHits     = await renderFinanzas(g, paneFin);   // 👈 NUEVO
-  setTabLabel(btnResumen, 'RESUMEN', resumenHits);
-  setTabLabel(btnItin,    'ITINERARIO', itinHits);
-  setTabLabel(btnFin,     'FINANZAS', finHits);
-
+  
+  // Contadores del buscador.
+  setTabLabel(
+    btnResumen,
+    "RESUMEN",
+    resumenHits
+  );
+  
+  setTabLabel(
+    btnItin,
+    "ITINERARIO",
+    itinHits
+  );
+  
+  setTabLabel(
+    btnFin,
+    "FINANZAS",
+    finHits
+  );
   // si viene desde una fecha (ej. click en día), priorizamos ITINERARIO
   // si no, usamos la última pestaña usada; fallback: RESUMEN
   const initialTab = preferDate ? 'itin' : (state.lastTab || 'resumen');
