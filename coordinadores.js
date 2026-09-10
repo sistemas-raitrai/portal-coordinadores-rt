@@ -2966,7 +2966,7 @@ async function preparePrintActaFinanzas(g, snap){
 }
 
 const URL_SEGUIMIENTO_ENCUESTA =
-  "https://obtenerseguimientoencuestacoordinador-r3llfis4wa-tl.a.run.app";
+  "https://southamerica-west1-sist-op-rt.cloudfunctions.net/obtenerSeguimientoEncuestaCoordinador";
 
 function escapePortalHTML(
   value = ""
