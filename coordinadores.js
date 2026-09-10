@@ -728,7 +728,15 @@ const state = {
       new Map(),
 
     tasas:null,
-    hoteles:{ loaded:false, byId:new Map(), bySlug:new Map(), all:[] }
+    hoteles:{ loaded:false, byId:new Map(), bySlug:new Map(), all:[] },
+    documentosViaje:
+      new Map(),
+    
+    nominasViaje:
+      new Map(),
+    
+    encuestasViaje:
+      new Map()
   }
 };
 
@@ -762,6 +770,67 @@ function enforceOrder(){
   });
 }
 
+function getTodayLocalISO() {
+  const ahora =
+    new Date();
+
+  const year =
+    ahora.getFullYear();
+
+  const month =
+    String(
+      ahora.getMonth() + 1
+    ).padStart(
+      2,
+      "0"
+    );
+
+  const day =
+    String(
+      ahora.getDate()
+    ).padStart(
+      2,
+      "0"
+    );
+
+  return `${year}-${month}-${day}`;
+}
+
+function getIndiceProximoViaje(
+  grupos = []
+) {
+  if (
+    !Array.isArray(grupos) ||
+    !grupos.length
+  ) {
+    return 0;
+  }
+
+  const hoy =
+    getTodayLocalISO();
+
+  const indice =
+    grupos.findIndex(
+      grupo => {
+        const fechaFin =
+          toISO(
+            grupo.fechaFin
+          );
+
+        return (
+          fechaFin &&
+          fechaFin >= hoy
+        );
+      }
+    );
+
+  return indice >= 0
+    ? indice
+    : Math.max(
+        0,
+        grupos.length - 1
+      );
+}
 
 function showFlash(msg, kind='ok'){
   const colors = {
@@ -2240,52 +2309,36 @@ async function loadGruposForCoordinador(
     f: qsF
   } = parseQS();
 
-  let idx = 0;
-
+  let idx =
+    getIndiceProximoViaje(
+      state.ordenados
+    );
+  
   if (qsG) {
     const byNum =
       state.ordenados.findIndex(
         grupo =>
           String(
             grupo.numeroNegocio
-          ) === qsG
+          ) ===
+          qsG
       );
-
+  
     const byId =
       state.ordenados.findIndex(
         grupo =>
-          String(grupo.id) === qsG
+          String(
+            grupo.id
+          ) ===
+          qsG
       );
-
-    idx =
-      byNum >= 0
-        ? byNum
-        : (
-            byId >= 0
-              ? byId
-              : 0
-          );
-  } else {
-    const last =
-      localStorage.getItem(
-        'rt_last_group'
-      );
-
-    if (last) {
-      const encontrado =
-        state.ordenados.findIndex(
-          grupo =>
-            grupo.id === last ||
-            grupo.numeroNegocio ===
-              last
-        );
-
-      if (encontrado >= 0) {
-        idx = encontrado;
-      }
+  
+    if (byNum >= 0) {
+      idx = byNum;
+    } else if (byId >= 0) {
+      idx = byId;
     }
   }
-
   state.idx = Math.max(
     0,
     Math.min(
@@ -2912,7 +2965,1675 @@ async function preparePrintActaFinanzas(g, snap){
   if ($doc) $doc.textContent = lines.join('\n');
 }
 
+const URL_SEGUIMIENTO_ENCUESTA =
+  "https://obtenerseguimientoencuestacoordinador-r3llfis4wa-tl.a.run.app";
 
+function escapePortalHTML(
+  value = ""
+) {
+  return String(
+    value ?? ""
+  )
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    )
+    .replace(
+      /'/g,
+      "&#039;"
+    );
+}
+
+function fechaHoraPortal(
+  value
+) {
+  if (!value) {
+    return "—";
+  }
+
+  try {
+    const fecha =
+      new Date(value);
+
+    if (
+      Number.isNaN(
+        fecha.getTime()
+      )
+    ) {
+      return "—";
+    }
+
+    return fecha
+      .toLocaleString(
+        "es-CL",
+        {
+          dateStyle:
+            "short",
+
+          timeStyle:
+            "short",
+
+          hour12:
+            false
+        }
+      )
+      .toUpperCase();
+  } catch (_) {
+    return "—";
+  }
+}
+
+function etiquetaTipoPasajero(
+  value = ""
+) {
+  const tipo =
+    norm(value);
+
+  if (
+    tipo.includes(
+      "profesor"
+    )
+  ) {
+    return "PROFESOR/A";
+  }
+
+  if (
+    tipo.includes(
+      "adult"
+    )
+  ) {
+    return "ADULTO ACOMPAÑANTE";
+  }
+
+  return "ESTUDIANTE";
+}
+
+async function postSeguimientoEncuesta(
+  grupoDocId
+) {
+  const user =
+    auth.currentUser;
+
+  if (!user) {
+    throw new Error(
+      "SESIÓN NO DISPONIBLE"
+    );
+  }
+
+  const token =
+    await user.getIdToken();
+
+  const response =
+    await fetch(
+      URL_SEGUIMIENTO_ENCUESTA,
+      {
+        method:
+          "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          Authorization:
+            `Bearer ${token}`
+        },
+
+        body:
+          JSON.stringify({
+            grupoDocId
+          }),
+
+        cache:
+          "no-store"
+      }
+    );
+
+  const data =
+    await response
+      .json()
+      .catch(
+        () => ({})
+      );
+
+  if (
+    !response.ok ||
+    data.ok !== true
+  ) {
+    throw new Error(
+      data.message ||
+      "NO SE PUDO CARGAR LA ENCUESTA"
+    );
+  }
+
+  return data;
+}
+
+async function renderEncuestaCoordinador(
+  g,
+  pane,
+  {
+    force =
+      false
+  } = {}
+) {
+  if (
+    !g ||
+    !pane
+  ) {
+    return;
+  }
+
+  const cacheKey =
+    String(
+      g.id
+    );
+
+  pane.innerHTML = `
+    <div class="act">
+      <h4>ENCUESTA DEL VIAJE</h4>
+      <div class="muted">
+        CARGANDO SEGUIMIENTO…
+      </div>
+    </div>
+  `;
+
+  try {
+    let data =
+      !force
+        ? state.cache
+            .encuestasViaje
+            .get(cacheKey)
+        : null;
+
+    if (!data) {
+      data =
+        await postSeguimientoEncuesta(
+          g.id
+        );
+
+      state.cache
+        .encuestasViaje
+        .set(
+          cacheKey,
+          data
+        );
+    }
+
+    if (
+      data.existe !==
+      true
+    ) {
+      pane.innerHTML = `
+        <div class="act">
+          <h4>ENCUESTA DEL VIAJE</h4>
+
+          <div class="muted">
+            TODAVÍA NO EXISTE UNA ENCUESTA
+            PROGRAMADA PARA ESTE VIAJE.
+          </div>
+
+          <button
+            id="btnRefreshEncuesta"
+            class="btn sec"
+            style="width:100%;margin-top:.6rem"
+          >
+            ACTUALIZAR
+          </button>
+        </div>
+      `;
+
+      pane
+        .querySelector(
+          "#btnRefreshEncuesta"
+        )
+        .onclick =
+          () =>
+            renderEncuestaCoordinador(
+              g,
+              pane,
+              {
+                force:
+                  true
+              }
+            );
+
+      return;
+    }
+
+    const encuesta =
+      data.encuesta ||
+      {};
+
+    const seguimiento =
+      data.seguimiento ||
+      {};
+
+    const respondieron =
+      Array.isArray(
+        seguimiento
+          .respondieronLista
+      )
+        ? seguimiento
+            .respondieronLista
+        : [];
+
+    const pendientes =
+      Array.isArray(
+        seguimiento
+          .pendientesLista
+      )
+        ? seguimiento
+            .pendientesLista
+        : [];
+
+    const preguntas =
+      encuesta.preguntas ||
+      {};
+
+    pane.innerHTML = `
+      <div class="act">
+        <h4>ENCUESTA DEL VIAJE</h4>
+
+        <div class="grid-mini">
+          <div class="lab">
+            ESTADO
+          </div>
+
+          <div>
+            <strong>
+              ${escapePortalHTML(
+                encuesta.estadoEfectivo ||
+                encuesta.estado ||
+                "—"
+              )}
+            </strong>
+          </div>
+
+          <div class="lab">
+            APERTURA
+          </div>
+
+          <div>
+            ${fechaHoraPortal(
+              encuesta.disponibleDesde
+            )}
+          </div>
+
+          <div class="lab">
+            CIERRE
+          </div>
+
+          <div>
+            ${fechaHoraPortal(
+              encuesta.disponibleHasta
+            )}
+          </div>
+        </div>
+
+        <div
+          class="survey-kpis"
+          style="
+            display:grid;
+            grid-template-columns:
+              repeat(2,minmax(0,1fr));
+            gap:.5rem;
+            margin-top:.8rem
+          "
+        >
+          <div class="card">
+            <div class="lab">
+              HABILITADOS
+            </div>
+
+            <strong>
+              ${Number(
+                seguimiento.total ||
+                0
+              )}
+            </strong>
+          </div>
+
+          <div class="card">
+            <div class="lab">
+              RESPONDIERON
+            </div>
+
+            <strong>
+              ${Number(
+                seguimiento.respondieron ||
+                0
+              )}
+            </strong>
+          </div>
+
+          <div class="card">
+            <div class="lab">
+              PENDIENTES
+            </div>
+
+            <strong>
+              ${Number(
+                seguimiento.pendientes ||
+                0
+              )}
+            </strong>
+          </div>
+
+          <div class="card">
+            <div class="lab">
+              AVANCE
+            </div>
+
+            <strong>
+              ${Number(
+                seguimiento.porcentaje ||
+                0
+              )}%
+            </strong>
+          </div>
+        </div>
+
+        <div
+          class="rowflex"
+          style="
+            gap:.5rem;
+            margin-top:.7rem
+          "
+        >
+          <button
+            id="btnRefreshEncuesta"
+            class="btn sec"
+          >
+            ACTUALIZAR
+          </button>
+
+          ${
+            encuesta.linkPublico
+              ? `
+                <button
+                  id="btnCopyEncuesta"
+                  class="btn ok"
+                >
+                  COPIAR ENLACE
+                </button>
+              `
+              : ""
+          }
+        </div>
+      </div>
+
+      ${
+        encuesta.comentarioOperativo
+          ? `
+            <div class="act">
+              <h4>
+                COMENTARIO OPERATIVO
+              </h4>
+
+              <div
+                class="meta"
+                style="white-space:pre-wrap"
+              >
+                ${escapePortalHTML(
+                  encuesta.comentarioOperativo
+                )}
+              </div>
+            </div>
+          `
+          : ""
+      }
+
+      <div class="act">
+        <h4>
+          SEGUIMIENTO
+        </h4>
+
+        <div
+          class="rowflex"
+          style="gap:.5rem"
+        >
+          <button
+            id="btnEncuestaPendientes"
+            class="btn warn"
+          >
+            PENDIENTES
+            (${pendientes.length})
+          </button>
+
+          <button
+            id="btnEncuestaRespondieron"
+            class="btn sec"
+          >
+            RESPONDIERON
+            (${respondieron.length})
+          </button>
+        </div>
+
+        <div
+          id="encuestaPersonas"
+          style="
+            display:grid;
+            gap:.45rem;
+            margin-top:.7rem
+          "
+        ></div>
+      </div>
+
+      <div class="act">
+        <h4>
+          PREGUNTAS PROGRAMADAS
+        </h4>
+
+        <div class="grid-mini">
+          <div class="lab">
+            GENERALES
+          </div>
+          <div>
+            ${Number(
+              preguntas.generales ||
+              0
+            )}
+          </div>
+
+          <div class="lab">
+            ACTIVIDADES
+          </div>
+          <div>
+            ${Number(
+              preguntas.actividades ||
+              0
+            )}
+          </div>
+
+          <div class="lab">
+            HOTELES
+          </div>
+          <div>
+            ${Number(
+              preguntas.hoteles ||
+              0
+            )}
+          </div>
+
+          <div class="lab">
+            BUSES/TRANSPORTE
+          </div>
+          <div>
+            ${Number(
+              preguntas.transportes ||
+              0
+            )}
+          </div>
+
+          <div class="lab">
+            COORDINADORES
+          </div>
+          <div>
+            ${Number(
+              preguntas.coordinadores ||
+              0
+            )}
+          </div>
+
+          <div class="lab">
+            ORGANIZACIÓN
+          </div>
+          <div>
+            ${Number(
+              preguntas.organizacion ||
+              0
+            )}
+          </div>
+
+          <div class="lab">
+            ASISTENCIA MÉDICA
+          </div>
+          <div>
+            ${
+              preguntas.asistenciaMedica
+                ? "SÍ"
+                : "NO"
+            }
+          </div>
+
+          <div class="lab">
+            TOTAL
+          </div>
+          <div>
+            <strong>
+              ${Number(
+                preguntas.total ||
+                0
+              )}
+            </strong>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const personas =
+      pane.querySelector(
+        "#encuestaPersonas"
+      );
+
+    const pintarPersonas =
+      (
+        items,
+        respondidas
+      ) => {
+        if (!items.length) {
+          personas.innerHTML = `
+            <div class="muted">
+              SIN PERSONAS EN ESTA LISTA.
+            </div>
+          `;
+
+          return;
+        }
+
+        personas.innerHTML =
+          items.map(
+            item => `
+              <div class="card">
+                <div>
+                  <strong>
+                    ${escapePortalHTML(
+                      item.nombre
+                    )}
+                  </strong>
+                </div>
+
+                <div class="meta muted">
+                  ${etiquetaTipoPasajero(
+                    item.tipoPasajero
+                  )}
+
+                  ${
+                    respondidas &&
+                    item.respondidoEn
+                      ? ` · ${fechaHoraPortal(
+                          item.respondidoEn
+                        )}`
+                      : ""
+                  }
+                </div>
+              </div>
+            `
+          ).join("");
+      };
+
+    pane
+      .querySelector(
+        "#btnEncuestaPendientes"
+      )
+      .onclick =
+        () =>
+          pintarPersonas(
+            pendientes,
+            false
+          );
+
+    pane
+      .querySelector(
+        "#btnEncuestaRespondieron"
+      )
+      .onclick =
+        () =>
+          pintarPersonas(
+            respondieron,
+            true
+          );
+
+    pane
+      .querySelector(
+        "#btnRefreshEncuesta"
+      )
+      .onclick =
+        () =>
+          renderEncuestaCoordinador(
+            g,
+            pane,
+            {
+              force:
+                true
+            }
+          );
+
+    const btnCopy =
+      pane.querySelector(
+        "#btnCopyEncuesta"
+      );
+
+    if (btnCopy) {
+      btnCopy.onclick =
+        async () => {
+          try {
+            await navigator
+              .clipboard
+              .writeText(
+                encuesta.linkPublico
+              );
+
+            showFlash(
+              "ENLACE COPIADO",
+              "ok"
+            );
+          } catch (_) {
+            prompt(
+              "COPIA EL ENLACE:",
+              encuesta.linkPublico
+            );
+          }
+        };
+    }
+
+    // Vista inicial prioritaria.
+    pintarPersonas(
+      pendientes,
+      false
+    );
+  } catch (error) {
+    console.error(
+      "[ENCUESTA COORDINADOR]",
+      error
+    );
+
+    pane.innerHTML = `
+      <div class="act">
+        <h4>ENCUESTA DEL VIAJE</h4>
+
+        <div class="muted">
+          ${escapePortalHTML(
+            error.message ||
+            "NO SE PUDO CARGAR."
+          )}
+        </div>
+
+        <button
+          id="btnRetryEncuesta"
+          class="btn sec"
+          style="width:100%;margin-top:.6rem"
+        >
+          REINTENTAR
+        </button>
+      </div>
+    `;
+
+    pane
+      .querySelector(
+        "#btnRetryEncuesta"
+      )
+      .onclick =
+        () =>
+          renderEncuestaCoordinador(
+            g,
+            pane,
+            {
+              force:
+                true
+            }
+          );
+  }
+}
+
+async function renderDocumentosViaje(
+  g,
+  pane,
+  {
+    force =
+      false
+  } = {}
+) {
+  if (
+    !g ||
+    !pane
+  ) {
+    return;
+  }
+
+  pane.innerHTML = `
+    <div class="act">
+      <h4>DOCUMENTOS DEL VIAJE</h4>
+      <div class="muted">
+        CARGANDO DOCUMENTOS…
+      </div>
+    </div>
+  `;
+
+  try {
+    const cacheKey =
+      String(g.id);
+
+    let documentos =
+      !force
+        ? state.cache
+            .documentosViaje
+            .get(cacheKey)
+        : null;
+
+    if (!documentos) {
+      const snap =
+        await getDocs(
+          collection(
+            db,
+            "grupos",
+            g.id,
+            "documentosViaje"
+          )
+        );
+
+      documentos =
+        snap.docs
+          .map(
+            documento => ({
+              id:
+                documento.id,
+
+              ...documento.data()
+            })
+          )
+          .sort(
+            (a, b) => {
+              const fechaA =
+                a.createdAt
+                  ?.seconds ||
+                0;
+
+              const fechaB =
+                b.createdAt
+                  ?.seconds ||
+                0;
+
+              return (
+                fechaB -
+                fechaA
+              );
+            }
+          );
+
+      state.cache
+        .documentosViaje
+        .set(
+          cacheKey,
+          documentos
+        );
+    }
+
+    pane.innerHTML = `
+      ${
+        state.is
+          ? `
+            <div class="act">
+              <h4>
+                CARGAR DOCUMENTO
+              </h4>
+
+              <div
+                style="
+                  display:grid;
+                  gap:.5rem
+                "
+              >
+                <select id="docTipo">
+                  <option value="">
+                    SELECCIONA EL TIPO
+                  </option>
+
+                  <option value="CARTA">
+                    CARTA
+                  </option>
+
+                  <option value="NOMINA">
+                    NÓMINA
+                  </option>
+
+                  <option value="CONTRATO">
+                    CONTRATO
+                  </option>
+
+                  <option value="VOUCHER">
+                    VOUCHER
+                  </option>
+
+                  <option value="INSTRUCTIVO">
+                    INSTRUCTIVO
+                  </option>
+
+                  <option value="OTRO">
+                    OTRO
+                  </option>
+                </select>
+
+                <input
+                  id="docTitulo"
+                  type="text"
+                  placeholder="¿A QUÉ CORRESPONDE?"
+                />
+
+                <textarea
+                  id="docDescripcion"
+                  placeholder="DESCRIPCIÓN OPCIONAL"
+                ></textarea>
+
+                <input
+                  id="docArchivo"
+                  type="file"
+                  accept="application/pdf,image/*"
+                />
+
+                <button
+                  id="btnSubirDocumento"
+                  class="btn ok"
+                >
+                  SUBIR DOCUMENTO
+                </button>
+              </div>
+            </div>
+          `
+          : ""
+      }
+
+      <div class="act">
+        <div
+          class="rowflex"
+          style="
+            justify-content:
+              space-between;
+            gap:.5rem
+          "
+        >
+          <h4>
+            DOCUMENTOS DISPONIBLES
+          </h4>
+
+          <button
+            id="btnRefreshDocumentos"
+            class="btn sec"
+          >
+            ACTUALIZAR
+          </button>
+        </div>
+
+        <div
+          id="documentosViajeList"
+          style="
+            display:grid;
+            gap:.5rem
+          "
+        ></div>
+      </div>
+    `;
+
+    const list =
+      pane.querySelector(
+        "#documentosViajeList"
+      );
+
+    if (
+      !documentos.length
+    ) {
+      list.innerHTML = `
+        <div class="muted">
+          NO HAY DOCUMENTOS DISPONIBLES.
+        </div>
+      `;
+    } else {
+      list.innerHTML =
+        documentos.map(
+          documento => `
+            <div class="card">
+              <div>
+                <strong>
+                  ${escapePortalHTML(
+                    documento.tipo ||
+                    "DOCUMENTO"
+                  )}
+                </strong>
+              </div>
+
+              <div class="meta">
+                ${escapePortalHTML(
+                  documento.titulo ||
+                  documento.nombreArchivo ||
+                  ""
+                )}
+              </div>
+
+              ${
+                documento.descripcion
+                  ? `
+                    <div
+                      class="meta muted"
+                      style="
+                        white-space:
+                          pre-wrap
+                      "
+                    >
+                      ${escapePortalHTML(
+                        documento.descripcion
+                      )}
+                    </div>
+                  `
+                  : ""
+              }
+
+              <div
+                class="rowflex"
+                style="
+                  gap:.4rem;
+                  margin-top:.5rem
+                "
+              >
+                <a
+                  class="btn sec"
+                  href="${escapePortalHTML(
+                    documento.url ||
+                    "#"
+                  )}"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  VER ARCHIVO
+                </a>
+
+                ${
+                  state.is
+                    ? `
+                      <button
+                        class="btn warn btnDeleteDocumento"
+                        data-id="${escapePortalHTML(
+                          documento.id
+                        )}"
+                        data-path="${escapePortalHTML(
+                          documento.storagePath ||
+                          ""
+                        )}"
+                      >
+                        ELIMINAR
+                      </button>
+                    `
+                    : ""
+                }
+              </div>
+            </div>
+          `
+        ).join("");
+    }
+
+    pane
+      .querySelector(
+        "#btnRefreshDocumentos"
+      )
+      .onclick =
+        () =>
+          renderDocumentosViaje(
+            g,
+            pane,
+            {
+              force:
+                true
+            }
+          );
+
+    if (state.is) {
+      const btnSubir =
+        pane.querySelector(
+          "#btnSubirDocumento"
+        );
+
+      btnSubir.onclick =
+        async () => {
+          const tipo =
+            pane
+              .querySelector(
+                "#docTipo"
+              )
+              .value;
+
+          const titulo =
+            pane
+              .querySelector(
+                "#docTitulo"
+              )
+              .value
+              .trim();
+
+          const descripcion =
+            pane
+              .querySelector(
+                "#docDescripcion"
+              )
+              .value
+              .trim();
+
+          const file =
+            pane
+              .querySelector(
+                "#docArchivo"
+              )
+              .files[0];
+
+          if (
+            !tipo ||
+            !titulo ||
+            !file
+          ) {
+            alert(
+              "TIPO, DESCRIPCIÓN DEL DOCUMENTO Y ARCHIVO SON OBLIGATORIOS."
+            );
+
+            return;
+          }
+
+          if (
+            file.size >
+            15 * 1024 * 1024
+          ) {
+            alert(
+              "EL ARCHIVO SUPERA 15 MB."
+            );
+
+            return;
+          }
+
+          btnSubir.disabled =
+            true;
+
+          try {
+            const documentoRef =
+              doc(
+                collection(
+                  db,
+                  "grupos",
+                  g.id,
+                  "documentosViaje"
+                )
+              );
+
+            const safeName =
+              file.name.replace(
+                /[^a-z0-9._-]/gi,
+                "_"
+              );
+
+            const storagePath =
+              `documentos-viaje/${g.id}/${documentoRef.id}/${safeName}`;
+
+            const archivoRef =
+              sRef(
+                storage,
+                storagePath
+              );
+
+            await uploadBytes(
+              archivoRef,
+              file,
+              {
+                contentType:
+                  file.type ||
+                  "application/octet-stream"
+              }
+            );
+
+            const url =
+              await getDownloadURL(
+                archivoRef
+              );
+
+            await setDoc(
+              documentoRef,
+              {
+                tipo,
+                titulo,
+                descripcion,
+
+                nombreArchivo:
+                  file.name,
+
+                contentType:
+                  file.type ||
+                  "",
+
+                size:
+                  file.size,
+
+                url,
+                storagePath,
+
+                visibleCoordinador:
+                  true,
+
+                createdAt:
+                  serverTimestamp(),
+
+                createdBy: {
+                  uid:
+                    state.user.uid,
+
+                  email:
+                    (
+                      state.user.email ||
+                      ""
+                    ).toLowerCase()
+                }
+              }
+            );
+
+            state.cache
+              .documentosViaje
+              .delete(
+                String(g.id)
+              );
+
+            showFlash(
+              "DOCUMENTO CARGADO",
+              "ok"
+            );
+
+            await renderDocumentosViaje(
+              g,
+              pane,
+              {
+                force:
+                  true
+              }
+            );
+          } catch (error) {
+            console.error(
+              "[DOCUMENTOS VIAJE]",
+              error
+            );
+
+            alert(
+              "NO SE PUDO CARGAR EL DOCUMENTO."
+            );
+          } finally {
+            btnSubir.disabled =
+              false;
+          }
+        };
+
+      pane
+        .querySelectorAll(
+          ".btnDeleteDocumento"
+        )
+        .forEach(
+          boton => {
+            boton.onclick =
+              async () => {
+                if (
+                  !confirm(
+                    "¿ELIMINAR ESTE DOCUMENTO?"
+                  )
+                ) {
+                  return;
+                }
+
+                try {
+                  const id =
+                    boton.dataset.id;
+
+                  const path =
+                    boton.dataset.path;
+
+                  if (path) {
+                    await deleteObject(
+                      sRef(
+                        storage,
+                        path
+                      )
+                    ).catch(
+                      () => {}
+                    );
+                  }
+
+                  await deleteDoc(
+                    doc(
+                      db,
+                      "grupos",
+                      g.id,
+                      "documentosViaje",
+                      id
+                    )
+                  );
+
+                  state.cache
+                    .documentosViaje
+                    .delete(
+                      String(g.id)
+                    );
+
+                  await renderDocumentosViaje(
+                    g,
+                    pane,
+                    {
+                      force:
+                        true
+                    }
+                  );
+                } catch (error) {
+                  console.error(
+                    error
+                  );
+
+                  alert(
+                    "NO SE PUDO ELIMINAR EL DOCUMENTO."
+                  );
+                }
+              };
+          }
+        );
+    }
+  } catch (error) {
+    console.error(
+      "[DOCUMENTOS VIAJE]",
+      error
+    );
+
+    pane.innerHTML = `
+      <div class="act">
+        <h4>DOCUMENTOS DEL VIAJE</h4>
+
+        <div class="muted">
+          NO SE PUDIERON CARGAR LOS DOCUMENTOS.
+        </div>
+      </div>
+    `;
+  }
+}
+
+async function renderNominaCoordinador(
+  g,
+  pane,
+  {
+    force =
+      false
+  } = {}
+) {
+  if (
+    !g ||
+    !pane
+  ) {
+    return;
+  }
+
+  pane.innerHTML = `
+    <div class="act">
+      <h4>NÓMINA DEL GRUPO</h4>
+      <div class="muted">
+        CARGANDO NÓMINA…
+      </div>
+    </div>
+  `;
+
+  try {
+    const cacheKey =
+      String(g.id);
+
+    let data =
+      !force
+        ? state.cache
+            .nominasViaje
+            .get(cacheKey)
+        : null;
+
+    if (!data) {
+      let ventasSnap =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "ventas_cotizaciones"
+            ),
+            where(
+              "numeroNegocio",
+              "==",
+              String(
+                g.numeroNegocio ||
+                ""
+              )
+            ),
+            limit(10)
+          )
+        );
+
+      if (
+        ventasSnap.empty
+      ) {
+        ventasSnap =
+          await getDocs(
+            query(
+              collection(
+                db,
+                "ventas_cotizaciones"
+              ),
+              where(
+                "negocio_id",
+                "==",
+                String(
+                  g.numeroNegocio ||
+                  ""
+                )
+              ),
+              limit(10)
+            )
+          );
+      }
+
+      const candidatos =
+        ventasSnap.docs.map(
+          documento => ({
+            id:
+              documento.id,
+
+            ...documento.data()
+          })
+        );
+
+      const grupoVentas =
+        candidatos.find(
+          item =>
+            Number(
+              item.anoViaje ||
+              0
+            ) ===
+            Number(
+              g.anoViaje ||
+              0
+            )
+        ) ||
+        candidatos[0] ||
+        null;
+
+      if (!grupoVentas) {
+        throw new Error(
+          "NO SE ENCONTRÓ EL GRUPO EN VENTAS."
+        );
+      }
+
+      const nominaSnap =
+        await getDocs(
+          query(
+            collection(
+              db,
+              "nominas_publicas"
+            ),
+            where(
+              "groupDocId",
+              "==",
+              grupoVentas.id
+            )
+          )
+        );
+
+      const documentos =
+        nominaSnap.docs
+          .map(
+            documento => ({
+              token:
+                documento.id,
+
+              ...documento.data()
+            })
+          )
+          .filter(
+            item =>
+              item.activo !==
+              false
+          );
+
+      const nomina =
+        documentos.find(
+          item =>
+            item.esTokenPrincipal ===
+            true
+        ) ||
+        documentos[0] ||
+        null;
+
+      data = {
+        existe:
+          !!nomina,
+
+        nomina
+      };
+
+      state.cache
+        .nominasViaje
+        .set(
+          cacheKey,
+          data
+        );
+    }
+
+    if (
+      !data.existe ||
+      !data.nomina
+    ) {
+      pane.innerHTML = `
+        <div class="act">
+          <h4>NÓMINA DEL GRUPO</h4>
+
+          <div class="muted">
+            TODAVÍA NO EXISTE UNA NÓMINA
+            PÚBLICA DISPONIBLE PARA ESTE GRUPO.
+          </div>
+
+          <button
+            id="btnRefreshNomina"
+            class="btn sec"
+            style="width:100%;margin-top:.6rem"
+          >
+            ACTUALIZAR
+          </button>
+        </div>
+      `;
+
+      pane
+        .querySelector(
+          "#btnRefreshNomina"
+        )
+        .onclick =
+          () =>
+            renderNominaCoordinador(
+              g,
+              pane,
+              {
+                force:
+                  true
+              }
+            );
+
+      return;
+    }
+
+    const nomina =
+      data.nomina;
+
+    const pasajeros =
+      Array.isArray(
+        nomina.pasajeros
+      )
+        ? nomina.pasajeros
+            .filter(
+              item =>
+                item?.nombre
+            )
+            .sort(
+              (a, b) =>
+                String(
+                  a.nombre
+                ).localeCompare(
+                  String(
+                    b.nombre
+                  ),
+                  "es",
+                  {
+                    sensitivity:
+                      "base"
+                  }
+                )
+            )
+        : [];
+
+    const resumen =
+      nomina.resumen ||
+      {};
+
+    pane.innerHTML = `
+      <div class="act">
+        <div
+          class="rowflex"
+          style="
+            justify-content:
+              space-between;
+            gap:.5rem
+          "
+        >
+          <h4>
+            NÓMINA DEL GRUPO
+          </h4>
+
+          <button
+            id="btnRefreshNomina"
+            class="btn sec"
+          >
+            ACTUALIZAR
+          </button>
+        </div>
+
+        <div class="grid-mini">
+          <div class="lab">
+            VIAJAN
+          </div>
+
+          <div>
+            <strong>
+              ${Number(
+                resumen.viajan ||
+                pasajeros.length ||
+                0
+              )}
+            </strong>
+          </div>
+
+          <div class="lab">
+            FICHAS PENDIENTES
+          </div>
+
+          <div>
+            ${Number(
+              resumen.fichasPendientes ||
+              0
+            )}
+          </div>
+
+          <div class="lab">
+            LISTA DE ESPERA
+          </div>
+
+          <div>
+            ${Number(
+              resumen.listaEsperaPendiente ||
+              0
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div class="act">
+        <h4>
+          INTEGRANTES
+          (${pasajeros.length})
+        </h4>
+
+        <div
+          style="
+            display:grid;
+            gap:.4rem
+          "
+        >
+          ${
+            pasajeros.length
+              ? pasajeros.map(
+                  pasajero => `
+                    <div class="card">
+                      <strong>
+                        ${escapePortalHTML(
+                          pasajero.nombre
+                        )}
+                      </strong>
+
+                      ${
+                        pasajero.tipo
+                          ? `
+                            <div class="meta muted">
+                              ${escapePortalHTML(
+                                pasajero.tipo
+                              )}
+                            </div>
+                          `
+                          : ""
+                      }
+                    </div>
+                  `
+                ).join("")
+              : `
+                <div class="muted">
+                  SIN INTEGRANTES DISPONIBLES.
+                </div>
+              `
+          }
+        </div>
+      </div>
+    `;
+
+    pane
+      .querySelector(
+        "#btnRefreshNomina"
+      )
+      .onclick =
+        () =>
+          renderNominaCoordinador(
+            g,
+            pane,
+            {
+              force:
+                true
+            }
+          );
+  } catch (error) {
+    console.error(
+      "[NÓMINA COORDINADOR]",
+      error
+    );
+
+    pane.innerHTML = `
+      <div class="act">
+        <h4>NÓMINA DEL GRUPO</h4>
+
+        <div class="muted">
+          ${escapePortalHTML(
+            error.message ||
+            "NO SE PUDO CARGAR."
+          )}
+        </div>
+      </div>
+    `;
+  }
+}
 
 /* ====== VISTA GRUPO ====== */
 async function renderOneGroup(
@@ -3040,38 +4761,289 @@ async function renderOneGroup(
   const histBox = header.querySelector('#viajeHistoryBox');
   renderViajeHistory(g, histBox);
 
-  const tabs=document.createElement('div');
-  tabs.innerHTML=`
-    <div style="display:flex;gap:.5rem;margin:.6rem 0">
-      <button id="tabResumen" class="btn sec">RESUMEN</button>
-      <button id="tabItin"    class="btn sec">ITINERARIO</button>
-      <button id="tabFin"     class="btn sec">FINANZAS</button>
-    </div>
-    <div id="paneResumen"></div>
-    <div id="paneItin" style="display:none"></div>
-    <div id="paneFin"  style="display:none"></div>`;
-  cont.appendChild(tabs);
-
-  const paneResumen=tabs.querySelector('#paneResumen');
-  const paneItin=tabs.querySelector('#paneItin');
-  const paneFin=tabs.querySelector('#paneFin');
-  const btnResumen=tabs.querySelector('#tabResumen');
-  const btnItin=tabs.querySelector('#tabItin');
-  const btnFin=tabs.querySelector('#tabFin');
+  const tabs =
+    document.createElement(
+      "div"
+    );
   
-  const setTabLabel=(btn, base, n)=>{
-    const q=(state.groupQ||'').trim();
-    btn.textContent = (q && n>0) ? `${base} (${n})` : base;
+  tabs.innerHTML = `
+    <div class="group-tabs">
+      <button
+        id="tabResumen"
+        class="btn sec"
+      >
+        RESUMEN
+      </button>
+  
+      <button
+        id="tabItin"
+        class="btn sec"
+      >
+        ITINERARIO
+      </button>
+  
+      <button
+        id="tabFin"
+        class="btn sec"
+      >
+        FINANZAS
+      </button>
+  
+      <button
+        id="tabDocs"
+        class="btn sec"
+      >
+        DOCUMENTOS
+      </button>
+  
+      <button
+        id="tabNomina"
+        class="btn sec"
+      >
+        NÓMINA
+      </button>
+  
+      <button
+        id="tabEncuesta"
+        class="btn sec"
+      >
+        ENCUESTA
+      </button>
+    </div>
+  
+    <div id="paneResumen"></div>
+  
+    <div
+      id="paneItin"
+      style="display:none"
+    ></div>
+  
+    <div
+      id="paneFin"
+      style="display:none"
+    ></div>
+  
+    <div
+      id="paneDocs"
+      style="display:none"
+    ></div>
+  
+    <div
+      id="paneNomina"
+      style="display:none"
+    ></div>
+  
+    <div
+      id="paneEncuesta"
+      style="display:none"
+    ></div>
+  `;
+  
+  cont.appendChild(
+    tabs
+  );
+  
+  const paneResumen =
+    tabs.querySelector(
+      "#paneResumen"
+    );
+  
+  const paneItin =
+    tabs.querySelector(
+      "#paneItin"
+    );
+  
+  const paneFin =
+    tabs.querySelector(
+      "#paneFin"
+    );
+  
+  const paneDocs =
+    tabs.querySelector(
+      "#paneDocs"
+    );
+  
+  const paneNomina =
+    tabs.querySelector(
+      "#paneNomina"
+    );
+  
+  const paneEncuesta =
+    tabs.querySelector(
+      "#paneEncuesta"
+    );
+  
+  const btnResumen =
+    tabs.querySelector(
+      "#tabResumen"
+    );
+  
+  const btnItin =
+    tabs.querySelector(
+      "#tabItin"
+    );
+  
+  const btnFin =
+    tabs.querySelector(
+      "#tabFin"
+    );
+  
+  const btnDocs =
+    tabs.querySelector(
+      "#tabDocs"
+    );
+  
+  const btnNomina =
+    tabs.querySelector(
+      "#tabNomina"
+    );
+  
+  const btnEncuesta =
+    tabs.querySelector(
+      "#tabEncuesta"
+    );
+  
+  const lazyLoaded = {
+    docs:
+      false,
+  
+    nomina:
+      false,
+  
+    encuesta:
+      false
   };
-  const show = (w)=>{ 
-    state.lastTab = w || 'resumen';   // ⬅️ recuerda la última pestaña
-    paneResumen.style.display = (w==='resumen') ? '' : 'none';
-    paneItin.style.display    = (w==='itin')    ? '' : 'none';
-    paneFin.style.display     = (w==='fin')     ? '' : 'none';
-  };
-  btnResumen.onclick=()=>show('resumen');
-  btnItin.onclick   =()=>show('itin');
-  btnFin.onclick    =()=>show('fin');
+  
+  const setTabLabel =
+    (
+      btn,
+      base,
+      n
+    ) => {
+      const q =
+        (
+          state.groupQ ||
+          ""
+        ).trim();
+  
+      btn.textContent =
+        q &&
+        n > 0
+          ? `${base} (${n})`
+          : base;
+    };
+  
+  const show =
+    async w => {
+      state.lastTab =
+        w ||
+        "resumen";
+  
+      paneResumen.style.display =
+        w === "resumen"
+          ? ""
+          : "none";
+  
+      paneItin.style.display =
+        w === "itin"
+          ? ""
+          : "none";
+  
+      paneFin.style.display =
+        w === "fin"
+          ? ""
+          : "none";
+  
+      paneDocs.style.display =
+        w === "docs"
+          ? ""
+          : "none";
+  
+      paneNomina.style.display =
+        w === "nomina"
+          ? ""
+          : "none";
+  
+      paneEncuesta.style.display =
+        w === "encuesta"
+          ? ""
+          : "none";
+  
+      if (
+        w === "docs" &&
+        !lazyLoaded.docs
+      ) {
+        lazyLoaded.docs =
+          true;
+  
+        await renderDocumentosViaje(
+          g,
+          paneDocs
+        );
+      }
+  
+      if (
+        w === "nomina" &&
+        !lazyLoaded.nomina
+      ) {
+        lazyLoaded.nomina =
+          true;
+  
+        await renderNominaCoordinador(
+          g,
+          paneNomina
+        );
+      }
+  
+      if (
+        w === "encuesta" &&
+        !lazyLoaded.encuesta
+      ) {
+        lazyLoaded.encuesta =
+          true;
+  
+        await renderEncuestaCoordinador(
+          g,
+          paneEncuesta
+        );
+      }
+    };
+  
+  btnResumen.onclick =
+    () =>
+      show(
+        "resumen"
+      );
+  
+  btnItin.onclick =
+    () =>
+      show(
+        "itin"
+      );
+  
+  btnFin.onclick =
+    () =>
+      show(
+        "fin"
+      );
+  
+  btnDocs.onclick =
+    () =>
+      show(
+        "docs"
+      );
+  
+  btnNomina.onclick =
+    () =>
+      show(
+        "nomina"
+      );
+  
+  btnEncuesta.onclick =
+    () =>
+      show(
+        "encuesta"
+      );
 
 
   // Render y contadores
@@ -3085,7 +5057,9 @@ async function renderOneGroup(
   // si viene desde una fecha (ej. click en día), priorizamos ITINERARIO
   // si no, usamos la última pestaña usada; fallback: RESUMEN
   const initialTab = preferDate ? 'itin' : (state.lastTab || 'resumen');
-  show(initialTab);
+  await show(
+    initialTab
+  );
 
   // BÚSQUEDA INTERNA
   const input=header.querySelector('#searchTrips');
