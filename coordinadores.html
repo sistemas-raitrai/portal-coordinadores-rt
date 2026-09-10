@@ -8,13 +8,61 @@
 
   <!-- CSS MOBILE-FIRST -->
   <style>
-    :root{
-      --bg:#0b1329;--panel:#0e1834;--line:#334155;--text:#e5e7eb;--muted:#94a3b8;
-      --fs-base: clamp(15px, 3.8vw, 17px);
-      --fs-sm:   clamp(13px, 3.2vw, 15px);
-      --fs-meta: clamp(12px, 2.9vw, 14px);
-      --fs-h3:   clamp(18px, 5.4vw, 24px);
-      --fs-h4:   clamp(15px, 4.5vw, 19px);
+    :root {
+      color-scheme: light;
+    
+      --rt-navy: #202957;
+      --rt-navy-dark: #151c40;
+      --rt-blue: #566da8;
+      --rt-blue-light: #e9eef9;
+      --rt-blue-soft: #f3f6fc;
+      --rt-yellow: #f4c400;
+      --rt-yellow-dark: #d9ad00;
+      --rt-orange: #f5a623;
+    
+      --success: #318455;
+      --success-soft: #eaf7ef;
+      --danger: #b42318;
+      --danger-soft: #fff0ef;
+      --warning: #8a5a00;
+      --warning-soft: #fff7df;
+    
+      --background: #f4f6fb;
+      --card: #ffffff;
+      --text-dark: #161b31;
+      --muted: #667085;
+      --border: #d5dbea;
+    
+      /*
+       * Alias para conservar compatibilidad
+       * con el CSS actual del portal.
+       */
+      --bg: var(--background);
+      --panel: var(--card);
+      --line: var(--border);
+      --text: var(--text-dark);
+      --link: var(--rt-navy);
+      --link-hover: var(--rt-blue);
+      --link-visited: #667085;
+    
+      --shadow:
+        0 8px 26px
+        rgba(32, 41, 87, .10);
+    
+      --fs-base:
+        clamp(15px, 3.8vw, 17px);
+    
+      --fs-sm:
+        clamp(13px, 3.2vw, 15px);
+    
+      --fs-meta:
+        clamp(12px, 2.9vw, 14px);
+    
+      --fs-h3:
+        clamp(18px, 5.4vw, 24px);
+    
+      --fs-h4:
+        clamp(15px, 4.5vw, 19px);
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -289,6 +337,160 @@
       }
     }
 
+
+    /* =====================================================
+       PALETA CLARA RAITRAI — PORTAL COORDINADORES
+    ===================================================== */
+    
+    html,
+    body {
+      background: var(--background);
+      color: var(--text-dark);
+    }
+    
+    body {
+      color-scheme: light;
+    }
+    
+    .panel,
+    .group-card,
+    .act,
+    .alert-card,
+    #modalDialog {
+      background: var(--card);
+      color: var(--text-dark);
+      border-color: var(--border);
+      box-shadow: var(--shadow);
+    }
+    
+    .group-card h3,
+    h4,
+    #modalTitle,
+    .alert-title {
+      color: var(--rt-navy);
+    }
+    
+    .meta {
+      color: var(--text-dark);
+    }
+    
+    .muted,
+    .lab {
+      color: var(--muted);
+    }
+    
+    .btn {
+      color: var(--rt-navy);
+      background: var(--rt-blue-soft);
+      border-color: var(--border);
+    }
+    
+    .btn:hover,
+    .btn:focus {
+      color: #fff;
+      background: var(--rt-blue);
+      border-color: var(--rt-blue);
+    }
+    
+    .btn.ok {
+      color: #fff;
+      background: var(--success);
+      border-color: var(--success);
+    }
+    
+    .btn.warn {
+      color: #fff;
+      background: var(--danger);
+      border-color: var(--danger);
+    }
+    
+    .btn.gray {
+      color: #fff;
+      background: var(--muted);
+      border-color: var(--muted);
+    }
+    
+    select,
+    input,
+    textarea {
+      color: var(--text-dark);
+      background: #fff;
+      border-color: var(--border);
+    }
+    
+    select:focus,
+    input:focus,
+    textarea:focus {
+      outline: 3px solid
+        rgba(86, 109, 168, .18);
+    
+      border-color: var(--rt-blue);
+    }
+    
+    .pill,
+    .tab,
+    .scope-chip {
+      color: var(--rt-navy);
+      background: var(--rt-blue-soft);
+      border-color: var(--border);
+    }
+    
+    .pill.active,
+    .tab.active,
+    .scope-chip.active {
+      color: #fff;
+      background: var(--rt-navy);
+      border-color: var(--rt-navy);
+    }
+    
+    .badge {
+      color: #fff;
+      background: var(--rt-blue);
+    }
+    
+    table.table th,
+    table.table td {
+      color: var(--text-dark);
+      border-color: var(--border);
+    }
+    
+    table.table th {
+      color: var(--rt-navy);
+      background: var(--rt-blue-soft);
+    }
+    
+    table.table a,
+    .act a {
+      color: var(--rt-navy);
+    }
+    
+    table.table a:hover,
+    table.table a:focus,
+    .act a:hover,
+    .act a:focus {
+      color: var(--rt-blue);
+    }
+    
+    #modalBack {
+      background:
+        rgba(21, 28, 64, .55);
+    }
+    
+    #modalHead {
+      border-color: var(--border);
+    }
+    
+    .alert-sep {
+      border-color: var(--border);
+    }
+    
+    @media print {
+      html,
+      body {
+        background: #fff !important;
+        color: #000 !important;
+      }
+    }
   </style>
 </head>
 <body>
