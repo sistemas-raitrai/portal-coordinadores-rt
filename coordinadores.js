@@ -5917,6 +5917,1136 @@ async function reloadGroupAndRender(groupId){
   }
 }
 
+/* =========================================================
+   INFORMACIÓN ADICIONAL DEL GRUPO
+========================================================= */
+
+function referenciaInformacionAdicional(grupoId){
+  return collection(
+    db,
+    'grupos',
+    String(grupoId),
+    'informacionAdicional'
+  );
+}
+
+
+function timestampToMilliseconds(valor){
+  if (!valor) return 0;
+
+  if (typeof valor.toMillis === 'function'){
+    return valor.toMillis();
+  }
+
+  if (typeof valor.seconds === 'number'){
+    return valor.seconds * 1000;
+  }
+
+  if (valor instanceof Date){
+    return valor.getTime();
+  }
+
+  const ms = new Date(valor).getTime();
+
+  return Number.isFinite(ms)
+    ? ms
+    : 0;
+}
+
+
+function limpiarAsuntoInformacionAdicional(valor = ''){
+  return String(valor || '')
+    .trim()
+    .replace(/:+\s*$/, '');
+}
+
+
+async function cargarInformacionAdicional(grupoId){
+  if (!grupoId){
+    return [];
+  }
+
+  const snapshot = await getDocs(
+    referenciaInformacionAdicional(
+      grupoId
+    )
+  );
+
+  return snapshot.docs
+    .map(documento => ({
+      id: documento.id,
+      ...(documento.data() || {})
+    }))
+    .sort((a, b) => {
+      const ordenA =
+        Number.isFinite(Number(a.orden))
+          ? Number(a.orden)
+          : timestampToMilliseconds(
+              a.creadoEn
+            );
+
+      const ordenB =
+        Number.isFinite(Number(b.orden))
+          ? Number(b.orden)
+          : timestampToMilliseconds(
+              b.creadoEn
+            );
+
+      return ordenA - ordenB;
+    });
+}
+
+
+function abrirFormularioInformacionAdicional({
+  titulo = 'AGREGAR INFORMACIÓN',
+  asunto = '',
+  informacion = ''
+} = {}){
+  return new Promise(resolve => {
+    const modalAnterior =
+      document.getElementById(
+        'modalInformacionAdicional'
+      );
+
+    if (modalAnterior){
+      modalAnterior.remove();
+    }
+
+    const overlay =
+      document.createElement('div');
+
+    overlay.id =
+      'modalInformacionAdicional';
+
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgba(15, 23, 42, .65);
+    `;
+
+    const modal =
+      document.createElement('div');
+
+    modal.style.cssText = `
+      width: min(560px, 100%);
+      max-height: calc(100vh - 2rem);
+      overflow-y: auto;
+      border-radius: 14px;
+      background: #ffffff;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, .28);
+      padding: 1rem;
+    `;
+
+    modal.innerHTML = `
+      <h3 style="margin:0 0 1rem 0">
+        ${titulo}
+      </h3>
+
+      <label
+        for="infoAdicionalAsunto"
+        style="
+          display:block;
+          margin-bottom:.35rem;
+          font-weight:800;
+        "
+      >
+        ASUNTO
+      </label>
+
+      <input
+        id="infoAdicionalAsunto"
+        type="text"
+        maxlength="100"
+        placeholder="EJ.: NOMBRE DE CONDUCTORES"
+        style="
+          width:100%;
+          box-sizing:border-box;
+          margin-bottom:1rem;
+        "
+      >
+
+      <label
+        for="infoAdicionalTexto"
+        style="
+          display:block;
+          margin-bottom:.35rem;
+          font-weight:800;
+        "
+      >
+        INFORMACIÓN
+      </label>
+
+      <textarea
+        id="infoAdicionalTexto"
+        rows="6"
+        maxlength="2000"
+        placeholder="EJ.: PEDRO MARTÍNEZ E IGNACIO GONZÁLEZ"
+        style="
+          width:100%;
+          box-sizing:border-box;
+          resize:vertical;
+          margin-bottom:1rem;
+        "
+      ></textarea>
+
+      <div
+        id="infoAdicionalError"
+        style="
+          display:none;
+          color:#b91c1c;
+          font-weight:700;
+          margin-bottom:.8rem;
+        "
+      ></div>
+
+      <div
+        style="
+          display:flex;
+          justify-content:flex-end;
+          flex-wrap:wrap;
+          gap:.5rem;
+        "
+      >
+        <button
+          id="btnCancelarInformacionAdicional"
+          type="button"
+          class="btn sec"
+        >
+          CANCELAR
+        </button>
+
+        <button
+          id="btnGuardarInformacionAdicional"
+          type="button"
+          class="btn ok"
+        >
+          GUARDAR
+        </button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const inputAsunto =
+      modal.querySelector(
+        '#infoAdicionalAsunto'
+      );
+
+    const inputInformacion =
+      modal.querySelector(
+        '#infoAdicionalTexto'
+      );
+
+    const errorBox =
+      modal.querySelector(
+        '#infoAdicionalError'
+      );
+
+    const btnGuardar =
+      modal.querySelector(
+        '#btnGuardarInformacionAdicional'
+      );
+
+    const btnCancelar =
+      modal.querySelector(
+        '#btnCancelarInformacionAdicional'
+      );
+
+    inputAsunto.value =
+      limpiarAsuntoInformacionAdicional(
+        asunto
+      );
+
+    inputInformacion.value =
+      String(informacion || '').trim();
+
+    let terminado = false;
+
+    function cerrar(resultado){
+      if (terminado){
+        return;
+      }
+
+      terminado = true;
+
+      document.removeEventListener(
+        'keydown',
+        controlarTeclado
+      );
+
+      overlay.remove();
+      resolve(resultado);
+    }
+
+    function mostrarError(mensaje){
+      errorBox.textContent =
+        String(mensaje || '');
+
+      errorBox.style.display =
+        mensaje
+          ? ''
+          : 'none';
+    }
+
+    function controlarTeclado(evento){
+      if (evento.key === 'Escape'){
+        cerrar(null);
+      }
+    }
+
+    document.addEventListener(
+      'keydown',
+      controlarTeclado
+    );
+
+    overlay.addEventListener(
+      'click',
+      evento => {
+        if (evento.target === overlay){
+          cerrar(null);
+        }
+      }
+    );
+
+    btnCancelar.onclick = () => {
+      cerrar(null);
+    };
+
+    btnGuardar.onclick = () => {
+      const asuntoLimpio =
+        limpiarAsuntoInformacionAdicional(
+          inputAsunto.value
+        );
+
+      const informacion
+
+/* =========================================================
+   INFORMACIÓN ADICIONAL DEL GRUPO
+   Solo STAFF puede crear, editar o eliminar.
+   Coordinadores pueden verla.
+========================================================= */
+
+function obtenerFechaMsInformacionAdicional(valor){
+  if (!valor) return 0;
+
+  if (typeof valor.toMillis === 'function'){
+    return valor.toMillis();
+  }
+
+  if (valor.seconds){
+    return valor.seconds * 1000;
+  }
+
+  if (valor instanceof Date){
+    return valor.getTime();
+  }
+
+  const fecha = new Date(valor);
+  return Number.isNaN(fecha.getTime())
+    ? 0
+    : fecha.getTime();
+}
+
+
+function normalizarAsuntoInformacionAdicional(valor = ''){
+  return String(valor || '')
+    .trim()
+    .replace(/:+\s*$/, '');
+}
+
+
+async function cargarInformacionAdicionalGrupo(g){
+  if (!g?.id){
+    return [];
+  }
+
+  const snap = await getDocs(
+    collection(
+      db,
+      'grupos',
+      String(g.id),
+      'informacionAdicional'
+    )
+  );
+
+  const registros = [];
+
+  snap.forEach(documento => {
+    const datos = documento.data() || {};
+
+    registros.push({
+      id: documento.id,
+      ...datos
+    });
+  });
+
+  registros.sort((a, b) => {
+    const ordenA = Number(a.orden ?? 999999);
+    const ordenB = Number(b.orden ?? 999999);
+
+    if (ordenA !== ordenB){
+      return ordenA - ordenB;
+    }
+
+    const fechaA =
+      obtenerFechaMsInformacionAdicional(
+        a.createdAt || a.updatedAt
+      );
+
+    const fechaB =
+      obtenerFechaMsInformacionAdicional(
+        b.createdAt || b.updatedAt
+      );
+
+    return fechaA - fechaB;
+  });
+
+  return registros;
+}
+
+
+function abrirFormularioInformacionAdicional({
+  titulo = 'AGREGAR INFORMACIÓN',
+  asunto = '',
+  informacion = ''
+} = {}){
+  return new Promise(resolve => {
+    const modalAnterior =
+      document.getElementById(
+        'modalInformacionAdicional'
+      );
+
+    if (modalAnterior){
+      modalAnterior.remove();
+    }
+
+    const overlay =
+      document.createElement('div');
+
+    overlay.id =
+      'modalInformacionAdicional';
+
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(15, 23, 42, .62);
+    `;
+
+    const dialogo =
+      document.createElement('div');
+
+    dialogo.style.cssText = `
+      width: min(560px, 100%);
+      max-height: calc(100vh - 32px);
+      overflow-y: auto;
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, .28);
+    `;
+
+    const encabezado =
+      document.createElement('h3');
+
+    encabezado.textContent = titulo;
+
+    encabezado.style.cssText = `
+      margin: 0 0 16px;
+      color: #0f2d66;
+      font-size: 1rem;
+    `;
+
+    const labelAsunto =
+      document.createElement('label');
+
+    labelAsunto.textContent = 'ASUNTO';
+
+    labelAsunto.style.cssText = `
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 800;
+      color: #0f172a;
+    `;
+
+    const inputAsunto =
+      document.createElement('input');
+
+    inputAsunto.type = 'text';
+    inputAsunto.value = asunto;
+    inputAsunto.placeholder =
+      'EJ.: NOMBRE DE CONDUCTORES';
+
+    inputAsunto.maxLength = 120;
+
+    inputAsunto.style.cssText = `
+      width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 9px;
+      font: inherit;
+      text-transform: uppercase;
+    `;
+
+    const labelInformacion =
+      document.createElement('label');
+
+    labelInformacion.textContent = 'INFORMACIÓN';
+
+    labelInformacion.style.cssText = `
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 800;
+      color: #0f172a;
+    `;
+
+    const textareaInformacion =
+      document.createElement('textarea');
+
+    textareaInformacion.value = informacion;
+    textareaInformacion.placeholder =
+      'EJ.: PEDRO MARTÍNEZ E IGNACIO GONZÁLEZ';
+
+    textareaInformacion.rows = 5;
+    textareaInformacion.maxLength = 2000;
+
+    textareaInformacion.style.cssText = `
+      width: 100%;
+      min-height: 110px;
+      box-sizing: border-box;
+      resize: vertical;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 9px;
+      font: inherit;
+      text-transform: uppercase;
+    `;
+
+    const mensaje =
+      document.createElement('div');
+
+    mensaje.style.cssText = `
+      display: none;
+      margin-top: 10px;
+      color: #b91c1c;
+      font-weight: 700;
+      font-size: .85rem;
+    `;
+
+    const botones =
+      document.createElement('div');
+
+    botones.style.cssText = `
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    `;
+
+    const btnCancelar =
+      document.createElement('button');
+
+    btnCancelar.type = 'button';
+    btnCancelar.className = 'btn sec';
+    btnCancelar.textContent = 'CANCELAR';
+
+    const btnGuardar =
+      document.createElement('button');
+
+    btnGuardar.type = 'button';
+    btnGuardar.className = 'btn ok';
+    btnGuardar.textContent = 'GUARDAR';
+
+    botones.append(
+      btnCancelar,
+      btnGuardar
+    );
+
+    dialogo.append(
+      encabezado,
+      labelAsunto,
+      inputAsunto,
+      labelInformacion,
+      textareaInformacion,
+      mensaje,
+      botones
+    );
+
+    overlay.appendChild(dialogo);
+    document.body.appendChild(overlay);
+
+    let cerrado = false;
+
+    const cerrar = resultado => {
+      if (cerrado){
+        return;
+      }
+
+      cerrado = true;
+      document.removeEventListener(
+        'keydown',
+        cerrarConEscape
+      );
+
+      overlay.remove();
+      resolve(resultado);
+    };
+
+    const cerrarConEscape = evento => {
+      if (evento.key === 'Escape'){
+        cerrar(null);
+      }
+    };
+
+    btnCancelar.onclick = () => {
+      cerrar(null);
+    };
+
+    overlay.onclick = evento => {
+      if (evento.target === overlay){
+        cerrar(null);
+      }
+    };
+
+    btnGuardar.onclick = () => {
+      const asuntoLimpio =
+        normalizarAsuntoInformacionAdicional(
+          inputAsunto.value
+        );
+
+      const informacionLimpia =
+        String(
+          textareaInformacion.value || ''
+        ).trim();
+
+      if (!asuntoLimpio){
+        mensaje.textContent =
+          'DEBES INGRESAR EL ASUNTO.';
+
+        mensaje.style.display = 'block';
+        inputAsunto.focus();
+        return;
+      }
+
+      if (!informacionLimpia){
+        mensaje.textContent =
+          'DEBES INGRESAR LA INFORMACIÓN.';
+
+        mensaje.style.display = 'block';
+        textareaInformacion.focus();
+        return;
+      }
+
+      cerrar({
+        asunto: asuntoLimpio,
+        informacion: informacionLimpia
+      });
+    };
+
+    document.addEventListener(
+      'keydown',
+      cerrarConEscape
+    );
+
+    setTimeout(
+      () => inputAsunto.focus(),
+      0
+    );
+  });
+}
+
+
+async function agregarInformacionAdicionalGrupo(
+  g,
+  contenedor
+){
+  if (!state.is){
+    alert(
+      'SOLO EL STAFF PUEDE AGREGAR INFORMACIÓN.'
+    );
+
+    return;
+  }
+
+  const resultado =
+    await abrirFormularioInformacionAdicional({
+      titulo: 'AGREGAR INFORMACIÓN ADICIONAL'
+    });
+
+  if (!resultado){
+    return;
+  }
+
+  try{
+    await addDoc(
+      collection(
+        db,
+        'grupos',
+        String(g.id),
+        'informacionAdicional'
+      ),
+      {
+        asunto: resultado.asunto,
+        informacion: resultado.informacion,
+
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+
+        createdByUid:
+          state.user?.uid || '',
+
+        createdByEmail:
+          String(
+            state.user?.email || ''
+          ).toLowerCase()
+      }
+    );
+
+    showFlash(
+      'INFORMACIÓN AGREGADA',
+      'ok'
+    );
+
+    await renderInformacionAdicional(
+      g,
+      contenedor
+    );
+  }catch(error){
+    console.error(
+      'agregarInformacionAdicionalGrupo',
+      error
+    );
+
+    alert(
+      'NO SE PUDO GUARDAR LA INFORMACIÓN ADICIONAL.'
+    );
+  }
+}
+
+
+async function editarInformacionAdicionalGrupo(
+  g,
+  registro,
+  contenedor
+){
+  if (!state.is){
+    alert(
+      'SOLO EL STAFF PUEDE EDITAR INFORMACIÓN.'
+    );
+
+    return;
+  }
+
+  const resultado =
+    await abrirFormularioInformacionAdicional({
+      titulo: 'EDITAR INFORMACIÓN ADICIONAL',
+      asunto: registro.asunto || '',
+      informacion: registro.informacion || ''
+    });
+
+  if (!resultado){
+    return;
+  }
+
+  try{
+    await updateDoc(
+      doc(
+        db,
+        'grupos',
+        String(g.id),
+        'informacionAdicional',
+        String(registro.id)
+      ),
+      {
+        asunto: resultado.asunto,
+        informacion: resultado.informacion,
+
+        updatedAt: serverTimestamp(),
+
+        updatedByUid:
+          state.user?.uid || '',
+
+        updatedByEmail:
+          String(
+            state.user?.email || ''
+          ).toLowerCase()
+      }
+    );
+
+    showFlash(
+      'INFORMACIÓN ACTUALIZADA',
+      'ok'
+    );
+
+    await renderInformacionAdicional(
+      g,
+      contenedor
+    );
+  }catch(error){
+    console.error(
+      'editarInformacionAdicionalGrupo',
+      error
+    );
+
+    alert(
+      'NO SE PUDO ACTUALIZAR LA INFORMACIÓN.'
+    );
+  }
+}
+
+
+async function eliminarInformacionAdicionalGrupo(
+  g,
+  registro,
+  contenedor
+){
+  if (!state.is){
+    alert(
+      'SOLO EL STAFF PUEDE ELIMINAR INFORMACIÓN.'
+    );
+
+    return;
+  }
+
+  const asunto =
+    normalizarAsuntoInformacionAdicional(
+      registro.asunto || 'ESTE REGISTRO'
+    ).toUpperCase();
+
+  const confirmado =
+    confirm(
+      `¿ELIMINAR "${asunto}"?\n\nESTA ACCIÓN NO SE PUEDE DESHACER.`
+    );
+
+  if (!confirmado){
+    return;
+  }
+
+  try{
+    await deleteDoc(
+      doc(
+        db,
+        'grupos',
+        String(g.id),
+        'informacionAdicional',
+        String(registro.id)
+      )
+    );
+
+    showFlash(
+      'INFORMACIÓN ELIMINADA',
+      'ok'
+    );
+
+    await renderInformacionAdicional(
+      g,
+      contenedor
+    );
+  }catch(error){
+    console.error(
+      'eliminarInformacionAdicionalGrupo',
+      error
+    );
+
+    alert(
+      'NO SE PUDO ELIMINAR LA INFORMACIÓN.'
+    );
+  }
+}
+
+
+async function renderInformacionAdicional(
+  g,
+  contenedor
+){
+  if (!contenedor){
+    return 0;
+  }
+
+  contenedor.style.display = '';
+  contenedor.innerHTML = `
+    <h4>INFORMACIÓN ADICIONAL</h4>
+    <div class="muted">BUSCANDO…</div>
+  `;
+
+  try{
+    const registros =
+      await cargarInformacionAdicionalGrupo(g);
+
+    const busqueda =
+      norm(
+        String(
+          state.groupQ || ''
+        ).trim()
+      );
+
+    const registrosFiltrados =
+      busqueda
+        ? registros.filter(registro => {
+            const texto =
+              norm([
+                registro.asunto || '',
+                registro.informacion || ''
+              ].join(' '));
+
+            return texto.includes(busqueda);
+          })
+        : registros;
+
+    /*
+      Para coordinadores:
+      si no hay información, el bloque no aparece.
+
+      Para STAFF:
+      el bloque aparece siempre para poder mostrar
+      el botón AGREGAR INFORMACIÓN.
+    */
+    if (
+      !state.is &&
+      registros.length === 0
+    ){
+      contenedor.style.display = 'none';
+      contenedor.innerHTML = '';
+      return 0;
+    }
+
+    contenedor.innerHTML = '';
+
+    const cabecera =
+      document.createElement('div');
+
+    cabecera.style.cssText = `
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: .4rem;
+    `;
+
+    const titulo =
+      document.createElement('h4');
+
+    titulo.textContent =
+      registros.length > 0
+        ? `INFORMACIÓN ADICIONAL (${registros.length})`
+        : 'INFORMACIÓN ADICIONAL';
+
+    titulo.style.margin = '0';
+
+    cabecera.appendChild(titulo);
+
+    if (state.is){
+      const btnAgregar =
+        document.createElement('button');
+
+      btnAgregar.type = 'button';
+      btnAgregar.className = 'btn ok';
+      btnAgregar.textContent =
+        'AGREGAR INFORMACIÓN';
+
+      btnAgregar.onclick = () => {
+        agregarInformacionAdicionalGrupo(
+          g,
+          contenedor
+        );
+      };
+
+      cabecera.appendChild(btnAgregar);
+    }
+
+    contenedor.appendChild(cabecera);
+
+    if (
+      busqueda &&
+      registrosFiltrados.length === 0
+    ){
+      const sinCoincidencias =
+        document.createElement('div');
+
+      sinCoincidencias.className = 'muted';
+      sinCoincidencias.textContent =
+        'SIN COINCIDENCIAS.';
+
+      contenedor.appendChild(
+        sinCoincidencias
+      );
+
+      return 0;
+    }
+
+    if (registrosFiltrados.length === 0){
+      const sinInformacion =
+        document.createElement('div');
+
+      sinInformacion.className = 'muted';
+      sinInformacion.textContent =
+        'SIN INFORMACIÓN ADICIONAL.';
+
+      contenedor.appendChild(
+        sinInformacion
+      );
+
+      return 0;
+    }
+
+    registrosFiltrados.forEach(
+      (registro, indice) => {
+        const fila =
+          document.createElement('div');
+
+        fila.className = 'card';
+
+        fila.style.cssText = `
+          margin: .4rem 0;
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        `;
+
+        const contenido =
+          document.createElement('div');
+
+        contenido.className = 'meta';
+        contenido.style.cssText = `
+          flex: 1;
+          min-width: 220px;
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+        `;
+
+        const asunto =
+          document.createElement('strong');
+
+        asunto.textContent =
+          `${normalizarAsuntoInformacionAdicional(
+            registro.asunto
+          ).toUpperCase()}:`;
+
+        const texto =
+          document.createTextNode(
+            ` ${String(
+              registro.informacion || ''
+            ).toUpperCase()}`
+          );
+
+        contenido.append(
+          asunto,
+          texto
+        );
+
+        fila.appendChild(contenido);
+
+        if (state.is){
+          const acciones =
+            document.createElement('div');
+
+          acciones.style.cssText = `
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+          `;
+
+          const btnEditar =
+            document.createElement('button');
+
+          btnEditar.type = 'button';
+          btnEditar.className = 'btn sec';
+          btnEditar.textContent = 'EDITAR';
+
+          btnEditar.onclick = () => {
+            editarInformacionAdicionalGrupo(
+              g,
+              registro,
+              contenedor
+            );
+          };
+
+          const btnEliminar =
+            document.createElement('button');
+
+          btnEliminar.type = 'button';
+          btnEliminar.className = 'btn sec';
+          btnEliminar.textContent = 'ELIMINAR';
+
+          btnEliminar.onclick = () => {
+            eliminarInformacionAdicionalGrupo(
+              g,
+              registro,
+              contenedor
+            );
+          };
+
+          acciones.append(
+            btnEditar,
+            btnEliminar
+          );
+
+          fila.appendChild(acciones);
+        }
+
+        contenedor.appendChild(fila);
+
+        if (
+          indice <
+          registrosFiltrados.length - 1
+        ){
+          const separador =
+            document.createElement('div');
+
+          separador.style.cssText = `
+            border-top: 1px dashed var(--line);
+            opacity: .55;
+            margin: .5rem 0;
+          `;
+
+          contenedor.appendChild(
+            separador
+          );
+        }
+      }
+    );
+
+    return busqueda
+      ? registrosFiltrados.length
+      : 0;
+  }catch(error){
+    console.error(
+      'renderInformacionAdicional',
+      error
+    );
+
+    /*
+      Si el coordinador no tiene permisos de lectura,
+      mostramos el error para poder detectarlo.
+    */
+    contenedor.style.display = '';
+    contenedor.innerHTML = `
+      <h4>INFORMACIÓN ADICIONAL</h4>
+      <div class="muted">
+        ERROR AL CARGAR.
+      </div>
+    `;
+
+    return 0;
+  }
+}
+
 /* ====== RESUMEN (HOTEL + VUELOS) ====== */
 async function renderResumen(g, pane){
   pane.innerHTML='<div class="muted">CARGANDO…</div>';
@@ -5930,8 +7060,35 @@ async function renderResumen(g, pane){
   hotelBox.innerHTML='<h4>HOTELES</h4><div class="muted">BUSCANDO…</div>'; wrap.appendChild(hotelBox);
 
   // VUELOS
-  const vuelosBox=document.createElement('div'); vuelosBox.className='act';
-  vuelosBox.innerHTML='<h4>TRANSPORTE / VUELOS</h4><div class="muted">BUSCANDO…</div>'; wrap.appendChild(vuelosBox);
+  // VUELOS
+  const vuelosBox = document.createElement('div');
+  vuelosBox.className = 'act';
+  vuelosBox.innerHTML = `
+    <h4>TRANSPORTE / VUELOS</h4>
+    <div class="muted">BUSCANDO…</div>
+  `;
+  wrap.appendChild(vuelosBox);
+
+  // INFORMACIÓN ADICIONAL
+  const informacionAdicionalBox =
+    document.createElement('div');
+
+  informacionAdicionalBox.className = 'act';
+
+  informacionAdicionalBox.innerHTML = `
+    <h4>INFORMACIÓN ADICIONAL</h4>
+    <div class="muted">BUSCANDO…</div>
+  `;
+
+  /*
+    Al principio se oculta para evitar que el coordinador
+    vea un bloque vacío mientras se consulta Firestore.
+  */
+  informacionAdicionalBox.style.display = 'none';
+
+  wrap.appendChild(
+    informacionAdicionalBox
+  );
 
   pane.appendChild(wrap);
 
@@ -6123,6 +7280,12 @@ async function renderResumen(g, pane){
     console.error(e);
     vuelosBox.innerHTML = '<h4>TRANSPORTE / VUELOS</h4><div class="muted">ERROR AL CARGAR.</div>';
   }
+
+  // ===== INFORMACIÓN ADICIONAL =====
+  hits += await renderInformacionAdicional(
+    g,
+    informacionAdicionalBox
+  );
 
   return hits;
 }
