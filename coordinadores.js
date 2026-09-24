@@ -10232,6 +10232,9 @@ async function openActividadModal(
     'modalClose'
   ).onclick = () => {
     back.style.display = 'none';
+  
+    // Dejar el modal preparado para la próxima actividad.
+    body.scrollTop = 0;
   };
 
   prepararModalDetalleConScroll();
