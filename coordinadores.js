@@ -7503,19 +7503,56 @@ async function renderActs(grupo, fechaISO, cont){
 
     // — Detalle/Comentarios (servicio se resuelve dentro del modal si es necesario)
     const btnAI = div.querySelector('.btnActInfo');
-    if (btnAI) btnAI.onclick = async () => {
-      try {
-        const servicio = await findServicio(grupo.destino, actName).catch(()=>null);
-        const tipoRaw  = (servicio?.voucher || 'No Aplica').toString();
-        const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO'
-           : /fisic/i.test(tipoRaw)    ? 'FISICO'
-           : /correo/i.test(tipoRaw)   ? 'CORREO'
-           : 'NOAPLICA';
-        await openActividadModal(grupo, fechaISO, act, servicio, tipo);
-      } catch(e) {
-        console.error('openActividadModal error', e);
-      }
-    };
+    
+    if (btnAI) {
+      btnAI.onclick = async () => {
+        try {
+          const servicio = await findServicio({
+            destino:
+              act.servicioDestino ||
+              grupo.destino,
+    
+            anoViaje:
+              grupo.anoViaje ||
+              state.anoViajeActivo,
+    
+            servicioId:
+              act.servicioId ||
+              '',
+    
+            nombre:
+              actName
+          }).catch(() => null);
+    
+          const tipoRaw = (
+            servicio?.voucher ||
+            'No Aplica'
+          ).toString();
+    
+          const tipo =
+            /electron/i.test(tipoRaw)
+              ? 'ELECTRONICO'
+              : /fisic/i.test(tipoRaw)
+                ? 'FISICO'
+                : /correo/i.test(tipoRaw)
+                  ? 'CORREO'
+                  : 'NOAPLICA';
+    
+          await openActividadModal(
+            grupo,
+            fechaISO,
+            act,
+            servicio,
+            tipo
+          );
+        } catch (error) {
+          console.error(
+            'openActividadModal error',
+            error
+          );
+        }
+      };
+    }
 
     // — Guardar asistencia/nota (igual que antes)
     div.querySelector('.btnSave').onclick = async ()=>{
@@ -7581,7 +7618,22 @@ async function renderActs(grupo, fechaISO, cont){
     // (2) Servicio / botón de voucher asíncrono (unificado)
       (async () => {
         try {
-          const servicio = await findServicio(grupo.destino, actName);
+          const servicio = await findServicio({
+            destino:
+              act.servicioDestino ||
+              grupo.destino,
+          
+            anoViaje:
+              grupo.anoViaje ||
+              state.anoViajeActivo,
+          
+            servicioId:
+              act.servicioId ||
+              '',
+          
+            nombre:
+              actName
+          });
           const tipoRaw  = (servicio?.voucher || 'No Aplica').toString();
           const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO'
                      : /fisic/i.test(tipoRaw)    ? 'FISICO'
@@ -7825,6 +7877,220 @@ function expandDestinosServicios(destinoRaw){
   }
   return out;
 }
+
+/* =========================================================
+   DATOS OPERATIVOS Y ACCIONES DE CONTACTO DE SERVICIOS
+   ========================================================= */
+
+function escapeHTMLServicio(valor){
+  return (valor ?? '')
+    .toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function normalizarTelefonoAccion(valor){
+  return (valor || '')
+    .toString()
+    .trim()
+    .replace(/[^\d+]/g, '')
+    .replace(/(?!^)\+/g, '');
+}
+
+function telefonoWhatsApp(valor){
+  return normalizarTelefonoAccion(valor)
+    .replace(/\D/g, '');
+}
+
+function normalizarAnoViajeServicio(valor){
+  const numero = Number(valor);
+
+  if (
+    Number.isFinite(numero) &&
+    numero >= 2000 &&
+    numero <= 2100
+  ) {
+    return String(Math.trunc(numero));
+  }
+
+  return '';
+}
+
+function valorServicioPrimero(...valores){
+  for (const valor of valores) {
+    if (
+      valor !== undefined &&
+      valor !== null &&
+      valor.toString().trim() !== ''
+    ) {
+      return valor.toString().trim();
+    }
+  }
+
+  return '';
+}
+
+function construirMensajeWhatsAppServicio(
+  grupo,
+  fechaISO,
+  actividad
+){
+  const grupoNombre = (
+    typeof nombreOperativoGrupo === 'function'
+      ? nombreOperativoGrupo(grupo)
+      : (
+          grupo?.aliasGrupo ||
+          grupo?.nombreGrupo ||
+          grupo?.colegio ||
+          'GRUPO RAI TRAI'
+        )
+  ).toString().trim();
+
+  const codigo = [
+    grupo?.numeroNegocio,
+    grupo?.identificador
+  ].filter(Boolean).join('-');
+
+  const actividadNombre = (
+    actividad?.actividad ||
+    'SERVICIO'
+  ).toString().trim();
+
+  const horario = [
+    actividad?.horaInicio,
+    actividad?.horaFin
+  ].filter(Boolean).join(' - ');
+
+  const partes = [
+    'Hola, soy coordinador(a) de Rai Trai.',
+    `Me comunico por el servicio ${actividadNombre.toUpperCase()}.`,
+    `Grupo: ${grupoNombre.toUpperCase()}${codigo ? ` (${codigo})` : ''}.`,
+    fechaISO ? `Fecha: ${dmy(fechaISO)}.` : '',
+    horario ? `Horario: ${horario}.` : '',
+    'Quedo atento(a).'
+  ].filter(Boolean);
+
+  return partes.join('\n');
+}
+
+function construirAccionesContactoServicio({
+  telefono = '',
+  correo = '',
+  direccion = '',
+  ciudad = '',
+  destino = '',
+  mensajeWhatsApp = '',
+  asuntoCorreo = ''
+} = {}){
+  const telefonoTel = normalizarTelefonoAccion(
+    telefono
+  );
+
+  const telefonoWa = telefonoWhatsApp(
+    telefono
+  );
+
+  const correoLimpio = (correo || '')
+    .toString()
+    .trim()
+    .toLowerCase();
+
+  const ubicacion = [
+    direccion,
+    ciudad,
+    destino
+  ]
+    .map(valor => (valor || '').toString().trim())
+    .filter(Boolean)
+    .join(', ');
+
+  const botones = [];
+
+  if (telefonoTel) {
+    botones.push(`
+      <a
+        class="btn sec"
+        href="tel:${escapeHTMLServicio(telefonoTel)}"
+        style="text-decoration:none"
+      >
+        📞 LLAMAR
+      </a>
+    `);
+  }
+
+  if (telefonoWa) {
+    const urlWhatsApp =
+      `https://wa.me/${encodeURIComponent(telefonoWa)}` +
+      `?text=${encodeURIComponent(mensajeWhatsApp || '')}`;
+
+    botones.push(`
+      <a
+        class="btn ok"
+        href="${escapeHTMLServicio(urlWhatsApp)}"
+        target="_blank"
+        rel="noopener noreferrer"
+        style="text-decoration:none"
+      >
+        💬 WHATSAPP
+      </a>
+    `);
+  }
+
+  if (correoLimpio) {
+    const urlCorreo =
+      `mailto:${encodeURIComponent(correoLimpio)}` +
+      `?subject=${encodeURIComponent(asuntoCorreo || '')}`;
+
+    botones.push(`
+      <a
+        class="btn sec"
+        href="${escapeHTMLServicio(urlCorreo)}"
+        style="text-decoration:none"
+      >
+        ✉️ CORREO
+      </a>
+    `);
+  }
+
+  if (ubicacion) {
+    const urlMaps =
+      'https://www.google.com/maps/search/?api=1&query=' +
+      encodeURIComponent(ubicacion);
+
+    botones.push(`
+      <a
+        class="btn sec"
+        href="${escapeHTMLServicio(urlMaps)}"
+        target="_blank"
+        rel="noopener noreferrer"
+        style="text-decoration:none"
+      >
+        📍 VER DIRECCIÓN
+      </a>
+    `);
+  }
+
+  if (!botones.length) {
+    return '';
+  }
+
+  return `
+    <div
+      class="rowflex"
+      style="
+        margin-top:.65rem;
+        gap:.45rem;
+        flex-wrap:wrap;
+      "
+    >
+      ${botones.join('')}
+    </div>
+  `;
+}
+
 // Cachea catálogos de servicios por ruta Firestore
 // key: 'Servicios/BRASIL/Listado'
 async function loadServiciosCatalog(pathArr){
@@ -7847,34 +8113,199 @@ async function loadServiciosCatalog(pathArr){
   return out;
 }
 
-async function findServicio(destino, nombre){
-  if (!destino || !nombre) return null;
+async function findServicio(
+  destinoOConfig,
+  nombreLegacy = '',
+  anoLegacy = '',
+  servicioIdLegacy = ''
+){
+  /*
+    Admite ambos formatos:
 
-  const want      = norm(nombre);
-  const destinos  = expandDestinosServicios(destino);  // ← usa tus alias
-  if (!destinos.length) return null;
+    NUEVO:
+    findServicio({
+      destino,
+      nombre,
+      anoViaje,
+      servicioId
+    })
 
-  for (const dest of destinos){
-    const candidates = [
-      ['Servicios', dest, 'Listado'], // Servicios/DESTINO/Listado
-      [dest, 'Listado'],              // DESTINO/Listado (fallback)
-    ];
+    ANTIGUO:
+    findServicio(destino, nombre)
+  */
 
-    for (const path of candidates){
-      const servicios = await loadServiciosCatalog(path);
-      if (!Array.isArray(servicios) || !servicios.length) continue;
+  const config =
+    destinoOConfig &&
+    typeof destinoOConfig === 'object' &&
+    !Array.isArray(destinoOConfig)
+      ? destinoOConfig
+      : {
+          destino: destinoOConfig,
+          nombre: nombreLegacy,
+          anoViaje:
+            anoLegacy ||
+            state?.anoViajeActivo ||
+            '',
+          servicioId: servicioIdLegacy
+        };
 
-      let best = null;
-      for (const svc of servicios){
-        const servName = String(
-          svc.actividad || svc.nombre || svc.servicio || svc.id || ''
-        );
-        if (norm(servName) === want){
-          best = svc;
-          break;
-        }
+  const destino = (
+    config.destino ||
+    config.servicioDestino ||
+    ''
+  ).toString().trim();
+
+  const nombre = (
+    config.nombre ||
+    config.actividad ||
+    ''
+  ).toString().trim();
+
+  const servicioId = (
+    config.servicioId ||
+    config.idServicio ||
+    ''
+  ).toString().trim();
+
+  const anoViaje = normalizarAnoViajeServicio(
+    config.anoViaje ||
+    config.ano ||
+    state?.anoViajeActivo ||
+    ''
+  );
+
+  if (
+    !destino ||
+    (!nombre && !servicioId)
+  ) {
+    return null;
+  }
+
+  const destinos = expandDestinosServicios(
+    destino
+  );
+
+  if (!destinos.length) {
+    return null;
+  }
+
+  const nombreBuscado = norm(nombre);
+  const idBuscado = norm(servicioId);
+
+  function coincideServicio(servicio){
+    if (!servicio) return false;
+
+    const idActual = norm(
+      servicio.id ||
+      servicio.servicioId ||
+      ''
+    );
+
+    const nombreActual = norm(
+      servicio.actividad ||
+      servicio.nombre ||
+      servicio.servicio ||
+      servicio.id ||
+      ''
+    );
+
+    const aliases = Array.isArray(servicio.aliases)
+      ? servicio.aliases.map(norm)
+      : [];
+
+    const prevIds = Array.isArray(servicio.prevIds)
+      ? servicio.prevIds.map(norm)
+      : [];
+
+    /*
+      Primero se intenta por ID, porque es más preciso.
+    */
+    if (idBuscado) {
+      if (idActual === idBuscado) return true;
+      if (prevIds.includes(idBuscado)) return true;
+      if (aliases.includes(idBuscado)) return true;
+    }
+
+    /*
+      Luego se intenta por nombre o nombres anteriores.
+    */
+    if (nombreBuscado) {
+      if (nombreActual === nombreBuscado) return true;
+      if (aliases.includes(nombreBuscado)) return true;
+      if (prevIds.includes(nombreBuscado)) return true;
+    }
+
+    return false;
+  }
+
+  for (const destinoCandidato of destinos) {
+    const destinoNormalizado = (
+      destinoCandidato ||
+      ''
+    ).toString().trim().toUpperCase();
+
+    /*
+      Prioridad:
+      1. Catálogo anual.
+      2. Catálogo histórico antiguo.
+      3. Ruta antigua alternativa.
+    */
+    const rutas = [];
+
+    if (anoViaje) {
+      rutas.push([
+        'ServiciosPorAno',
+        anoViaje,
+        'Destinos',
+        destinoNormalizado,
+        'Listado'
+      ]);
+    }
+
+    rutas.push(
+      [
+        'Servicios',
+        destinoNormalizado,
+        'Listado'
+      ],
+      [
+        destinoNormalizado,
+        'Listado'
+      ]
+    );
+
+    for (const ruta of rutas) {
+      const servicios = await loadServiciosCatalog(
+        ruta
+      );
+
+      if (
+        !Array.isArray(servicios) ||
+        !servicios.length
+      ) {
+        continue;
       }
-      if (best) return best;
+
+      const encontrado = servicios.find(
+        coincideServicio
+      );
+
+      if (encontrado) {
+        return {
+          ...encontrado,
+
+          /*
+            Metadata útil para diagnóstico y para saber
+            desde qué catálogo fue resuelto.
+          */
+          _catalogoRuta: ruta.join('/'),
+          _catalogoDestino: destinoNormalizado,
+          _catalogoAno:
+            ruta[0] === 'ServiciosPorAno'
+              ? anoViaje
+              : ''
+        };
+      }
     }
   }
 
@@ -8000,45 +8431,130 @@ function pickHotelForMeal(grupo, fechaISO, act, hoteles){
 }
 
 /* ====== Resolver ThreadKey global (A/B/C) ====== */
-async function resolveThreadKey(grupo, fechaISO, act, servicioHint=null){
-  const actName = (act?.actividad || '').toString();
-  const destino = (grupo?.destino || '').toString().toUpperCase().trim();
+async function resolveThreadKey(
+  grupo,
+  fechaISO,
+  act,
+  servicioHint = null
+){
+  const actName = (
+    act?.actividad ||
+    ''
+  ).toString();
+
+  const destino = (
+    act?.servicioDestino ||
+    grupo?.destino ||
+    ''
+  ).toString().toUpperCase().trim();
+
   const meal = isMealAct(actName);
 
-  // (C) Comida de hotel → elegir hotel correcto según CHEQ OUT
-  if (meal){
-    const hoteles = await loadHotelesInfo(grupo) || [];
-    const h = pickHotelForMeal(grupo, fechaISO, act, hoteles);
-    if (h && (h.hotel?.id || h.hotelId || h.id)){
-      const hId = h.hotel?.id || h.hotelId || h.id;
-      return { key: threadKeyForHotelMeal(hId, meal), scope:'C' };
+  /*
+    C: comida de hotel.
+  */
+  if (meal) {
+    const hoteles =
+      await loadHotelesInfo(grupo) ||
+      [];
+
+    const hotel = pickHotelForMeal(
+      grupo,
+      fechaISO,
+      act,
+      hoteles
+    );
+
+    const hotelId =
+      hotel?.hotel?.id ||
+      hotel?.hotelId ||
+      hotel?.id ||
+      '';
+
+    if (hotelId) {
+      return {
+        key: threadKeyForHotelMeal(
+          hotelId,
+          meal
+        ),
+        scope: 'C'
+      };
     }
-    // si no hay hotel identificable, cae a GENERAL (B)
   }
 
-  // Intento (A) proveedor + servicio
+  /*
+    A: servicio asociado a proveedor.
+  */
   let servicio = servicioHint;
-  if (!servicio){
-    try{ servicio = await findServicio(destino, actName); }catch(_){/* ignore */}
-  }
-  const servicioId = servicio?.id || null;
 
-  // Proveedor (prioriza servicio.proveedor o act.proveedor)
-  const proveedorName = (servicio?.proveedor || act?.proveedor || '').toString().trim();
+  if (!servicio) {
+    try {
+      servicio = await findServicio({
+        destino,
+        anoViaje:
+          grupo?.anoViaje ||
+          state?.anoViajeActivo ||
+          '',
+        servicioId:
+          act?.servicioId ||
+          '',
+        nombre: actName
+      });
+    } catch (_) {
+      servicio = null;
+    }
+  }
+
+  const servicioId =
+    servicio?.id ||
+    act?.servicioId ||
+    null;
+
+  const proveedorName = valorServicioPrimero(
+    servicio?.proveedor,
+    act?.proveedor
+  );
+
   let proveedorId = null;
-  if (proveedorName){
-    try{
-      const provDoc = await findProveedorDocByDestino(destino, proveedorName);
-      if (provDoc?.id) proveedorId = provDoc.id;
-    }catch(_){}
+
+  if (proveedorName) {
+    try {
+      const proveedorDoc =
+        await findProveedorDocByDestino(
+          destino,
+          proveedorName
+        );
+
+      if (proveedorDoc?.id) {
+        proveedorId = proveedorDoc.id;
+      }
+    } catch (_) {}
   }
 
-  if (servicioId && proveedorId){
-    return { key: threadKeyForProv(destino, proveedorId, servicioId), scope:'A' };
+  if (
+    servicioId &&
+    proveedorId
+  ) {
+    return {
+      key: threadKeyForProv(
+        destino,
+        proveedorId,
+        servicioId
+      ),
+      scope: 'A'
+    };
   }
 
-  // (B) GENERAL
-  return { key: threadKeyForGeneral(destino, actName), scope:'B' };
+  /*
+    B: actividad general.
+  */
+  return {
+    key: threadKeyForGeneral(
+      destino,
+      actName
+    ),
+    scope: 'B'
+  };
 }
 
 function renderVoucherHTMLSync(g, fechaISO, act, proveedorDoc=null, compact=false){
@@ -8855,185 +9371,722 @@ async function fetchProveedorByDestino(destino, proveedorName){
   return hit;
 }
 
-async function openActividadModal(g, fechaISO, act, servicio=null, tipoVoucher='NOAPLICA'){
-  const back  = document.getElementById('modalBack');
-  const title = document.getElementById('modalTitle');
-  const body  = document.getElementById('modalBody');
+async function openActividadModal(
+  g,
+  fechaISO,
+  act,
+  servicio = null,
+  tipoVoucher = 'NOAPLICA'
+){
+  const back = document.getElementById(
+    'modalBack'
+  );
 
-  const actName = (act?.actividad || 'ACTIVIDAD').toString();
-  const actKey  = slug(actName);
-  const destino = (g?.destino || '').toString().toUpperCase();
-  // === NUEVO: resolver hilo global (A/B/C) considerando CHEQ OUT
-  let thread = { key:'', scope:'B' };
-  try{
-    thread = await resolveThreadKey(g, fechaISO, act, servicio);
-  }catch(_){}
+  const title = document.getElementById(
+    'modalTitle'
+  );
 
+  const body = document.getElementById(
+    'modalBody'
+  );
 
-  // Servicio (para indicaciones/voucher) ya lo traes con findServicio(destino, actName).
-  // Aquí sólo nos aseguramos de tener indicaciones/voucher priorizando Servicios/{destino}/Listado.
-  let indicaciones = '';
-  let voucherLabel = (tipoVoucher || 'NOAPLICA').toString().toUpperCase();
+  const actName = (
+    act?.actividad ||
+    'ACTIVIDAD'
+  ).toString();
 
-  try{
-    // si ya vino "servicio" desde findServicio úsalo tal cual:
-    if (servicio){
-      indicaciones = String(
-        servicio.indicaciones || servicio.instrucciones || act?.indicaciones || act?.instrucciones || ''
-      ).trim();
-      const vRaw = (servicio.voucher || voucherLabel || '').toString();
-      voucherLabel = /electron/i.test(vRaw) ? 'ELECTRONICO' : (/fisic/i.test(vRaw) ? 'FISICO' : 'NOAPLICA');
+  const destino = (
+    act?.servicioDestino ||
+    g?.destino ||
+    ''
+  ).toString().toUpperCase().trim();
+
+  /*
+    Si el servicio no llegó resuelto, buscarlo usando
+    año, destino, ID y nombre.
+  */
+  if (!servicio) {
+    try {
+      servicio = await findServicio({
+        destino,
+        anoViaje:
+          g?.anoViaje ||
+          state?.anoViajeActivo ||
+          '',
+        servicioId:
+          act?.servicioId ||
+          '',
+        nombre:
+          actName
+      });
+    } catch (_) {
+      servicio = null;
     }
-  }catch(_){}
+  }
 
-  const indicacionesHTML = indicaciones
-  ? autoLinkPhones(indicaciones.toString().toUpperCase())
-  : '';
+  /*
+    Resolver el hilo global usado por Tips/Comentarios.
+  */
+  let thread = {
+    key: '',
+    scope: 'B'
+  };
 
-  // Proveedor por DESTINO (Proveedores/{destino}/Listado)
+  try {
+    thread = await resolveThreadKey(
+      g,
+      fechaISO,
+      act,
+      servicio
+    );
+  } catch (_) {}
+
+  /*
+    Consultar proveedor general como fallback.
+  */
+  const proveedorNombreBuscado =
+    valorServicioPrimero(
+      servicio?.proveedor,
+      act?.proveedor
+    );
+
   let proveedorDoc = null;
-  try{
-    const provNom = (servicio?.proveedor || act?.proveedor || '').toString();
-    proveedorDoc = await fetchProveedorByDestino(destino, provNom);
-  }catch(_){}
 
-  const nombreProv  = (proveedorDoc?.proveedor || act?.proveedor || '—').toString().toUpperCase();
-  const contactoNom = (proveedorDoc?.contacto  || '').toString().toUpperCase();
-  const contactoTel = (proveedorDoc?.telefono  || '').toString(); // ⬅️ SIN toUpperCase()
-  const contactoMail= (proveedorDoc?.correo    || '').toString().toUpperCase();
+  try {
+    if (proveedorNombreBuscado) {
+      proveedorDoc =
+        await fetchProveedorByDestino(
+          destino,
+          proveedorNombreBuscado
+        );
+    }
+  } catch (_) {
+    proveedorDoc = null;
+  }
 
-  title.textContent = `DETALLE — ${actName.toUpperCase()} — ${dmy(fechaISO)}`;
-  const scopeBadge = (thread.scope==='A'?'PROVEEDOR':
-                     thread.scope==='C'?'HOTEL/COMIDA':'GENERAL');
-  const scopeLine = `<div class="meta"><strong>HILO:</strong> ${scopeBadge} · ${thread.key}</div>`;
-   body.innerHTML = `
-     ${scopeLine}
-     <div class="card">
-       <div class="meta"><strong>PROVEEDOR:</strong> ${nombreProv}</div>
-       ${contactoNom ? `<div class="meta"><strong>CONTACTO:</strong> ${contactoNom}</div>` : ''}
-       ${contactoTel ? `<div class="meta"><strong>TELÉFONO:</strong> ${fmtTelWhats(contactoTel)}</div>` : ''}
-       ${contactoMail? `<div class="meta"><strong>CORREO:</strong> ${contactoMail}</div>` : ''}
-       <div class="meta"><strong>VOUCHER:</strong> ${voucherLabel}</div>
-       <div class="meta"><strong>HORARIO:</strong> ${(act.horaInicio||'--:--')}–${(act.horaFin||'--:--')}</div>
-     </div>
-    <div class="act">
-      <h4>INDICACIONES</h4>
-      ${indicacionesHTML
-        ? `<div class="meta" style="white-space:pre-wrap">${indicacionesHTML}</div>`
-        : '<div class="muted">SIN INDICACIONES.</div>'
+  /*
+    Prioridad:
+    1. Servicio específico.
+    2. Actividad del itinerario.
+    3. Proveedor general.
+  */
+  const nombreProveedor =
+    valorServicioPrimero(
+      servicio?.proveedor,
+      act?.proveedor,
+      proveedorDoc?.proveedor,
+      proveedorDoc?.nombre
+    );
+
+  const nombreContacto =
+    valorServicioPrimero(
+      servicio?.contacto,
+      servicio?.nombreContacto,
+      act?.contacto,
+      act?.nombreContacto,
+      proveedorDoc?.contacto,
+      proveedorDoc?.nombreContacto
+    );
+
+  const telefono =
+    valorServicioPrimero(
+      servicio?.telefono,
+      servicio?.fono,
+      act?.telefono,
+      act?.fono,
+      proveedorDoc?.telefono,
+      proveedorDoc?.fono
+    );
+
+  const correo =
+    valorServicioPrimero(
+      servicio?.correo,
+      servicio?.email,
+      act?.correo,
+      act?.email,
+      proveedorDoc?.correo,
+      proveedorDoc?.email
+    );
+
+  const direccion =
+    valorServicioPrimero(
+      servicio?.direccion,
+      act?.direccion,
+      proveedorDoc?.direccion
+    );
+
+  const ciudad =
+    valorServicioPrimero(
+      servicio?.ciudad,
+      act?.ciudad
+    );
+
+  const indicaciones =
+    valorServicioPrimero(
+      servicio?.indicaciones,
+      servicio?.instrucciones,
+      act?.indicaciones,
+      act?.instrucciones
+    );
+
+  const restricciones =
+    valorServicioPrimero(
+      servicio?.restricciones,
+      act?.restricciones
+    );
+
+  const voucherRaw = valorServicioPrimero(
+    servicio?.voucher,
+    tipoVoucher,
+    'NO APLICA'
+  );
+
+  const voucherLabel =
+    /electron/i.test(voucherRaw)
+      ? 'ELECTRÓNICO'
+      : /fisic/i.test(voucherRaw)
+        ? 'FÍSICO'
+        : /correo/i.test(voucherRaw)
+          ? 'CORREO'
+          : /ticket/i.test(voucherRaw)
+            ? 'TICKET'
+            : 'NO APLICA';
+
+  const mensajeWhatsApp =
+    construirMensajeWhatsAppServicio(
+      g,
+      fechaISO,
+      act
+    );
+
+  const asuntoCorreo = [
+    'CONSULTA SERVICIO RAI TRAI',
+    actName.toUpperCase(),
+    fechaISO ? dmy(fechaISO) : ''
+  ]
+    .filter(Boolean)
+    .join(' — ');
+
+  const accionesContacto =
+    construirAccionesContactoServicio({
+      telefono,
+      correo,
+      direccion,
+      ciudad,
+      destino,
+      mensajeWhatsApp,
+      asuntoCorreo
+    });
+
+  const scopeBadge =
+    thread.scope === 'A'
+      ? 'PROVEEDOR'
+      : thread.scope === 'C'
+        ? 'HOTEL/COMIDA'
+        : 'GENERAL';
+
+  title.textContent =
+    `DETALLE — ${actName.toUpperCase()} — ${dmy(fechaISO)}`;
+
+  body.innerHTML = `
+    <div class="meta">
+      <strong>HILO:</strong>
+      ${escapeHTMLServicio(scopeBadge)}
+      ${thread.key
+        ? ` · ${escapeHTMLServicio(thread.key)}`
+        : ''
       }
     </div>
 
-     <div class="act" id="foroBox">
-       <h4>TIPS O COMENTARIOS</h4>
-       <div class="rowflex" style="margin:.35rem 0">
-         <textarea id="foroText" placeholder="ESCRIBE UN COMENTARIO (SE PUBLICA CON TU CORREO)"></textarea>
-         <button id="foroSend" class="btn ok">PUBLICAR</button>
-       </div>
-       <div class="muted">-------</div>
-       <div id="foroList" style="display:grid;gap:.4rem;margin-top:.5rem"></div>
-       <div class="rowflex" style="justify-content:center;margin-top:.4rem">
-         <button id="foroMore" class="btn sec" style="display:none">CARGAR MÁS</button>
-       </div>
-     </div>
-   `;
+    <div class="card">
+      <h4 style="margin-top:0">
+        INFORMACIÓN DEL SERVICIO
+      </h4>
 
-  // ===== Paginación (STAFF arriba, 10 por página, botón "CARGAR MÁS") =====
-  const paging = { cursor:null, exhausted:false, loading:false, pageSize:10, items:[] };
+      <div class="meta">
+        <strong>ACTIVIDAD:</strong>
+        ${escapeHTMLServicio(actName.toUpperCase())}
+      </div>
 
-  const renderForo = ()=>{
-    const wrap = body.querySelector('#foroList');
+      <div class="meta">
+        <strong>PROVEEDOR:</strong>
+        ${escapeHTMLServicio(
+          nombreProveedor
+            ? nombreProveedor.toUpperCase()
+            : '—'
+        )}
+      </div>
+
+      ${nombreContacto
+        ? `
+          <div class="meta">
+            <strong>CONTACTO:</strong>
+            ${escapeHTMLServicio(
+              nombreContacto.toUpperCase()
+            )}
+          </div>
+        `
+        : ''
+      }
+
+      ${telefono
+        ? `
+          <div class="meta">
+            <strong>TELÉFONO:</strong>
+            ${escapeHTMLServicio(telefono)}
+          </div>
+        `
+        : ''
+      }
+
+      ${correo
+        ? `
+          <div class="meta">
+            <strong>CORREO:</strong>
+            ${escapeHTMLServicio(
+              correo.toLowerCase()
+            )}
+          </div>
+        `
+        : ''
+      }
+
+      ${ciudad
+        ? `
+          <div class="meta">
+            <strong>CIUDAD:</strong>
+            ${escapeHTMLServicio(
+              ciudad.toUpperCase()
+            )}
+          </div>
+        `
+        : ''
+      }
+
+      ${direccion
+        ? `
+          <div class="meta">
+            <strong>DIRECCIÓN:</strong>
+            ${escapeHTMLServicio(
+              direccion.toUpperCase()
+            )}
+          </div>
+        `
+        : ''
+      }
+
+      <div class="meta">
+        <strong>HORARIO:</strong>
+        ${escapeHTMLServicio(
+          act?.horaInicio ||
+          '--:--'
+        )}
+        –
+        ${escapeHTMLServicio(
+          act?.horaFin ||
+          '--:--'
+        )}
+      </div>
+
+      <div class="meta">
+        <strong>VOUCHER:</strong>
+        ${escapeHTMLServicio(voucherLabel)}
+      </div>
+
+      ${accionesContacto}
+    </div>
+
+    <div class="act">
+      <h4>INDICACIONES</h4>
+
+      ${indicaciones
+        ? `
+          <div
+            class="meta"
+            style="white-space:pre-wrap"
+          >${autoLinkPhones(
+            escapeHTMLServicio(
+              indicaciones.toUpperCase()
+            )
+          )}</div>
+        `
+        : `
+          <div class="muted">
+            SIN INDICACIONES.
+          </div>
+        `
+      }
+
+      ${restricciones
+        ? `
+          <div
+            class="meta"
+            style="
+              white-space:pre-wrap;
+              margin-top:.65rem;
+            "
+          >
+            <strong>RESTRICCIONES:</strong><br>
+            ${escapeHTMLServicio(
+              restricciones.toUpperCase()
+            )}
+          </div>
+        `
+        : ''
+      }
+    </div>
+
+    <div class="act" id="foroBox">
+      <h4>TIPS O COMENTARIOS</h4>
+
+      <div
+        class="rowflex"
+        style="margin:.35rem 0"
+      >
+        <textarea
+          id="foroText"
+          placeholder="ESCRIBE UN COMENTARIO (SE PUBLICA CON TU CORREO)"
+        ></textarea>
+
+        <button
+          id="foroSend"
+          class="btn ok"
+        >
+          PUBLICAR
+        </button>
+      </div>
+
+      <div class="muted">-------</div>
+
+      <div
+        id="foroList"
+        style="
+          display:grid;
+          gap:.4rem;
+          margin-top:.5rem;
+        "
+      ></div>
+
+      <div
+        class="rowflex"
+        style="
+          justify-content:center;
+          margin-top:.4rem;
+        "
+      >
+        <button
+          id="foroMore"
+          class="btn sec"
+          style="display:none"
+        >
+          CARGAR MÁS
+        </button>
+      </div>
+    </div>
+  `;
+
+  /*
+    Paginación de Tips/Comentarios.
+  */
+  const paging = {
+    cursor: null,
+    exhausted: false,
+    loading: false,
+    pageSize: 10,
+    items: []
+  };
+
+  const renderForo = () => {
+    const wrap =
+      body.querySelector('#foroList');
+
     wrap.innerHTML = '';
 
-    const staff = paging.items.filter(x=>x.isStaff).sort((a,b)=> b.tsMs - a.tsMs);
-    const resto = paging.items.filter(x=>!x.isStaff).sort((a,b)=> b.tsMs - a.tsMs);
-    const ordered = [...staff, ...resto];
+    const staff = paging.items
+      .filter(item => item.isStaff)
+      .sort((a, b) => b.tsMs - a.tsMs);
 
-    if(!ordered.length){
-      wrap.innerHTML = '<div class="muted">AÚN NO HAY COMENTARIOS.</div>';
-      body.querySelector('#foroMore').style.display = paging.exhausted ? 'none' : 'none';
+    const resto = paging.items
+      .filter(item => !item.isStaff)
+      .sort((a, b) => b.tsMs - a.tsMs);
+
+    const ordered = [
+      ...staff,
+      ...resto
+    ];
+
+    if (!ordered.length) {
+      wrap.innerHTML =
+        '<div class="muted">AÚN NO HAY COMENTARIOS.</div>';
+
+      const moreBtn =
+        body.querySelector('#foroMore');
+
+      if (moreBtn) {
+        moreBtn.style.display = 'none';
+      }
+
       return;
     }
-    ordered.forEach(x=>{
-      const div = document.createElement('div');
-      div.className='card';
+
+    ordered.forEach(item => {
+      const div =
+        document.createElement('div');
+
+      div.className = 'card';
+
       div.innerHTML = `
-        <div class="meta" style="display:flex;gap:.5rem;align-items:center">
-          ${x.isStaff?'<span class="badge" style="background:#1d4ed8;color:#fff">STAFF</span>':''}
-          <strong>${(x.byEmail||'').toUpperCase()}</strong> · ${fmtFechaHoraMs(x.tsMs||Date.now())}
+        <div
+          class="meta"
+          style="
+            display:flex;
+            gap:.5rem;
+            align-items:center;
+          "
+        >
+          ${item.isStaff
+            ? `
+              <span
+                class="badge"
+                style="
+                  background:#1d4ed8;
+                  color:#fff;
+                "
+              >
+                STAFF
+              </span>
+            `
+            : ''
+          }
+
+          <strong>
+            ${escapeHTMLServicio(
+              (item.byEmail || '').toUpperCase()
+            )}
+          </strong>
+
+          · ${escapeHTMLServicio(
+            fmtFechaHoraMs(
+              item.tsMs ||
+              Date.now()
+            )
+          )}
         </div>
-        <div style="margin-top:.25rem;white-space:pre-wrap">${(x.texto||'').toString().toUpperCase()}</div>
+
+        <div
+          style="
+            margin-top:.25rem;
+            white-space:pre-wrap;
+          "
+        >${escapeHTMLServicio(
+          (item.texto || '').toString().toUpperCase()
+        )}</div>
       `;
+
       wrap.appendChild(div);
     });
 
-    const moreBtn = body.querySelector('#foroMore');
-    moreBtn.style.display = paging.exhausted ? 'none' : '';
-  };
+    const moreBtn =
+      body.querySelector('#foroMore');
 
-   const loadPage = async ()=>{
-     if (paging.loading || paging.exhausted) return;
-     paging.loading = true;
-     try{
-       let qy = query(threadColl(thread.key), orderBy('ts','desc'), limit(paging.pageSize + 1));
-       if (paging.cursor){
-         qy = query(threadColl(thread.key), orderBy('ts','desc'), startAfter(paging.cursor), limit(paging.pageSize + 1));
-       }
-       const snap = await getDocs(qy);
-       const docs = snap.docs;
-   
-       if (docs.length > paging.pageSize){
-         paging.cursor = docs[paging.pageSize - 1];
-       }else{
-         paging.cursor = docs[docs.length - 1] || paging.cursor;
-         paging.exhausted = true;
-       }
-   
-       const add = docs.slice(0, paging.pageSize).map(d=>{
-         const x = d.data() || {};
-         const tsMs = x.ts?.seconds ? x.ts.seconds*1000 : Date.now();
-         return { id:d.id, texto:String(x.texto||''), byEmail:String(x.byEmail||x.by||'').toLowerCase(), isStaff:!!x.isStaff, tsMs };
-       });
-   
-       const seen = new Set(paging.items.map(z=>z.id));
-       add.forEach(z=>{ if(!seen.has(z.id)) paging.items.push(z); });
-   
-       renderForo();
-     }catch(e){
-       console.error('FORO loadPage', e);
-       alert('NO SE PUDO CARGAR COMENTARIOS.');
-     }finally{
-       paging.loading = false;
-     }
-   };
-
-
-  body.querySelector('#foroMore').onclick = loadPage;
-
-  body.querySelector('#foroSend').onclick = async ()=>{
-    const ta = body.querySelector('#foroText');
-    const texto = (ta.value||'').trim();
-    if(!texto){ alert('ESCRIBE UN COMENTARIO.'); return; }
-    try{
-        await addDoc(threadColl(thread.key),{
-          texto,
-          byUid: state.user.uid,
-          byEmail: (state.user.email||'').toLowerCase(),
-          isStaff: !!state.is,
-          ts: serverTimestamp()
-        });
-      ta.value='';
-      // refrescar desde el inicio para mantener orden STAFF/fecha
-      paging.cursor = null; paging.exhausted = false; paging.items = [];
-      await loadPage();
-    }catch(e){
-      console.error('FORO send', e);
-      alert('NO SE PUDO PUBLICAR.');
+    if (moreBtn) {
+      moreBtn.style.display =
+        paging.exhausted
+          ? 'none'
+          : '';
     }
   };
 
-  document.getElementById('modalClose').onclick = () => { document.getElementById('modalBack').style.display='none'; };
-  back.style.display='flex';
+  const loadPage = async () => {
+    if (
+      paging.loading ||
+      paging.exhausted
+    ) {
+      return;
+    }
+
+    if (!thread.key) {
+      paging.exhausted = true;
+      renderForo();
+      return;
+    }
+
+    paging.loading = true;
+
+    try {
+      let consulta = query(
+        threadColl(thread.key),
+        orderBy('ts', 'desc'),
+        limit(paging.pageSize + 1)
+      );
+
+      if (paging.cursor) {
+        consulta = query(
+          threadColl(thread.key),
+          orderBy('ts', 'desc'),
+          startAfter(paging.cursor),
+          limit(paging.pageSize + 1)
+        );
+      }
+
+      const snap = await getDocs(
+        consulta
+      );
+
+      const documentos = snap.docs;
+
+      if (
+        documentos.length >
+        paging.pageSize
+      ) {
+        paging.cursor =
+          documentos[paging.pageSize - 1];
+      } else {
+        paging.cursor =
+          documentos[documentos.length - 1] ||
+          paging.cursor;
+
+        paging.exhausted = true;
+      }
+
+      const nuevos = documentos
+        .slice(0, paging.pageSize)
+        .map(documento => {
+          const data =
+            documento.data() ||
+            {};
+
+          const tsMs =
+            data.ts?.seconds
+              ? data.ts.seconds * 1000
+              : Date.now();
+
+          return {
+            id: documento.id,
+            texto: String(
+              data.texto ||
+              ''
+            ),
+            byEmail: String(
+              data.byEmail ||
+              data.by ||
+              ''
+            ).toLowerCase(),
+            isStaff: !!data.isStaff,
+            tsMs
+          };
+        });
+
+      const vistos = new Set(
+        paging.items.map(
+          item => item.id
+        )
+      );
+
+      nuevos.forEach(item => {
+        if (!vistos.has(item.id)) {
+          paging.items.push(item);
+        }
+      });
+
+      renderForo();
+    } catch (error) {
+      console.error(
+        'FORO loadPage',
+        error
+      );
+
+      alert(
+        'NO SE PUDO CARGAR COMENTARIOS.'
+      );
+    } finally {
+      paging.loading = false;
+    }
+  };
+
+  const foroMore =
+    body.querySelector('#foroMore');
+
+  if (foroMore) {
+    foroMore.onclick = loadPage;
+  }
+
+  const foroSend =
+    body.querySelector('#foroSend');
+
+  if (foroSend) {
+    foroSend.onclick = async () => {
+      const textarea =
+        body.querySelector('#foroText');
+
+      const texto = (
+        textarea?.value ||
+        ''
+      ).trim();
+
+      if (!texto) {
+        alert(
+          'ESCRIBE UN COMENTARIO.'
+        );
+        return;
+      }
+
+      if (!thread.key) {
+        alert(
+          'NO SE PUDO IDENTIFICAR EL HILO DE ESTA ACTIVIDAD.'
+        );
+        return;
+      }
+
+      try {
+        await addDoc(
+          threadColl(thread.key),
+          {
+            texto,
+            byUid:
+              state.user.uid,
+
+            byEmail: (
+              state.user.email ||
+              ''
+            ).toLowerCase(),
+
+            isStaff:
+              !!state.is,
+
+            ts:
+              serverTimestamp()
+          }
+        );
+
+        textarea.value = '';
+
+        paging.cursor = null;
+        paging.exhausted = false;
+        paging.items = [];
+
+        await loadPage();
+      } catch (error) {
+        console.error(
+          'FORO send',
+          error
+        );
+
+        alert(
+          'NO SE PUDO PUBLICAR.'
+        );
+      }
+    };
+  }
+
+  document.getElementById(
+    'modalClose'
+  ).onclick = () => {
+    back.style.display = 'none';
+  };
+
+  back.style.display = 'flex';
+
   await loadPage();
 }
 
