@@ -9430,16 +9430,65 @@ function prepararModalDetalleConScroll() {
       /*
        * El título y el botón de cierre permanecen visibles.
        */
-      #modalBack.modal-detalle-scroll #modalTitle {
-        flex: 0 0 auto !important;
-        min-width: 0;
-        overflow-wrap: anywhere;
+      /*
+       * La caja del modal será la referencia para ubicar la X.
+       */
+      #modalBack.modal-detalle-scroll > :first-child {
+        position: relative !important;
       }
-
+      
+      /*
+       * Título del modal.
+       * Deja espacio a la derecha para que nunca tape la X.
+       */
+      #modalBack.modal-detalle-scroll #modalTitle {
+        display: block !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+      
+        padding-right: 58px !important;
+        box-sizing: border-box !important;
+      
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
+      
+        line-height: 1.2 !important;
+      }
+      
+      /*
+       * Botón cerrar siempre visible arriba a la derecha.
+       */
       #modalBack.modal-detalle-scroll #modalClose {
-        flex: 0 0 auto !important;
-        position: relative;
-        z-index: 20;
+        position: absolute !important;
+        top: 10px !important;
+        right: 10px !important;
+        z-index: 1000 !important;
+      
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      
+        width: 42px !important;
+        height: 42px !important;
+        min-width: 42px !important;
+      
+        margin: 0 !important;
+        padding: 0 !important;
+      
+        border: none !important;
+        border-radius: 50% !important;
+      
+        background: #ffffff !important;
+        color: #1f315f !important;
+      
+        font-size: 24px !important;
+        font-weight: 700 !important;
+        line-height: 1 !important;
+      
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22) !important;
+        cursor: pointer !important;
       }
 
       /*
@@ -9492,6 +9541,24 @@ function prepararModalDetalleConScroll() {
             max(12px, env(safe-area-inset-right)) !important;
           padding-bottom:
             max(30px, env(safe-area-inset-bottom)) !important;
+        }
+
+        #modalBack.modal-detalle-scroll #modalTitle {
+          padding: 18px 58px 14px 16px !important;
+          font-size: 20px !important;
+        
+          /* Máximo dos líneas para no quitar demasiado espacio */
+          display: -webkit-box !important;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 2;
+          overflow: hidden !important;
+        }
+        
+        #modalBack.modal-detalle-scroll #modalClose {
+          position: fixed !important;
+        
+          top: max(10px, env(safe-area-inset-top)) !important;
+          right: max(10px, env(safe-area-inset-right)) !important;
         }
       }
     `;
