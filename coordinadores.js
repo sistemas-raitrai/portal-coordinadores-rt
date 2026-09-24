@@ -7914,7 +7914,14 @@ function renderItinerario(g, pane, preferDate){
   const actsWrap=document.createElement('div'); actsWrap.className='acts'; pane.appendChild(actsWrap);
 
   const hoy=toISO(new Date());
-  let startDate=preferDate || ((hoy>=fechas[0] && hoy<=fechas.at(-1))?hoy:fechas[0]);
+  let startDate =
+    preferDate ||
+    (
+      hoy >= fechas[0] &&
+      hoy <= fechas[fechas.length - 1]
+        ? hoy
+        : fechas[0]
+    );
 
   const fechasMostrar = (!qNorm) ? fechas : fechas.filter(f=>{
     const arr=(g.itinerario && g.itinerario[f])? g.itinerario[f] : [];
