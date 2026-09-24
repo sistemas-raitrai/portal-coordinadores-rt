@@ -9371,6 +9371,155 @@ async function fetchProveedorByDestino(destino, proveedorName){
   return hit;
 }
 
+function prepararModalDetalleConScroll() {
+  const STYLE_ID = 'estilos-modal-detalle-scroll';
+
+  // Evita insertar los estilos más de una vez.
+  if (!document.getElementById(STYLE_ID)) {
+    const style = document.createElement('style');
+
+    style.id = STYLE_ID;
+    style.textContent = `
+      /*
+       * Fondo general del modal.
+       * Ocupa exactamente la pantalla y no permite que el modal salga
+       * fuera del área visible.
+       */
+      #modalBack.modal-detalle-scroll {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        box-sizing: border-box !important;
+
+        display: flex;
+        align-items: center !important;
+        justify-content: center !important;
+
+        padding:
+          max(10px, env(safe-area-inset-top))
+          10px
+          max(10px, env(safe-area-inset-bottom)) !important;
+
+        overflow: hidden !important;
+        overscroll-behavior: contain;
+        touch-action: none;
+      }
+
+      /*
+       * Caja blanca del modal.
+       * Se transforma en una columna:
+       * título arriba y contenido desplazable debajo.
+       */
+      #modalBack.modal-detalle-scroll > :first-child {
+        display: flex !important;
+        flex-direction: column !important;
+
+        width: min(760px, 100%) !important;
+        max-width: 760px !important;
+
+        max-height: calc(100vh - 20px) !important;
+        max-height: calc(100dvh - 20px) !important;
+
+        margin: 0 !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+      }
+
+      /*
+       * El título y el botón de cierre permanecen visibles.
+       */
+      #modalBack.modal-detalle-scroll #modalTitle {
+        flex: 0 0 auto !important;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+
+      #modalBack.modal-detalle-scroll #modalClose {
+        flex: 0 0 auto !important;
+        position: relative;
+        z-index: 20;
+      }
+
+      /*
+       * Únicamente el cuerpo del modal se desplaza.
+       */
+      #modalBack.modal-detalle-scroll #modalBody {
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-y: contain;
+        touch-action: pan-y;
+
+        padding-bottom:
+          max(24px, env(safe-area-inset-bottom)) !important;
+
+        box-sizing: border-box !important;
+      }
+
+      /*
+       * En teléfonos el modal utiliza toda la pantalla.
+       */
+      @media (max-width: 640px) {
+        #modalBack.modal-detalle-scroll {
+          align-items: stretch !important;
+          justify-content: stretch !important;
+          padding: 0 !important;
+        }
+
+        #modalBack.modal-detalle-scroll > :first-child {
+          width: 100% !important;
+          max-width: none !important;
+
+          height: 100vh !important;
+          height: 100dvh !important;
+
+          max-height: 100vh !important;
+          max-height: 100dvh !important;
+
+          border-radius: 0 !important;
+        }
+
+        #modalBack.modal-detalle-scroll #modalBody {
+          padding-left:
+            max(12px, env(safe-area-inset-left)) !important;
+          padding-right:
+            max(12px, env(safe-area-inset-right)) !important;
+          padding-bottom:
+            max(30px, env(safe-area-inset-bottom)) !important;
+        }
+      }
+    `;
+
+    document.head.appendChild(style);
+  }
+
+  const modalBack = document.getElementById('modalBack');
+  const modalBody = document.getElementById('modalBody');
+
+  if (!modalBack || !modalBody) {
+    console.warn(
+      'No se pudo preparar el desplazamiento del modal:',
+      'faltan #modalBack o #modalBody.'
+    );
+    return;
+  }
+
+  modalBack.classList.add('modal-detalle-scroll');
+
+  // Cada vez que se abre una actividad, comienza desde arriba.
+  modalBody.scrollTop = 0;
+
+  requestAnimationFrame(() => {
+    modalBody.scrollTop = 0;
+  });
+}
+
 async function openActividadModal(
   g,
   fechaISO,
@@ -10085,7 +10234,18 @@ async function openActividadModal(
     back.style.display = 'none';
   };
 
+  prepararModalDetalleConScroll();
+
   back.style.display = 'flex';
+  
+  // Esperar a que el navegador calcule la altura definitiva.
+  requestAnimationFrame(() => {
+    const modalBody = document.getElementById('modalBody');
+  
+    if (modalBody) {
+      modalBody.scrollTop = 0;
+    }
+  });
 
   await loadPage();
 }
