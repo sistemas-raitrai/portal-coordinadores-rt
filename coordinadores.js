@@ -7391,6 +7391,514 @@ function countItinHits(g, qNorm){
   return c;
 }
 
+/*
+ * Determina cómo presentar una actividad que no está registrada
+ * como servicio formal en servicios.js.
+ */
+function clasificarActividadOperativa(nombre = '') {
+  const texto = norm(nombre);
+
+  if (
+    texto.includes('DESAYUNO') ||
+    texto.includes('ALMUERZO HOTEL') ||
+    texto.includes('ALMUERZO EN HOTEL') ||
+    texto.includes('CENA HOTEL') ||
+    texto.includes('CENA EN HOTEL')
+  ) {
+    return {
+      tipo: 'COMIDA_HOTEL',
+      icono: '🍽️',
+      etiqueta: 'COMIDA EN HOTEL'
+    };
+  }
+
+  if (
+    texto === 'SALIDA' ||
+    texto.startsWith('SALIDA ') ||
+    texto === 'TRASLADO' ||
+    texto.startsWith('TRASLADO ') ||
+    texto.startsWith('BUS ')
+  ) {
+    return {
+      tipo: 'TRASLADO',
+      icono: '🚌',
+      etiqueta: 'TRASLADO'
+    };
+  }
+
+  return {
+    tipo: 'OTRA',
+    icono: '📝',
+    etiqueta: 'ACTIVIDAD OPERATIVA'
+  };
+}
+
+
+/*
+ * Guarda la asistencia y, cuando corresponde, agrega una nota
+ * a la bitácora de esa actividad.
+ *
+ * En un servicio formal la asistencia es obligatoria.
+ * En una actividad operativa asistencia y comentario son opcionales.
+ */
+async function guardarRegistroActividad({
+  grupo,
+  fechaISO,
+  act,
+  tarjeta,
+  servicioFormal
+}) {
+  const actName = String(
+    act?.actividad ||
+    'ACTIVIDAD'
+  ).trim();
+
+  const actKey = slug(actName);
+
+  const inputAsistencia = tarjeta.querySelector(
+    '.rtAsistenciaActividad'
+  );
+
+  const inputComentario = tarjeta.querySelector(
+    '.rtComentarioActividad'
+  );
+
+  const botonGuardar = tarjeta.querySelector(
+    '.rtGuardarActividad'
+  );
+
+  const bitItems = tarjeta.querySelector(
+    '.bitItems'
+  );
+
+  const valorAsistencia = String(
+    inputAsistencia?.value ?? ''
+  ).trim();
+
+  const nota = String(
+    inputComentario?.value ?? ''
+  ).trim();
+
+  /*
+   * En servicios formales necesitamos asistencia.
+   * El comentario continúa siendo completamente opcional.
+   */
+  if (servicioFormal && valorAsistencia === '') {
+    alert(
+      'INGRESA LA ASISTENCIA DEL SERVICIO. ' +
+      'EL COMENTARIO ES OPCIONAL.'
+    );
+
+    inputAsistencia?.focus();
+    return;
+  }
+
+  /*
+   * En una actividad operativa ambos campos son opcionales.
+   * Si no se escribió nada, simplemente cerramos el formulario.
+   */
+  if (
+    !servicioFormal &&
+    valorAsistencia === '' &&
+    nota === ''
+  ) {
+    const panel = tarjeta.querySelector(
+      '.rtRegistroOperativo'
+    );
+
+    const botonAbrir = tarjeta.querySelector(
+      '.rtAbrirOperativo'
+    );
+
+    if (panel) {
+      panel.hidden = true;
+    }
+
+    if (botonAbrir) {
+      botonAbrir.textContent = '+';
+      botonAbrir.setAttribute(
+        'aria-expanded',
+        'false'
+      );
+    }
+
+    return;
+  }
+
+  let pax = null;
+
+  if (valorAsistencia !== '') {
+    pax = Number(valorAsistencia);
+
+    if (
+      !Number.isFinite(pax) ||
+      pax < 0
+    ) {
+      alert(
+        'LA ASISTENCIA DEBE SER UN NÚMERO VÁLIDO.'
+      );
+
+      inputAsistencia?.focus();
+      return;
+    }
+  }
+
+  if (botonGuardar) {
+    botonGuardar.disabled = true;
+    botonGuardar.textContent = 'GUARDANDO…';
+  }
+
+  try {
+    const usuario = auth.currentUser;
+
+    if (!usuario) {
+      throw new Error(
+        'No existe una sesión activa.'
+      );
+    }
+
+    const anterior = getSavedAsistencia(
+      grupo,
+      fechaISO,
+      actName
+    ) || {};
+
+    /*
+     * Si en una actividad operativa se registra solamente una nota,
+     * conservamos cualquier asistencia guardada anteriormente.
+     */
+    const nuevoRegistro = {
+      ...anterior,
+
+      byUid:
+        usuario.uid,
+
+      byEmail:
+        String(
+          usuario.email ||
+          ''
+        ).toLowerCase(),
+
+      updatedAt:
+        serverTimestamp()
+    };
+
+    if (pax !== null) {
+      nuevoRegistro.paxFinal = pax;
+    }
+
+    /*
+     * Se mantiene por compatibilidad con los registros anteriores,
+     * aunque la bitácora verdadera se guarda en la subcolección.
+     */
+    nuevoRegistro.notas = nota;
+
+    const refGrupo = doc(
+      db,
+      'grupos',
+      grupo.id
+    );
+
+    const payload = {};
+
+    payload[
+      `asistencias.${fechaISO}.${actKey}`
+    ] = nuevoRegistro;
+
+    await updateDoc(
+      refGrupo,
+      payload
+    );
+
+    /*
+     * Espejo local para no volver a descargar todo el grupo.
+     */
+    setSavedAsistenciaLocal(
+      grupo,
+      fechaISO,
+      actName,
+      {
+        ...anterior,
+        ...(pax !== null
+          ? { paxFinal: pax }
+          : {}),
+        notas: nota,
+        byUid: usuario.uid,
+        byEmail: String(
+          usuario.email ||
+          ''
+        ).toLowerCase(),
+        updatedAt: new Date()
+      }
+    );
+
+    /*
+     * La bitácora solo recibe un documento cuando efectivamente
+     * se escribió un comentario.
+     */
+    if (nota) {
+      const timeId = timeIdNowMs();
+
+      const refBitacora = doc(
+        db,
+        'grupos',
+        grupo.id,
+        'bitacora',
+        actKey,
+        fechaISO,
+        timeId
+      );
+
+      await setDoc(
+        refBitacora,
+        {
+          texto:
+            nota,
+
+          byUid:
+            usuario.uid,
+
+          byEmail:
+            String(
+              usuario.email ||
+              ''
+            ).toLowerCase(),
+
+          ts:
+            serverTimestamp()
+        }
+      );
+
+      /*
+       * Mantiene el comportamiento actual:
+       * una nota de bitácora genera una alerta para Operaciones.
+       */
+      await addDoc(
+        collection(
+          db,
+          'alertas'
+        ),
+        {
+          audience:
+            '',
+
+          mensaje:
+            `NOTA EN ${actName.toUpperCase()}: ${nota.toUpperCase()}`,
+
+          createdAt:
+            serverTimestamp(),
+
+          createdBy: {
+            uid:
+              state.user.uid,
+
+            email:
+              String(
+                state.user.email ||
+                ''
+              ).toLowerCase()
+          },
+
+          readBy:
+            {},
+
+          groupInfo: {
+            grupoId:
+              grupo.id,
+
+            nombre:
+              nombreOperativoGrupo(
+                grupo
+              ),
+
+            code:
+              String(
+                grupo.numeroNegocio ||
+                ''
+              ) +
+              (
+                grupo.identificador
+                  ? `-${grupo.identificador}`
+                  : ''
+              ),
+
+            destino:
+              grupo.destino ||
+              null,
+
+            programa:
+              grupo.programa ||
+              null,
+
+            fechaActividad:
+              fechaISO,
+
+            actividad:
+              actName
+          }
+        }
+      );
+
+      if (bitItems) {
+        await loadBitacora(
+          grupo.id,
+          fechaISO,
+          actKey,
+          bitItems
+        );
+      }
+
+      if (inputComentario) {
+        inputComentario.value = '';
+      }
+
+      await window.renderGlobalAlertsV2();
+    }
+
+    actualizarResumenRegistroActividad(
+      tarjeta,
+      grupo,
+      fechaISO,
+      actName
+    );
+
+    if (botonGuardar) {
+      botonGuardar.textContent = 'GUARDADO';
+    }
+
+    setTimeout(
+      () => {
+        if (botonGuardar) {
+          botonGuardar.textContent = 'GUARDAR';
+          botonGuardar.disabled = false;
+        }
+      },
+      900
+    );
+  } catch (error) {
+    console.error(
+      'guardarRegistroActividad',
+      error
+    );
+
+    if (botonGuardar) {
+      botonGuardar.disabled = false;
+      botonGuardar.textContent = 'GUARDAR';
+    }
+
+    alert(
+      'NO SE PUDO GUARDAR LA ACTIVIDAD.'
+    );
+  }
+}
+
+
+/*
+ * Actualiza el pequeño indicador que aparece junto al nombre
+ * de una actividad operativa.
+ */
+function actualizarResumenRegistroActividad(
+  tarjeta,
+  grupo,
+  fechaISO,
+  actName
+) {
+  const resumen = tarjeta.querySelector(
+    '.rtResumenOperativo'
+  );
+
+  if (!resumen) {
+    return;
+  }
+
+  const guardado = getSavedAsistencia(
+    grupo,
+    fechaISO,
+    actName
+  );
+
+  if (
+    guardado?.paxFinal !== undefined &&
+    guardado?.paxFinal !== null
+  ) {
+    resumen.textContent =
+      `👥 ${guardado.paxFinal}`;
+
+    resumen.hidden = false;
+  } else {
+    resumen.textContent = '';
+    resumen.hidden = true;
+  }
+}
+
+
+/*
+ * Abre y cierra el registro opcional de una actividad operativa.
+ */
+async function alternarRegistroActividadOperativa({
+  grupo,
+  fechaISO,
+  act,
+  tarjeta
+}) {
+  const panel = tarjeta.querySelector(
+    '.rtRegistroOperativo'
+  );
+
+  const boton = tarjeta.querySelector(
+    '.rtAbrirOperativo'
+  );
+
+  const bitItems = tarjeta.querySelector(
+    '.bitItems'
+  );
+
+  if (
+    !panel ||
+    !boton
+  ) {
+    return;
+  }
+
+  const abrir = panel.hidden;
+
+  panel.hidden = !abrir;
+
+  boton.textContent =
+    abrir
+      ? '−'
+      : '+';
+
+  boton.setAttribute(
+    'aria-expanded',
+    abrir
+      ? 'true'
+      : 'false'
+  );
+
+  /*
+   * La bitácora de actividades operativas se descarga solamente
+   * cuando el coordinador abre el panel.
+   */
+  if (
+    abrir &&
+    bitItems &&
+    bitItems.dataset.loaded !== 'true'
+  ) {
+    bitItems.dataset.loaded = 'true';
+
+    await loadBitacora(
+      grupo.id,
+      fechaISO,
+      slug(
+        act?.actividad ||
+        'ACTIVIDAD'
+      ),
+      bitItems
+    );
+  }
+}
+
 function renderItinerario(g, pane, preferDate){
   pane.innerHTML='';
   const map = g?.itinerario || {};
@@ -7428,233 +7936,689 @@ function renderItinerario(g, pane, preferDate){
   return countItinHits(g, qNorm);
 }
 
-async function renderActs(grupo, fechaISO, cont){
-  cont.innerHTML='';
+async function renderActs(
+  grupo,
+  fechaISO,
+  cont
+) {
+  cont.innerHTML = '';
 
-  // Banner superior: Alojamiento del día + aviso último día (igual que antes)
+  /*
+   * Banner de alojamiento y último día.
+   */
   try {
-    const top = document.createElement('div');
-    top.className = 'act';
-    const hoteles = await loadHotelesInfo(grupo) || [];
-    const matchHotel = hoteles.find(h => {
-      const ci = toISO(h.checkIn);
-      const co = toISO(h.checkOut);
-      return ci && co && (fechaISO >= ci) && (fechaISO < co);
-    });
-    const hotelName = (matchHotel?.hotelNombre || matchHotel?.hotel?.nombre || '').toString().toUpperCase();
-    const isLastDay = (toISO(grupo.fechaFin) === fechaISO);
-    let line = '';
-    if (hotelName) line = `ALOJAMIENTO EN "${hotelName}"`;
-    if (isLastDay) line = line ? `${line} · ÚLTIMO DÍA DEL VIAJE` : 'ÚLTIMO DÍA DEL VIAJE';
-    if (line) { top.innerHTML = `<h4>${line}</h4>`; cont.appendChild(top); }
-  } catch (e) { D_HOTEL('ERROR BANNER ALOJAMIENTO/ÚLTIMO DÍA', e); }
+    const top = document.createElement(
+      'div'
+    );
 
-  const q = norm(state.groupQ||'');
-  // Obtener actividades del día tolerando objeto indexado
-  let acts = (grupo.itinerario && grupo.itinerario[fechaISO]) ? grupo.itinerario[fechaISO] : [];
-  if (!Array.isArray(acts)) {
-    acts = Object.values(acts || {}).filter(x => x && typeof x === 'object');
+    top.className = 'act';
+
+    const hoteles =
+      await loadHotelesInfo(
+        grupo
+      ) || [];
+
+    const matchHotel = hoteles.find(
+      hotel => {
+        const checkIn = toISO(
+          hotel.checkIn
+        );
+
+        const checkOut = toISO(
+          hotel.checkOut
+        );
+
+        return (
+          checkIn &&
+          checkOut &&
+          fechaISO >= checkIn &&
+          fechaISO < checkOut
+        );
+      }
+    );
+
+    const hotelName = String(
+      matchHotel?.hotelNombre ||
+      matchHotel?.hotel?.nombre ||
+      ''
+    ).toUpperCase();
+
+    const isLastDay =
+      toISO(
+        grupo.fechaFin
+      ) === fechaISO;
+
+    let linea = '';
+
+    if (hotelName) {
+      linea =
+        `ALOJAMIENTO EN "${hotelName}"`;
+    }
+
+    if (isLastDay) {
+      linea = linea
+        ? `${linea} · ÚLTIMO DÍA DEL VIAJE`
+        : 'ÚLTIMO DÍA DEL VIAJE';
+    }
+
+    if (linea) {
+      top.innerHTML =
+        `<h4>${escapeHTMLServicio(linea)}</h4>`;
+
+      cont.appendChild(
+        top
+      );
+    }
+  } catch (error) {
+    D_HOTEL(
+      'ERROR BANNER ALOJAMIENTO/ÚLTIMO DÍA',
+      error
+    );
   }
 
-  // Ocultar "Desayuno Hotel" en la vista de itinerario
-  acts = acts.filter(a => String(a?.actividad || '').toUpperCase() !== 'DESAYUNO HOTEL');
+  const busqueda = norm(
+    state.groupQ ||
+    ''
+  );
 
-  // Orden por hora de inicio (temprano → tarde)
-  acts = acts.slice().sort((a,b)=> timeVal(a?.horaInicio) - timeVal(b?.horaInicio));
+  let actividades =
+    grupo.itinerario?.[fechaISO] ||
+    [];
 
-  if(q) acts = acts.filter(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(q));
-  if (!acts.length){ cont.innerHTML='<div class="muted">SIN ACTIVIDADES PARA ESTE DÍA.</div>'; return; }
+  if (!Array.isArray(actividades)) {
+    actividades = Object.values(
+      actividades ||
+      {}
+    ).filter(
+      item =>
+        item &&
+        typeof item === 'object'
+    );
+  }
 
-  // ===== Render inmediato, cargas asíncronas después =====
-  for (const act of acts){
-    const plan  = calcPlan(act, grupo);
-    const saved = getSavedAsistencia(grupo, fechaISO, act.actividad);
-    const estado = (grupo.serviciosEstado?.[fechaISO]?.[slug(act.actividad||'')]?.estado) || '';
+  /*
+   * IMPORTANTE:
+   * Ya no se elimina DESAYUNO HOTEL.
+   * Todas las actividades del itinerario se muestran.
+   */
+  actividades = actividades
+    .slice()
+    .sort(
+      (a, b) =>
+        timeVal(a?.horaInicio) -
+        timeVal(b?.horaInicio)
+    );
 
-    const paxFinalInit = (saved?.paxFinal ?? '');
-    const actName = act.actividad || 'ACTIVIDAD';
-    const actKey  = slug(actName);
+  if (busqueda) {
+    actividades = actividades.filter(
+      actividad =>
+        norm(
+          [
+            actividad.actividad,
+            actividad.proveedor,
+            actividad.horaInicio,
+            actividad.horaFin
+          ].join(' ')
+        ).includes(
+          busqueda
+        )
+    );
+  }
 
-    const div = document.createElement('div');
-    div.className = 'act';
-
-    const estadoHtml = estado ? ('· <span class="muted">' + String(estado).toUpperCase() + '</span>') : '';
-
-    // Botón de voucher: placeholder que reemplazamos cuando llegue el servicio
-    const vchPlaceholder = '<span class="btnVchWrap"></span>';
-
-      div.innerHTML =
-        '<h4>' + (actName || '').toUpperCase() + ' ' + estadoHtml + '</h4>' +
-        '<div class="meta">' +
-
-      '<div class="rowflex" style="margin:.35rem 0">' +
-        '<input type="number" min="0" inputmode="numeric" placeholder="N° ASISTENCIA" value="' + paxFinalInit + '"/>' +
-        '<textarea placeholder="COMENTARIOS PARA BITÁCORA"></textarea>' +
-        '<button class="btn ok btnSave">GUARDAR</button>' +
-        vchPlaceholder +
-        '<button class="btn sec btnActInfo">DETALLE / TIPS</button>' +
-      '</div>' +
-      '<div class="bitacora" style="margin-top:.4rem">' +
-        '<div class="muted" style="margin-bottom:.25rem">BITÁCORA:</div>' +
-        '<div class="bitItems" style="display:grid;gap:.35rem"><div class="muted">CARGANDO…</div></div>' +
+  if (!actividades.length) {
+    cont.innerHTML =
+      '<div class="muted">' +
+        'SIN ACTIVIDADES PARA ESTE DÍA.' +
       '</div>';
 
-    cont.appendChild(div);
+    return;
+  }
 
-    // — Detalle/Comentarios (servicio se resuelve dentro del modal si es necesario)
-    const btnAI = div.querySelector('.btnActInfo');
-    
-    if (btnAI) {
-      btnAI.onclick = async () => {
-        try {
-          const servicio = await findServicio({
+  /*
+   * Primero se crean todas las tarjetas inmediatamente.
+   * Después cada una resuelve su servicio en segundo plano.
+   */
+  for (const act of actividades) {
+    const actName = String(
+      act?.actividad ||
+      'ACTIVIDAD'
+    ).trim();
+
+    const actKey = slug(
+      actName
+    );
+
+    const estado =
+      grupo
+        .serviciosEstado
+        ?.[fechaISO]
+        ?.[actKey]
+        ?.estado ||
+      '';
+
+    const tarjeta =
+      document.createElement(
+        'div'
+      );
+
+    tarjeta.className =
+      'act rtTarjetaActividad';
+
+    tarjeta.dataset.actKey =
+      actKey;
+
+    const estadoHTML = estado
+      ? (
+          ' · <span class="muted">' +
+          escapeHTMLServicio(
+            String(
+              estado
+            ).toUpperCase()
+          ) +
+          '</span>'
+        )
+      : '';
+
+    /*
+     * Encabezado inmediato mientras se determina si es un
+     * servicio formal o una actividad operativa.
+     */
+    tarjeta.innerHTML = `
+      <div
+        class="rtEncabezadoActividad"
+        style="
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:.75rem;
+        "
+      >
+        <h4
+          style="
+            margin:0;
+            min-width:0;
+            overflow-wrap:anywhere;
+          "
+        >
+          ${escapeHTMLServicio(
+            actName.toUpperCase()
+          )}
+          ${estadoHTML}
+        </h4>
+
+        <span
+          class="muted rtCargandoActividad"
+          style="
+            flex:0 0 auto;
+            font-size:.8rem;
+          "
+        >
+          CARGANDO…
+        </span>
+      </div>
+
+      <div class="rtContenidoActividad"></div>
+    `;
+
+    cont.appendChild(
+      tarjeta
+    );
+
+    /*
+     * La búsqueda del servicio ocurre sin bloquear la carga
+     * del resto del itinerario.
+     */
+    (async () => {
+      let servicio = null;
+
+      try {
+        servicio = await findServicio({
+          destino:
+            act.servicioDestino ||
+            grupo.destino,
+
+          anoViaje:
+            grupo.anoViaje ||
+            state.anoViajeActivo,
+
+          servicioId:
+            act.servicioId ||
+            '',
+
+          nombre:
+            actName
+        });
+      } catch (error) {
+        console.warn(
+          'findServicio falló',
+          {
             destino:
-              act.servicioDestino ||
               grupo.destino,
-    
-            anoViaje:
-              grupo.anoViaje ||
-              state.anoViajeActivo,
-    
-            servicioId:
-              act.servicioId ||
-              '',
-    
-            nombre:
-              actName
-          }).catch(() => null);
-    
-          const tipoRaw = (
-            servicio?.voucher ||
-            'No Aplica'
-          ).toString();
-    
-          const tipo =
-            /electron/i.test(tipoRaw)
-              ? 'ELECTRONICO'
-              : /fisic/i.test(tipoRaw)
-                ? 'FISICO'
-                : /correo/i.test(tipoRaw)
-                  ? 'CORREO'
-                  : 'NOAPLICA';
-    
-          await openActividadModal(
+
+            actividad:
+              actName,
+
+            error
+          }
+        );
+
+        servicio = null;
+      }
+
+      const cargando =
+        tarjeta.querySelector(
+          '.rtCargandoActividad'
+        );
+
+      cargando?.remove();
+
+      const contenido =
+        tarjeta.querySelector(
+          '.rtContenidoActividad'
+        );
+
+      if (!contenido) {
+        return;
+      }
+
+      const guardado =
+        getSavedAsistencia(
+          grupo,
+          fechaISO,
+          actName
+        );
+
+      const paxInicial =
+        guardado?.paxFinal ??
+        '';
+
+      /*
+       * =====================================================
+       * SERVICIO FORMAL REGISTRADO EN servicios.js
+       * =====================================================
+       */
+      if (servicio) {
+        tarjeta.classList.add(
+          'rtServicioFormal'
+        );
+
+        const tipoRaw = String(
+          servicio.voucher ||
+          'No Aplica'
+        );
+
+        const tipoVoucher =
+          /electron/i.test(tipoRaw)
+            ? 'ELECTRONICO'
+            : /fisic/i.test(tipoRaw)
+              ? 'FISICO'
+              : /correo/i.test(tipoRaw)
+                ? 'CORREO'
+                : 'NOAPLICA';
+
+        contenido.innerHTML = `
+          <div
+            class="rowflex"
+            style="margin:.35rem 0"
+          >
+            <input
+              class="rtAsistenciaActividad"
+              type="number"
+              min="0"
+              inputmode="numeric"
+              placeholder="N° ASISTENCIA"
+              value="${escapeHTMLServicio(
+                paxInicial
+              )}"
+            />
+
+            <textarea
+              class="rtComentarioActividad"
+              placeholder="COMENTARIO PARA BITÁCORA (OPCIONAL)"
+            ></textarea>
+
+            <button
+              class="btn ok rtGuardarActividad"
+              type="button"
+            >
+              GUARDAR
+            </button>
+
+            <span class="btnVchWrap"></span>
+
+            <button
+              class="btn sec btnActInfo"
+              type="button"
+            >
+              DETALLE / TIPS
+            </button>
+          </div>
+
+          <div
+            class="bitacora"
+            style="margin-top:.4rem"
+          >
+            <div
+              class="muted"
+              style="margin-bottom:.25rem"
+            >
+              BITÁCORA DEL GRUPO:
+            </div>
+
+            <div
+              class="bitItems"
+              style="display:grid;gap:.35rem"
+            >
+              <div class="muted">
+                CARGANDO…
+              </div>
+            </div>
+          </div>
+        `;
+
+        const botonGuardar =
+          tarjeta.querySelector(
+            '.rtGuardarActividad'
+          );
+
+        botonGuardar.onclick =
+          async () => {
+            await guardarRegistroActividad({
+              grupo,
+              fechaISO,
+              act,
+              tarjeta,
+              servicioFormal:
+                true
+            });
+          };
+
+        const botonDetalle =
+          tarjeta.querySelector(
+            '.btnActInfo'
+          );
+
+        botonDetalle.onclick =
+          async () => {
+            try {
+              await openActividadModal(
+                grupo,
+                fechaISO,
+                act,
+                servicio,
+                tipoVoucher
+              );
+            } catch (error) {
+              console.error(
+                'openActividadModal error',
+                error
+              );
+            }
+          };
+
+        /*
+         * Solo los servicios formales pueden tener finalización,
+         * voucher, clave o confirmación por correo.
+         */
+        if (
+          tipoVoucher !==
+          'NOAPLICA'
+        ) {
+          const wrap =
+            tarjeta.querySelector(
+              '.btnVchWrap'
+            );
+
+          if (wrap) {
+            const botonFinalizar =
+              document.createElement(
+                'button'
+              );
+
+            botonFinalizar.type =
+              'button';
+
+            botonFinalizar.className =
+              'btn sec';
+
+            botonFinalizar.textContent =
+              'FINALIZAR…';
+
+            botonFinalizar.onclick =
+              async () => {
+                await openVoucherModal(
+                  grupo,
+                  fechaISO,
+                  act,
+                  servicio,
+                  tipoVoucher
+                );
+              };
+
+            wrap.replaceWith(
+              botonFinalizar
+            );
+          }
+        }
+
+        const bitItems =
+          tarjeta.querySelector(
+            '.bitItems'
+          );
+
+        loadBitacora(
+          grupo.id,
+          fechaISO,
+          actKey,
+          bitItems
+        ).catch(
+          error => {
+            console.error(
+              error
+            );
+
+            bitItems.innerHTML =
+              '<div class="muted">' +
+                'NO SE PUDO CARGAR LA BITÁCORA.' +
+              '</div>';
+          }
+        );
+
+        return;
+      }
+
+      /*
+       * =====================================================
+       * ACTIVIDAD OPERATIVA SIN SERVICIO FORMAL
+       * =====================================================
+       */
+      tarjeta.classList.add(
+        'rtActividadOperativa'
+      );
+
+      const clasificacion =
+        clasificarActividadOperativa(
+          actName
+        );
+
+      const encabezado =
+        tarjeta.querySelector(
+          '.rtEncabezadoActividad'
+        );
+
+      encabezado.insertAdjacentHTML(
+        'afterbegin',
+        `
+          <span
+            aria-hidden="true"
+            style="
+              flex:0 0 auto;
+              font-size:1.15rem;
+            "
+          >
+            ${clasificacion.icono}
+          </span>
+        `
+      );
+
+      /*
+       * El encabezado queda compacto:
+       * nombre, indicador de asistencia si existe y botón +.
+       */
+      encabezado.insertAdjacentHTML(
+        'beforeend',
+        `
+          <div
+            style="
+              display:flex;
+              align-items:center;
+              gap:.5rem;
+              flex:0 0 auto;
+            "
+          >
+            <span
+              class="muted rtResumenOperativo"
+              ${
+                paxInicial === ''
+                  ? 'hidden'
+                  : ''
+              }
+            >
+              ${
+                paxInicial === ''
+                  ? ''
+                  : `👥 ${escapeHTMLServicio(
+                      paxInicial
+                    )}`
+              }
+            </span>
+
+            <button
+              class="btn sec rtAbrirOperativo"
+              type="button"
+              aria-expanded="false"
+              aria-label="Abrir registro opcional"
+              title="REGISTRO OPCIONAL"
+              style="
+                width:38px;
+                min-width:38px;
+                height:38px;
+                padding:0;
+                border-radius:50%;
+                font-size:1.4rem;
+                line-height:1;
+              "
+            >
+              +
+            </button>
+          </div>
+        `
+      );
+
+      contenido.innerHTML = `
+        <div
+          class="rtRegistroOperativo"
+          hidden
+          style="
+            margin-top:.65rem;
+            padding-top:.65rem;
+            border-top:1px solid #ddd;
+          "
+        >
+          <div
+            class="muted"
+            style="margin-bottom:.45rem"
+          >
+            ${escapeHTMLServicio(
+              clasificacion.etiqueta
+            )}
+            · REGISTRO OPCIONAL
+          </div>
+
+          <div
+            class="rowflex"
+            style="margin:.35rem 0"
+          >
+            <input
+              class="rtAsistenciaActividad"
+              type="number"
+              min="0"
+              inputmode="numeric"
+              placeholder="ASISTENCIA (OPCIONAL)"
+              value="${escapeHTMLServicio(
+                paxInicial
+              )}"
+            />
+
+            <textarea
+              class="rtComentarioActividad"
+              placeholder="COMENTARIO PARA BITÁCORA (OPCIONAL)"
+            ></textarea>
+
+            <button
+              class="btn ok rtGuardarActividad"
+              type="button"
+            >
+              GUARDAR
+            </button>
+          </div>
+
+          <div
+            class="bitacora"
+            style="margin-top:.4rem"
+          >
+            <div
+              class="muted"
+              style="margin-bottom:.25rem"
+            >
+              BITÁCORA DEL GRUPO:
+            </div>
+
+            <div
+              class="bitItems"
+              data-loaded="false"
+              style="display:grid;gap:.35rem"
+            >
+              <div class="muted">
+                ABRE EL REGISTRO PARA CARGAR LA BITÁCORA.
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const botonAbrir =
+        tarjeta.querySelector(
+          '.rtAbrirOperativo'
+        );
+
+      botonAbrir.onclick =
+        async () => {
+          await alternarRegistroActividadOperativa({
             grupo,
             fechaISO,
             act,
-            servicio,
-            tipo
-          );
-        } catch (error) {
-          console.error(
-            'openActividadModal error',
-            error
-          );
-        }
-      };
-    }
-
-    // — Guardar asistencia/nota (igual que antes)
-    div.querySelector('.btnSave').onclick = async ()=>{
-      const btn = div.querySelector('.btnSave'); btn.disabled = true;
-      try{
-        const pax  = Number(div.querySelector('input').value || 0);
-        const nota = String(div.querySelector('textarea').value || '').trim();
-        const refGrupo = doc(db,'grupos',grupo.id);
-        const payload = {};
-        payload[`asistencias.${fechaISO}.${actKey}`] = {
-          paxFinal:pax, notas:nota, byUid:auth.currentUser.uid,
-          byEmail:String(auth.currentUser.email||'').toLowerCase(), updatedAt:serverTimestamp()
+            tarjeta
+          });
         };
-        await updateDoc(refGrupo, payload);
-        setSavedAsistenciaLocal(grupo, fechaISO, actName, { paxFinal:pax, notas:nota });
 
-        if(nota){
-          const timeId = timeIdNowMs();
-          const ref = doc(db,'grupos',grupo.id,'bitacora',actKey,fechaISO,timeId);
-          await setDoc(ref, {
-            texto: nota,
-            byUid: auth.currentUser.uid,
-            byEmail: (auth.currentUser.email||'').toLowerCase(),
-            ts: serverTimestamp()
+      const botonGuardar =
+        tarjeta.querySelector(
+          '.rtGuardarActividad'
+        );
+
+      botonGuardar.onclick =
+        async () => {
+          await guardarRegistroActividad({
+            grupo,
+            fechaISO,
+            act,
+            tarjeta,
+            servicioFormal:
+              false
           });
-
-          // Alerta para Operaciones
-          await addDoc(collection(db,'alertas'),{
-            audience:'',
-            mensaje: `NOTA EN ${actName.toUpperCase()}: ${nota.toUpperCase()}`,
-            createdAt: serverTimestamp(),
-            createdBy:{ uid:state.user.uid, email:(state.user.email||'').toLowerCase() },
-            readBy:{},
-            groupInfo:{
-              grupoId:grupo.id,
-              nombre: (nombreOperativoGrupo(grupo)),
-              code: (grupo.numeroNegocio||'')+(grupo.identificador?('-'+grupo.identificador):''),
-              destino: (grupo.destino||null),
-              programa: (grupo.programa||null),
-              fechaActividad: fechaISO,
-              actividad: actName
-            }
-          });
-
-          await loadBitacora(grupo.id, fechaISO, actKey, div.querySelector('.bitItems'));
-          div.querySelector('textarea').value='';
-          await window.renderGlobalAlertsV2();
-        }
-
-        btn.textContent='GUARDADO'; setTimeout(()=>{ btn.textContent='GUARDAR'; btn.disabled=false; },900);
-      }catch(e){ console.error(e); btn.disabled=false; alert('NO SE PUDO GUARDAR.'); }
-    };
-
-    // ===== CARGAS EN SEGUNDO PLANO =====
-
-    // (1) Bitácora asíncrona (reemplaza el “CARGANDO…” cuando llega)
-    loadBitacora(grupo.id, fechaISO, actKey, div.querySelector('.bitItems'))
-      .catch(e => {
-        console.error(e);
-        div.querySelector('.bitItems').innerHTML = '<div class="muted">NO SE PUDO CARGAR LA BITÁCORA.</div>';
-      });
-
-    // (2) Servicio / botón de voucher asíncrono (unificado)
-      (async () => {
-        try {
-          const servicio = await findServicio({
-            destino:
-              act.servicioDestino ||
-              grupo.destino,
-          
-            anoViaje:
-              grupo.anoViaje ||
-              state.anoViajeActivo,
-          
-            servicioId:
-              act.servicioId ||
-              '',
-          
-            nombre:
-              actName
-          });
-          const tipoRaw  = (servicio?.voucher || 'No Aplica').toString();
-          const tipo = /electron/i.test(tipoRaw) ? 'ELECTRONICO'
-                     : /fisic/i.test(tipoRaw)    ? 'FISICO'
-                     : /correo/i.test(tipoRaw)   ? 'CORREO'
-                     : 'NOAPLICA';
-      
-          if (tipo !== 'NOAPLICA') {
-            const wrap = div.querySelector('.btnVchWrap');
-            if (wrap) {
-              const btn = document.createElement('button');
-              btn.className = 'btn sec';
-              btn.textContent = 'FINALIZAR…';
-              btn.onclick = async () => { await openVoucherModal(grupo, fechaISO, act, servicio, tipo); };
-              wrap.replaceWith(btn);
-            }
-          }
-        } catch (e) {
-          console.warn('findServicio falló', { destino: grupo.destino, act: actName, e });
-        }
-      })();
-
+        };
+    })();
   }
 }
 
