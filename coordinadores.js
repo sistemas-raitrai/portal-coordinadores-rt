@@ -1403,6 +1403,7 @@ function normalizarResumenCoordinadores(
                 'object'
           )
           .map(coordinador => ({
+            visibleEnPortal: coordinador.visibleEnPortal !== false,
             id: String(
               coordinador.id ||
               coordinador.coordinadorId ||
@@ -1665,6 +1666,20 @@ async function cargarResumenesAno(
     );
 
   return grupos;
+}
+
+function viajeVisibleParaCoordinador(grupo, coordinador, user) {
+  const id = String(coordinador?.id || '').trim();
+  const correo = String(coordinador?.email || user?.email || '')
+    .trim().toLowerCase();
+
+  const asignaciones = grupo.coordinadores || [];
+  const porId = asignaciones.find(item => id && item.id === id);
+  if (porId) return porId.visibleEnPortal !== false;
+
+  return !asignaciones.some(item =>
+    correo && item.email === correo && item.visibleEnPortal === false
+  );
 }
 
 function grupoPerteneceCoordinador(
@@ -2215,13 +2230,9 @@ async function loadGruposForCoordinador(
 
   const wanted = isAll
     ? resumenes.slice()
-    : resumenes.filter(
-        grupo =>
-          grupoPerteneceCoordinador(
-            grupo,
-            coord,
-            user
-          )
+    : resumenes.filter(grupo =>
+        grupoPerteneceCoordinador(grupo, coord, user) &&
+        viajeVisibleParaCoordinador(grupo, coord, user)
       );
 
   const hoy =
@@ -2296,13 +2307,17 @@ async function loadGruposForCoordinador(
     state.idx = 0;
 
     if (cont) {
-      cont.innerHTML =
-        `
-          <div class="muted">
-            NO HAY VIAJES ASIGNADOS
-            PARA EL AÑO ${anoViaje}.
-          </div>
-        `;
+      cont.innerHTML = `
+        <p class="muted">No hay viajes visibles para el año ${anoViaje}.</p>
+        <button class="btn sec" type="button" id="rtAbrirPerfilSinViajes">
+          MI PERFIL
+        </button>
+        <div class="rtPerfilPanel" id="rtPerfilSinViajes"></div>
+      `;
+
+      const panel = cont.querySelector('#rtPerfilSinViajes');
+      cont.querySelector('#rtAbrirPerfilSinViajes').onclick = () =>
+        renderPerfilPortal(panel);
     }
 
     return;
@@ -5323,6 +5338,457 @@ async function renderNominaCoordinador(
 }
 
 /* ====== VISTA GRUPO ====== */
+const RT_DOCUMENTOS_PERFIL = [
+  ['foto', 'Foto de perfil'],
+  ['antecedentes', 'Certificado de antecedentes'],
+  ['inhabilidad', 'Certificado de inhabilidad para trabajar con menores'],
+  ['primerosAuxilios', 'Certificado de primeros auxilios'],
+  ['carnetAnverso', 'Carnet de identidad · anverso'],
+  ['carnetReverso', 'Carnet de identidad · reverso']
+];
+
+async function llamarApiPerfil(action, data = {}) {
+  const usuario = auth.currentUser;
+  if (!usuario) throw new Error('Inicia sesión para abrir tu perfil.');
+
+  const token = await usuario.getIdToken();
+  const respuesta = await fetch(
+    'https://southamerica-west1-sist-op-rt.cloudfunctions.net/controlCoordinadoresApi',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        action,
+        data,
+        requestId: crypto.randomUUID()
+      })
+    }
+  );
+
+  const resultado = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok || !resultado.ok) {
+    throw new Error(resultado.error || 'No se pudo completar la operación.');
+  }
+
+  return resultado;
+}
+
+function fechaPerfilISO(valor) {
+  return String(valor ?? '').match(/^\d{4}-\d{2}-\d{2}/)?.[0] || '';
+}
+
+function textoVigenciaPerfil(meta, vencimiento) {
+  if (!meta) return 'Faltante';
+
+  const vence = fechaPerfilISO(vencimiento);
+  if (!vence) return 'Sin vigencia informada';
+
+  const { ano, mes, dia } = obtenerFechaChile();
+  const hoy = `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+  const dias = (Date.parse(vence) - Date.parse(hoy)) / 86400000;
+
+  if (dias < 0) return `Vencido · ${dmy(vence)}`;
+  if (dias <= 30) return `Por vencer · ${dmy(vence)}`;
+  return `Vigente hasta ${dmy(vence)}`;
+}
+
+async function prepararArchivoPerfil(file, tipo) {
+  const carnet = tipo.startsWith('carnet');
+  const max = (carnet ? 12 : tipo === 'foto' ? 5 : 10) * 1024 * 1024;
+  const imagenes = ['image/jpeg', 'image/png', 'image/webp'];
+  const permitidos = carnet || tipo === 'foto'
+    ? imagenes
+    : [...imagenes, 'application/pdf'];
+
+  if (!permitidos.includes(file.type)) {
+    throw new Error('Selecciona un archivo en un formato admitido.');
+  }
+
+  if (!file.size || file.size > max) {
+    throw new Error(`Selecciona un archivo de hasta ${max / 1024 / 1024} MB.`);
+  }
+
+  let contenido = file;
+  let mime = file.type;
+
+  if (carnet) {
+    const url = URL.createObjectURL(file);
+
+    try {
+      const imagen = new Image();
+      await new Promise((resolve, reject) => {
+        imagen.onload = resolve;
+        imagen.onerror = () => reject(new Error('No se pudo abrir la imagen.'));
+        imagen.src = url;
+      });
+
+      const escala = Math.min(1, 1200 / Math.max(imagen.width, imagen.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(imagen.width * escala));
+      canvas.height = Math.max(1, Math.round(imagen.height * escala));
+
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(imagen, 0, 0, canvas.width, canvas.height);
+
+      let comprimida = null;
+      for (const calidad of [0.88, 0.75, 0.6, 0.45, 0.3]) {
+        comprimida = await new Promise(resolve =>
+          canvas.toBlob(resolve, 'image/jpeg', calidad)
+        );
+        if (comprimida?.size <= 180000) break;
+      }
+
+      if (!comprimida || comprimida.size > 180000) {
+        throw new Error('La imagen del carnet es demasiado grande.');
+      }
+
+      contenido = comprimida;
+      mime = 'image/jpeg';
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  const base64 = await new Promise((resolve, reject) => {
+    const lector = new FileReader();
+    lector.onload = () => resolve(String(lector.result).split(',')[1]);
+    lector.onerror = () => reject(new Error('No se pudo leer el archivo.'));
+    lector.readAsDataURL(contenido);
+  });
+
+  return {
+    nombre: carnet ? `${tipo}.jpg` : file.name,
+    mime,
+    base64
+  };
+}
+
+function crearCampoPerfil(texto, tipo, valor = '') {
+  const label = document.createElement('label');
+  label.className = 'rtPerfilCampo';
+  label.append(document.createTextNode(texto));
+
+  const input = document.createElement(tipo === 'textarea' ? 'textarea' : 'input');
+
+  if (tipo !== 'textarea') input.type = tipo;
+  if (tipo !== 'file') input.value = valor;
+
+  label.append(input);
+  return { label, input };
+}
+
+async function abrirDocumentoPerfil(coordinadorId, tipo, nombre) {
+  const resultado = await llamarApiPerfil('myFileRead', { coordinadorId, tipo });
+  const admitidos = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+  const mime = admitidos.includes(resultado.mime)
+    ? resultado.mime
+    : 'application/octet-stream';
+
+  const bytes = Uint8Array.from(atob(resultado.base64), letra => letra.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = nombre || tipo;
+  document.body.append(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function crearDocumentoPerfil(perfil, tipo, titulo) {
+  const foto = tipo === 'foto';
+  const carnet = tipo.startsWith('carnet');
+  const meta = perfil.documentos?.[tipo];
+  const venceActual = carnet ? perfil.carnetVence || meta?.vence : meta?.vence;
+
+  const form = document.createElement('form');
+  form.className = 'card rtPerfilForm';
+
+  const encabezado = document.createElement('h4');
+  encabezado.textContent = titulo;
+  form.append(encabezado);
+
+  if (foto && perfil.fotoURL) {
+    const imagen = document.createElement('img');
+    imagen.className = 'rtPerfilFoto';
+    imagen.alt = 'Foto de perfil';
+    imagen.src = perfil.fotoURL;
+    form.append(imagen);
+  }
+
+  const estado = document.createElement('p');
+  estado.className = 'muted';
+  estado.textContent = foto
+    ? (perfil.fotoURL ? 'Foto cargada' : 'Sin foto')
+    : textoVigenciaPerfil(meta, venceActual);
+  form.append(estado);
+
+  const mensaje = document.createElement('p');
+  mensaje.setAttribute('role', 'status');
+
+  if (meta) {
+    const abrir = document.createElement('button');
+    abrir.type = 'button';
+    abrir.className = 'btn sec';
+    abrir.textContent = 'Descargar archivo';
+
+    abrir.onclick = async () => {
+      abrir.disabled = true;
+      mensaje.textContent = '';
+
+      try {
+        await abrirDocumentoPerfil(perfil.id, tipo, meta.nombre);
+      } catch (error) {
+        mensaje.textContent = error.message;
+      } finally {
+        abrir.disabled = false;
+      }
+    };
+
+    form.append(abrir);
+  }
+
+  const archivo = crearCampoPerfil('Seleccionar archivo', 'file');
+  archivo.input.accept = foto || carnet
+    ? 'image/jpeg,image/png,image/webp'
+    : 'application/pdf,image/jpeg,image/png,image/webp';
+  archivo.input.required = foto || !meta;
+  form.append(archivo.label);
+
+  const emision = crearCampoPerfil('Fecha de emisión', 'date', fechaPerfilISO(meta?.emision));
+  const vence = crearCampoPerfil(
+    carnet ? 'Vencimiento del carnet' : 'Vencimiento o próxima renovación',
+    'date',
+    fechaPerfilISO(venceActual)
+  );
+
+  if (!foto && !carnet) {
+    emision.input.required = true;
+    form.append(emision.label);
+  }
+
+  if (!foto) {
+    vence.input.required = true;
+    form.append(vence.label);
+  }
+
+  const guardar = document.createElement('button');
+  guardar.type = 'submit';
+  guardar.className = 'btn ok';
+  guardar.textContent = 'Guardar';
+  form.append(guardar, mensaje);
+
+  form.onsubmit = async event => {
+    event.preventDefault();
+    guardar.disabled = true;
+    mensaje.textContent = 'Guardando…';
+
+    try {
+      const data = {
+        coordinadorId: perfil.id,
+        tipo,
+        emision: emision.input.value,
+        vence: vence.input.value
+      };
+
+      const file = archivo.input.files[0];
+      if (file) data.archivo = await prepararArchivoPerfil(file, tipo);
+
+      await llamarApiPerfil('myAssetSave', data);
+
+      archivo.input.value = '';
+      archivo.input.required = foto;
+      mensaje.textContent = 'Guardado. Abre Perfil nuevamente para ver el archivo actualizado.';
+
+      if (!foto) {
+        estado.textContent = textoVigenciaPerfil(
+          { nombre: file?.name || meta?.nombre },
+          vence.input.value
+        );
+      }
+    } catch (error) {
+      mensaje.textContent = error.message;
+    } finally {
+      guardar.disabled = false;
+    }
+  };
+
+  return form;
+}
+
+function crearFormularioDatosPerfil(perfil) {
+  const form = document.createElement('form');
+  form.className = 'card rtPerfilForm';
+
+  const campos = [
+    ['nombre', 'Nombre', 'text'],
+    ['correo', 'Correo electrónico', 'email'],
+    ['rut', 'RUT', 'text'],
+    ['fechaNacimiento', 'Fecha de nacimiento', 'date'],
+    ['telefono', 'Teléfono', 'tel'],
+    ['direccion', 'Dirección', 'text'],
+    ['ciudadResidencia', 'Ciudad de residencia', 'text'],
+    ['celularMarcaModelo', 'Marca y modelo del celular', 'text'],
+    ['tallaPolera', 'Talla de polera', 'text'],
+    ['sexo', 'Sexo', 'text'],
+    ['notas', 'Información adicional', 'textarea'],
+    ['banco', 'Banco', 'text'],
+    ['tipoCuenta', 'Tipo de cuenta', 'text'],
+    ['numeroCuenta', 'Número de cuenta', 'text']
+  ];
+
+  const inputs = {};
+
+  for (const [campo, etiqueta, tipo] of campos) {
+    const valor = tipo === 'date'
+      ? fechaPerfilISO(perfil[campo])
+      : perfil[campo] ?? '';
+    const { label, input } = crearCampoPerfil(etiqueta, tipo, valor);
+
+    if (campo === 'nombre' || campo === 'correo') input.readOnly = true;
+    if (campo === 'tallaPolera') input.placeholder = 'XS, S, M, L, XL o XXL';
+    if (campo === 'sexo') input.placeholder = 'hombre, mujer o sin_informar';
+
+    inputs[campo] = input;
+    form.append(label);
+  }
+
+  const guardar = document.createElement('button');
+  guardar.type = 'submit';
+  guardar.className = 'btn ok';
+  guardar.textContent = 'Guardar mis datos';
+
+  const mensaje = document.createElement('p');
+  mensaje.setAttribute('role', 'status');
+  form.append(guardar, mensaje);
+
+  form.onsubmit = async event => {
+    event.preventDefault();
+    guardar.disabled = true;
+    mensaje.textContent = 'Guardando…';
+
+    try {
+      const banco = ['banco', 'tipoCuenta', 'numeroCuenta'];
+      const valores = {};
+      const antes = {};
+
+      for (const [campo, input] of Object.entries(inputs)) {
+        if (input.readOnly || banco.includes(campo)) continue;
+
+        const anterior = campo === 'fechaNacimiento'
+          ? fechaPerfilISO(perfil[campo])
+          : String(perfil[campo] ?? '');
+
+        if (input.value.trim() === anterior) continue;
+
+        valores[campo] = input.value.trim();
+        antes[campo] = perfil[campo] ?? '';
+      }
+
+      const bancoEditado = banco.some(campo =>
+        inputs[campo].value.trim() !== String(perfil[campo] ?? '')
+      );
+
+      if (bancoEditado) {
+        for (const campo of banco) {
+          valores[campo] = inputs[campo].value.trim();
+          antes[campo] = perfil[campo] ?? '';
+        }
+        antes.datosTransferir = perfil.datosTransferir ?? '';
+      }
+
+      if (!Object.keys(valores).length) {
+        mensaje.textContent = 'Tus datos están al día.';
+        return;
+      }
+
+      await llamarApiPerfil('myProfileSave', {
+        coordinadorId: perfil.id,
+        valores,
+        antes,
+        bancoEditado
+      });
+
+      const resultado = await llamarApiPerfil('myProfileGet');
+      Object.assign(perfil, resultado.perfil);
+
+      for (const [campo, input] of Object.entries(inputs)) {
+        input.value = campo === 'fechaNacimiento'
+          ? fechaPerfilISO(perfil[campo])
+          : perfil[campo] ?? '';
+      }
+
+      mensaje.textContent = 'Datos guardados.';
+    } catch (error) {
+      mensaje.textContent = error.message;
+    } finally {
+      guardar.disabled = false;
+    }
+  };
+
+  return form;
+}
+
+async function renderPerfilPortal(panel) {
+  panel.textContent = 'Cargando perfil…';
+
+  try {
+    const { perfil } = await llamarApiPerfil('myProfileGet');
+    panel.replaceChildren();
+
+    const titulo = document.createElement('h3');
+    titulo.textContent = 'Mi perfil';
+    panel.append(titulo, crearFormularioDatosPerfil(perfil));
+
+    const documentos = document.createElement('h3');
+    documentos.textContent = 'Foto y documentos';
+    panel.append(documentos);
+
+    for (const [tipo, nombre] of RT_DOCUMENTOS_PERFIL) {
+      panel.append(crearDocumentoPerfil(perfil, tipo, nombre));
+    }
+
+    const viajes = document.createElement('h3');
+    viajes.textContent = 'Mis viajes';
+    panel.append(viajes);
+
+    const propios = (state.ordenados || []).filter(grupo =>
+      grupoPerteneceCoordinador(grupo, { id: perfil.id }, auth.currentUser) &&
+      viajeVisibleParaCoordinador(grupo, { id: perfil.id }, auth.currentUser)
+    );
+
+    if (!propios.length) {
+      const aviso = document.createElement('p');
+      aviso.textContent = 'No tienes viajes visibles en el año operativo seleccionado.';
+      panel.append(aviso);
+      return;
+    }
+
+    const lista = document.createElement('ul');
+    for (const grupo of propios) {
+      const item = document.createElement('li');
+      item.textContent = [
+        nombreOperativoGrupo(grupo),
+        grupo.destino,
+        [dmy(toISO(grupo.fechaInicio)), dmy(toISO(grupo.fechaFin))]
+          .filter(Boolean).join(' al ')
+      ].filter(Boolean).join(' · ');
+
+      lista.append(item);
+    }
+    panel.append(lista);
+  } catch (error) {
+    panel.textContent = error.message;
+  }
+}
+
 async function renderOneGroup(
   g,
   preferDate
@@ -5454,58 +5920,20 @@ async function renderOneGroup(
     );
   
   tabs.innerHTML = `
+
     <div class="group-tabs">
-      <button
-        id="tabResumen"
-        class="btn sec"
-      >
-        RESUMEN
-      </button>
-  
-      <button
-        id="tabNomina"
-        class="btn sec"
-      >
-        NÓMINA
-      </button>
-  
-      <button
-        id="tabDocs"
-        class="btn sec"
-      >
-        DOCUMENTOS
-      </button>
-  
-      <button
-        id="tabItin"
-        class="btn sec"
-      >
-        ITINERARIO
-      </button>
-  
-      <button
-        id="tabNfc"
-        class="btn sec"
-      >
-        NFC-PULSERAS
-      </button>
-  
-      <button
-        id="tabEncuesta"
-        class="btn sec"
-      >
-        ENCUESTA
-      </button>
-  
-      <button
-        id="tabFin"
-        class="btn sec"
-      >
-        FINANZAS
-      </button>
+      <button id="tabResumen" class="btn sec" type="button">RESUMEN</button>
+      <button id="tabPerfil" class="btn sec" type="button">PERFIL</button>
+      <button id="tabItin" class="btn sec" type="button">ITINERARIO</button>
+      <button id="tabNomina" class="btn sec" type="button">NÓMINA</button>
+      <button id="tabDocs" class="btn sec" type="button">DOCUMENTOS</button>
+      <button id="tabNfc" class="btn sec" type="button">NFC / PULSERAS</button>
+      <button id="tabEncuesta" class="btn sec" type="button">ENCUESTA</button>
+      <button id="tabFin" class="btn sec" type="button">FINANZAS</button>
     </div>
-  
+
     <div id="paneResumen"></div>
+    <div id="panePerfil" class="rtPerfilPanel" style="display:none"></div>
   
     <div
       id="paneNomina"
@@ -5543,6 +5971,7 @@ async function renderOneGroup(
   );
   
   const panes = {
+    perfil: tabs.querySelector("#panePerfil"),
     resumen:
       tabs.querySelector(
         "#paneResumen"
@@ -5580,6 +6009,7 @@ async function renderOneGroup(
   };
   
   const buttons = {
+    perfil: tabs.querySelector("#tabPerfil"),
     resumen:
       tabs.querySelector(
         "#tabResumen"
@@ -5720,6 +6150,10 @@ async function renderOneGroup(
           );
         }
       );
+
+      if (selected === "perfil") {
+        await renderPerfilPortal(panes.perfil);
+      }
   
       if (
         selected === "docs" &&
@@ -7479,49 +7913,15 @@ async function guardarRegistroActividad({
     inputComentario?.value ?? ''
   ).trim();
 
-  /*
-   * En servicios formales necesitamos asistencia.
-   * El comentario continúa siendo completamente opcional.
-   */
   if (servicioFormal && valorAsistencia === '') {
-    alert(
-      'INGRESA LA ASISTENCIA DEL SERVICIO. ' +
-      'EL COMENTARIO ES OPCIONAL.'
-    );
-
+    alert('Ingresa la asistencia del servicio.');
     inputAsistencia?.focus();
     return;
   }
 
-  /*
-   * En una actividad operativa ambos campos son opcionales.
-   * Si no se escribió nada, simplemente cerramos el formulario.
-   */
-  if (
-    !servicioFormal &&
-    valorAsistencia === '' &&
-    nota === ''
-  ) {
-    const panel = tarjeta.querySelector(
-      '.rtRegistroOperativo'
-    );
-
-    const botonAbrir = tarjeta.querySelector(
-      '.rtAbrirOperativo'
-    );
-
-    if (panel) {
-      panel.hidden = true;
-    }
-
-    if (botonAbrir) {
-      botonAbrir.textContent = '+';
-      botonAbrir.setAttribute(
-        'aria-expanded',
-        'false'
-      );
-    }
-
+  if (!servicioFormal && nota === '') {
+    alert('Escribe un comentario para guardar.');
+    inputComentario?.focus();
     return;
   }
 
@@ -7899,47 +8299,83 @@ async function alternarRegistroActividadOperativa({
   }
 }
 
-function renderItinerario(g, pane, preferDate){
-  pane.innerHTML='';
-  const map = g?.itinerario || {};
-  if (!map || typeof map !== 'object' || Object.keys(map).length === 0){
+function renderItinerario(g, pane, preferDate) {
+  pane.replaceChildren();
+
+  const itinerario = g?.itinerario || {};
+  if (!Object.keys(itinerario).length) {
     pane.innerHTML = '<div class="muted">SIN ITINERARIO CARGADO.</div>';
     return 0;
   }
-  const qNorm = norm(state.groupQ||'');
-  const fechas=rangoFechas(g.fechaInicio,g.fechaFin);
-  if(!fechas.length){ pane.innerHTML='<div class="muted">FECHAS NO DEFINIDAS.</div>'; return 0; }
 
-  const pillsWrap=document.createElement('div'); pillsWrap.className='date-pills'; pane.appendChild(pillsWrap);
-  const actsWrap=document.createElement('div'); actsWrap.className='acts'; pane.appendChild(actsWrap);
+  const fechas = rangoFechas(g.fechaInicio, g.fechaFin);
+  if (!fechas.length) {
+    pane.innerHTML = '<div class="muted">FECHAS NO DEFINIDAS.</div>';
+    return 0;
+  }
 
-  const hoy=toISO(new Date());
-  let startDate =
-    preferDate ||
-    (
-      hoy >= fechas[0] &&
-      hoy <= fechas[fechas.length - 1]
-        ? hoy
-        : fechas[0]
-    );
+  const qNorm = norm(state.groupQ || '');
+  const visibles = qNorm
+    ? fechas.filter(fecha => (itinerario[fecha] || []).some(act =>
+        norm([act.actividad, act.proveedor, act.horaInicio, act.horaFin].join(' '))
+          .includes(qNorm)
+      ))
+    : fechas;
 
-  const fechasMostrar = (!qNorm) ? fechas : fechas.filter(f=>{
-    const arr=(g.itinerario && g.itinerario[f])? g.itinerario[f] : [];
-    return arr.some(a => norm([a.actividad,a.proveedor,a.horaInicio,a.horaFin].join(' ')).includes(qNorm));
+  if (!visibles.length) {
+    pane.innerHTML = '<div class="muted">SIN COINCIDENCIAS PARA EL ITINERARIO.</div>';
+    return 0;
+  }
+
+  const columnas = fechas.length <= 4 ? fechas.length : fechas.length <= 6 ? 3 : 4;
+  const barra = document.createElement('div');
+  barra.className = 'date-pills rtFechasItinerario';
+  barra.style.setProperty('--rt-columnas-fechas', columnas);
+
+  const actividades = document.createElement('div');
+  actividades.className = 'acts';
+  pane.append(barra, actividades);
+
+  const clave = `rt_last_date_${g.id}`;
+  const inicial = [preferDate, localStorage.getItem(clave), toISO(new Date())]
+    .find(fecha => visibles.includes(fecha)) || visibles[0];
+
+  const formato = new Intl.DateTimeFormat('es-CL', {
+    weekday: 'long',
+    timeZone: 'UTC'
   });
-  if(!fechasMostrar.length){ actsWrap.innerHTML='<div class="muted">SIN COINCIDENCIAS PARA EL ITINERARIO.</div>'; return 0; }
-  if(!fechasMostrar.includes(startDate)) startDate=fechasMostrar[0];
 
-  fechasMostrar.forEach(f=>{
-    const pill=document.createElement('div'); pill.className='pill'+(f===startDate?' active':''); pill.textContent=dmy(f); pill.title=f; pill.dataset.fecha=f;
-    pill.onclick=()=>{ pillsWrap.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); pill.classList.add('active'); renderActs(g,f,actsWrap); localStorage.setItem('rt_last_date_'+g.id,f); };
-    pillsWrap.appendChild(pill);
-  });
+  for (const fecha of visibles) {
+    const boton = document.createElement('button');
+    boton.type = 'button';
+    boton.className = 'pill';
+    boton.title = dmy(fecha);
+    boton.dataset.fecha = fecha;
 
-  const last=localStorage.getItem('rt_last_date_'+g.id); if(last && fechasMostrar.includes(last)) startDate=last;
-  renderActs(g,startDate,actsWrap);
+    const nombre = formato.format(new Date(`${fecha}T12:00:00Z`));
+    const dia = document.createElement('span');
+    dia.textContent = nombre[0].toUpperCase() + nombre.slice(1);
+    const numero = document.createElement('span');
+    numero.textContent = String(Number(fecha.slice(-2)));
+    boton.append(dia, numero);
 
-  // devolver cantidad de coincidencias totales en ITINERARIO
+    boton.classList.toggle('active', fecha === inicial);
+    boton.setAttribute('aria-pressed', String(fecha === inicial));
+
+    boton.onclick = () => {
+      for (const otro of barra.querySelectorAll('button')) {
+        otro.classList.toggle('active', otro === boton);
+        otro.setAttribute('aria-pressed', String(otro === boton));
+      }
+
+      localStorage.setItem(clave, fecha);
+      renderActs(g, fecha, actividades);
+    };
+
+    barra.append(boton);
+  }
+
+  renderActs(g, inicial, actividades);
   return countItinHits(g, qNorm);
 }
 
@@ -8279,10 +8715,13 @@ async function renderActs(
               )}"
             />
 
-            <textarea
-              class="rtComentarioActividad"
-              placeholder="COMENTARIO PARA BITÁCORA (OPCIONAL)"
-            ></textarea>
+            <label class="rtEtiquetaComentario">
+              Comentario para Operaciones
+              <textarea
+                class="rtComentarioActividad"
+                placeholder="Cuéntanos cómo fue esta actividad para el grupo o si hubo algo que debamos saber."
+              ></textarea>
+            </label>
 
             <button
               class="btn ok rtGuardarActividad"
@@ -8297,7 +8736,7 @@ async function renderActs(
               class="btn sec btnActInfo"
               type="button"
             >
-              DETALLE / TIPS
+              VER DETALLE
             </button>
           </div>
 
@@ -8309,7 +8748,7 @@ async function renderActs(
               class="muted"
               style="margin-bottom:.25rem"
             >
-              BITÁCORA DEL GRUPO:
+              BITÁCORA DE ESTA ACTIVIDAD
             </div>
 
             <div
@@ -8504,8 +8943,8 @@ async function renderActs(
               class="btn sec rtAbrirOperativo"
               type="button"
               aria-expanded="false"
-              aria-label="Abrir registro opcional"
-              title="REGISTRO OPCIONAL"
+              aria-label="Abrir registro de actividad"
+              title="REGISTRO DE ACTIVIDAD"
               style="
                 width:38px;
                 min-width:38px;
@@ -8539,7 +8978,7 @@ async function renderActs(
             ${escapeHTMLServicio(
               clasificacion.etiqueta
             )}
-            · REGISTRO OPCIONAL
+            ·
           </div>
 
           <div
@@ -8557,10 +8996,14 @@ async function renderActs(
               )}"
             />
 
-            <textarea
-              class="rtComentarioActividad"
-              placeholder="COMENTARIO PARA BITÁCORA (OPCIONAL)"
-            ></textarea>
+            <label class="rtEtiquetaComentario">
+              Comentario para Operaciones *
+              <textarea
+                class="rtComentarioActividad"
+                aria-required="true"
+                placeholder="Cuéntanos cómo fue esta actividad para el grupo o si hubo algo que debamos saber."
+              ></textarea>
+            </label>
 
             <button
               class="btn ok rtGuardarActividad"
@@ -8578,7 +9021,7 @@ async function renderActs(
               class="muted"
               style="margin-bottom:.25rem"
             >
-              BITÁCORA DEL GRUPO:
+              BITÁCORA
             </div>
 
             <div
@@ -10558,6 +11001,8 @@ function prepararModalDetalleConScroll() {
   });
 }
 
+const MOSTRAR_TIPS_ACTIVIDAD = false;
+
 async function openActividadModal(
   g,
   fechaISO,
@@ -10776,7 +11221,7 @@ async function openActividadModal(
     `DETALLE — ${actName.toUpperCase()} — ${dmy(fechaISO)}`;
 
   body.innerHTML = `
-    <div class="meta">
+    <div class="meta rtHiloTecnico">
       <strong>HILO:</strong>
       ${escapeHTMLServicio(scopeBadge)}
       ${thread.key
@@ -10923,6 +11368,7 @@ async function openActividadModal(
       }
     </div>
 
+    ${MOSTRAR_TIPS_ACTIVIDAD ? `
     <div class="act" id="foroBox">
       <h4>TIPS O COMENTARIOS</h4>
 
@@ -10966,10 +11412,12 @@ async function openActividadModal(
           class="btn sec"
           style="display:none"
         >
+ 
           CARGAR MÁS
         </button>
       </div>
     </div>
+    ` : ''}
   `;
 
   /*
@@ -11288,7 +11736,9 @@ async function openActividadModal(
     }
   });
 
-  await loadPage();
+  if (MOSTRAR_TIPS_ACTIVIDAD) {
+    await loadPage();
+  }
 }
 
 async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
@@ -12964,12 +13414,16 @@ async function renderFinanzas(g, pane){
     </div>
   
     <!-- Devolución CLP por transferencia (se oculta si no sobra CLP) -->
-    <div id="wrapTransf" class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
+    <div id="wrapTransf" style="margin:.5rem 0;gap:.5rem;align-items:center">
       <label class="meta" style="display:flex;gap:.4rem;align-items:center">
-        <input id="chTransf" type="checkbox"/> TRANSFERENCIA REALIZADA (CLP)
+        <input id="chTransf" type="checkbox"/>
+        <span>TRANSFERENCIA REALIZADA (CLP)</span>
       </label>
-      <input id="upComp" type="file" accept="image/*,application/pdf"/>
-      <button id="btnUpComp" class="btn sec">SUBIR COMPROBANTE</button>
+      <input id="upComp" type="file" accept="image/*,application/pdf"
+             aria-label="Seleccionar comprobante de transferencia"/>
+      <button id="btnUpComp" class="btn sec" type="button">
+        SUBIR COMPROBANTE
+      </button>
     </div>
   
     <!-- Devolución USD en efectivo (se oculta si no sobra USD) -->
@@ -12984,7 +13438,7 @@ async function renderFinanzas(g, pane){
   
     <!-- Boleta SIEMPRE obligatoria -->
     <div class="rowflex" style="margin:.5rem 0; flex-wrap:wrap; gap:.5rem; align-items:center">
-      <a href="https://www.sii.cl" target="_blank" class="btn sec">IR A SII.CL</a>
+      <a href="https://www.sii.cl" target="_blank" class="btn sec rtBotonSii">IR A SII.CL</a>
       <input id="upBoleta" type="file" accept="image/*,application/pdf"/>
       <button id="btnUpBoleta" class="btn sec">SUBIR BOLETA</button>
     </div>
