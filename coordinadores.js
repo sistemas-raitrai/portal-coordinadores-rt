@@ -5018,322 +5018,559 @@ async function compartirAccesoNFC(
   );
 }
 
-async function renderNominaCoordinador(
-  g,
-  pane,
-  {
-    force =
-      false
-  } = {}
+function buildPassengerHtml(
+  passenger,
+  group
 ) {
-  if (
-    !g ||
-    !pane
-  ) {
-    return;
-  }
+  const identity =
+    passenger.identificacion ||
+    {};
 
-  pane.innerHTML = `
-    <div class="act">
-      <h4>NÓMINA DEL GRUPO</h4>
-      <div class="muted">
-        CARGANDO NÓMINA…
+  const contact =
+    passenger.contactoPrincipal ||
+    {};
+
+  const secondaryContact =
+    passenger.contactoSecundario ||
+    {};
+
+  const emergency =
+    passenger.emergencia ||
+    {};
+
+  const secondaryEmergency =
+    passenger.emergenciaSecundaria ||
+    {};
+
+  const health =
+    passenger.salud ||
+    {};
+
+  const alerts =
+    Array.isArray(
+      passenger.alertasMedicas
+    )
+      ? passenger.alertasMedicas
+      : [];
+
+  const statusClass =
+    passenger.anulado
+      ? "danger"
+      : passenger.fichaCompleta
+        ? "ok"
+        : "warn";
+
+  return `
+    <div class="person-header">
+      <h3>
+        ${esc(
+          identity.nombreCompleto ||
+          passenger.nombreCompleto ||
+          "Pasajero"
+        )}
+      </h3>
+
+      <p>
+        ${esc(
+          [
+            passenger.tipo,
+            group.nombre ||
+            group.colegio,
+            group.destino
+          ]
+            .filter(Boolean)
+            .join(" · ")
+        )}
+      </p>
+
+      <div class="status-row">
+        <span class="status-pill ${statusClass}">
+          ${
+            passenger.anulado
+              ? "Anulado / no viaja"
+              : passenger.fichaCompleta
+                ? "Ficha médica completa"
+                : "Ficha médica pendiente"
+          }
+        </span>
+
+        ${
+          alerts.length
+            ? `
+              <span class="status-pill danger">
+                ${alerts.length} alerta(s)
+              </span>
+            `
+            : `
+              <span class="status-pill ok">
+                Sin alertas detectadas
+              </span>
+            `
+        }
       </div>
     </div>
-  `;
 
-  try {
-    const cacheKey =
-      String(g.id);
+    ${
+      alerts.length
+        ? `
+          <div class="alerts-box">
+            <h4>
+              Alertas médicas
+            </h4>
 
-    let data =
-      !force
-        ? state.cache
-            .nominasViaje
-            .get(cacheKey)
-        : null;
-
-    if (!data) {
-      const grupoVentas =
-        await buscarGrupoVentasParaNomina(
-          g
-        );
-
-      if (!grupoVentas) {
-        throw new Error(
-          "NO SE ENCONTRÓ EL GRUPO EN VENTAS."
-        );
-      }
-
-      const nominaSnap =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "nominas_publicas"
-            ),
-            where(
-              "groupDocId",
-              "==",
-              grupoVentas.id
-            )
-          )
-        );
-
-      const documentos =
-        nominaSnap.docs
-          .map(
-            documento => ({
-              token:
-                documento.id,
-
-              ...documento.data()
-            })
-          )
-          .filter(
-            item =>
-              item.activo !==
-              false
-          );
-
-      const nomina =
-        documentos.find(
-          item =>
-            item.esTokenPrincipal ===
-            true
-        ) ||
-        documentos[0] ||
-        null;
-
-      data = {
-        existe:
-          !!nomina,
-
-        nomina
-      };
-
-      state.cache
-        .nominasViaje
-        .set(
-          cacheKey,
-          data
-        );
-    }
-
-    if (
-      !data.existe ||
-      !data.nomina
-    ) {
-      pane.innerHTML = `
-        <div class="act">
-          <h4>NÓMINA DEL GRUPO</h4>
-
-          <div class="muted">
-            TODAVÍA NO EXISTE UNA NÓMINA
-            PÚBLICA DISPONIBLE PARA ESTE GRUPO.
-          </div>
-
-          <button
-            id="btnRefreshNomina"
-            class="btn sec"
-            style="width:100%;margin-top:.6rem"
-          >
-            ACTUALIZAR
-          </button>
-        </div>
-      `;
-
-      pane
-        .querySelector(
-          "#btnRefreshNomina"
-        )
-        .onclick =
-          () =>
-            renderNominaCoordinador(
-              g,
-              pane,
-              {
-                force:
-                  true
-              }
-            );
-
-      return;
-    }
-
-    const nomina =
-      data.nomina;
-
-    const pasajeros =
-      Array.isArray(
-        nomina.pasajeros
-      )
-        ? nomina.pasajeros
-            .filter(
-              item =>
-                item?.nombre
-            )
-            .sort(
-              (a, b) =>
-                String(
-                  a.nombre
-                ).localeCompare(
-                  String(
-                    b.nombre
-                  ),
-                  "es",
-                  {
-                    sensitivity:
-                      "base"
-                  }
-                )
-            )
-        : [];
-
-    const resumen =
-      nomina.resumen ||
-      {};
-
-    pane.innerHTML = `
-      <div class="act">
-        <div
-          class="rowflex"
-          style="
-            justify-content:
-              space-between;
-            gap:.5rem
-          "
-        >
-          <h4>
-            NÓMINA DEL GRUPO
-          </h4>
-
-          <button
-            id="btnRefreshNomina"
-            class="btn sec"
-          >
-            ACTUALIZAR
-          </button>
-        </div>
-
-        <div class="grid-mini">
-          <div class="lab">
-            VIAJAN
-          </div>
-
-          <div>
-            <strong>
-              ${Number(
-                resumen.viajan ||
-                pasajeros.length ||
-                0
-              )}
-            </strong>
-          </div>
-
-          <div class="lab">
-            FICHAS PENDIENTES
-          </div>
-
-          <div>
-            ${Number(
-              resumen.fichasPendientes ||
-              0
-            )}
-          </div>
-
-          <div class="lab">
-            LISTA DE ESPERA
-          </div>
-
-          <div>
-            ${Number(
-              resumen.listaEsperaPendiente ||
-              0
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div class="act">
-        <h4>
-          INTEGRANTES
-          (${pasajeros.length})
-        </h4>
-
-        <div
-          style="
-            display:grid;
-            gap:.4rem
-          "
-        >
-          ${
-            pasajeros.length
-              ? pasajeros.map(
-                  pasajero => `
-                    <div class="card">
-                      <strong>
-                        ${escapePortalHTML(
-                          pasajero.nombre
-                        )}
-                      </strong>
-
-                      ${
-                        pasajero.tipo
-                          ? `
-                            <div class="meta muted">
-                              ${escapePortalHTML(
-                                pasajero.tipo
-                              )}
-                            </div>
-                          `
-                          : ""
-                      }
-                    </div>
+            <ul>
+              ${alerts
+                .map(
+                  (
+                    alert
+                  ) => `
+                    <li>
+                      ${esc(alert)}
+                    </li>
                   `
-                ).join("")
-              : `
-                <div class="muted">
-                  SIN INTEGRANTES DISPONIBLES.
-                </div>
-              `
-          }
-        </div>
-      </div>
-    `;
+                )
+                .join("")}
+            </ul>
+          </div>
+        `
+        : ""
+    }
 
-    pane
-      .querySelector(
-        "#btnRefreshNomina"
-      )
-      .onclick =
-        () =>
-          renderNominaCoordinador(
-            g,
-            pane,
-            {
-              force:
-                true
-            }
-          );
-  } catch (error) {
-    console.error(
-      "[NÓMINA COORDINADOR]",
-      error
+    ${buildSection(
+      "Identificación",
+      [
+        [
+          "Documento",
+          identity.documento ||
+          passenger.documento
+        ],
+        [
+          "Fecha de nacimiento",
+          identity.fechaNacimiento
+        ],
+        [
+          "Edad",
+          identity.edad
+        ],
+        [
+          "Género",
+          identity.genero
+        ],
+        [
+          "Nacionalidad",
+          identity.nacionalidad
+        ],
+        [
+          "Tipo de viajante",
+          passenger.tipoViajante
+        ]
+      ]
+    )}
+
+    ${buildSection(
+      "Contacto principal",
+      [
+        [
+          "Nombre",
+          contact.nombre
+        ],
+        [
+          "Relación",
+          contact.relacion
+        ],
+        [
+          "Teléfono",
+          contact.telefono
+        ],
+        [
+          "Correo",
+          contact.correo
+        ]
+      ]
+    )}
+
+    ${buildSection(
+      "Contacto secundario",
+      [
+        [
+          "Nombre",
+          secondaryContact.nombre
+        ],
+        [
+          "Relación",
+          secondaryContact.relacion
+        ],
+        [
+          "Teléfono",
+          secondaryContact.telefono
+        ],
+        [
+          "Correo",
+          secondaryContact.correo
+        ]
+      ]
+    )}
+
+    ${buildSection(
+      "Contacto de emergencia",
+      [
+        [
+          "Nombre",
+          emergency.nombre
+        ],
+        [
+          "Relación",
+          emergency.relacion
+        ],
+        [
+          "Teléfono",
+          emergency.telefono
+        ],
+        [
+          "Correo",
+          emergency.correo
+        ]
+      ]
+    )}
+
+    ${buildSection(
+      "Emergencia secundaria",
+      [
+        [
+          "Nombre",
+          secondaryEmergency.nombre
+        ],
+        [
+          "Relación",
+          secondaryEmergency.relacion
+        ],
+        [
+          "Teléfono",
+          secondaryEmergency.telefono
+        ]
+      ]
+    )}
+
+    ${buildMedicalSection(
+      health
+    )}
+  `;
+}
+
+function buildMedicalSection(
+  health
+) {
+  const rows = [
+    [
+      "Grupo sanguíneo",
+      health.grupoSanguineo
+    ],
+    [
+      "Discapacidad",
+      health.discapacidad
+    ],
+    [
+      "Ayudas técnicas",
+      health.ayudasTecnicas
+    ],
+    [
+      "Apoyos de autonomía",
+      health.apoyosAutonomia
+    ],
+    [
+      "Neurodivergencia",
+      health.neurodivergencia
+    ],
+    [
+      "Factores de sobrecarga",
+      health.neuroFactores
+    ],
+    [
+      "Estrategias de regulación",
+      health.neuroEstrategias
+    ],
+    [
+      "Apoyos neurodivergencia",
+      health.neuroApoyos
+    ],
+    [
+      "Salud mental",
+      health.saludMental
+    ],
+    [
+      "Enfermedad de base",
+      health.enfermedadBase
+    ],
+    [
+      "Salud general",
+      health.saludGeneral
+    ],
+    [
+      "Cirugías previas",
+      health.cirugiasPrevias
+    ],
+    [
+      "Emergencias médicas",
+      health.emergenciaMedica
+    ],
+    [
+      "Medicamentos",
+      health.medicamentos
+    ],
+    [
+      "Medicamentos prohibidos",
+      health.medicamentosProhibidos
+    ],
+    [
+      "Alergias",
+      health.alergias
+    ],
+    [
+      "Alergias alimentarias",
+      health.alergiasAlimentarias
+    ],
+    [
+      "Dieta principal",
+      health.dietaPrincipal
+    ],
+    [
+      "Restricciones alimentarias",
+      health.dietaRestricciones
+    ],
+    [
+      "Dieta especial",
+      health.dieta
+    ],
+    [
+      "Otros antecedentes",
+      health.otrosAntecedentes
+    ]
+  ];
+
+  return buildSection(
+    "Ficha médica",
+    rows,
+    {
+      medical:
+        true,
+
+      note:
+        "Información confidencial para uso operativo durante el viaje."
+    }
+  );
+}
+
+function buildSection(
+  title,
+  rows,
+  options = {}
+) {
+  const visible =
+    rows.filter(
+      (
+        [
+          _,
+          value
+        ]
+      ) =>
+        value !== undefined &&
+        value !== null &&
+        String(
+          value
+        ).trim() !== ""
     );
 
-    pane.innerHTML = `
-      <div class="act">
-        <h4>NÓMINA DEL GRUPO</h4>
+  if (!visible.length) {
+    return "";
+  }
 
-        <div class="muted">
-          ${escapePortalHTML(
-            error.message ||
-            "NO SE PUDO CARGAR."
-          )}
-        </div>
+  return `
+    <section class="info-section ${
+      options.medical
+        ? "medical"
+        : ""
+    }">
+      <h3>
+        ${esc(title)}
+      </h3>
+
+      ${
+        options.note
+          ? `
+            <p class="section-note">
+              ${esc(options.note)}
+            </p>
+          `
+          : ""
+      }
+
+      <div class="data-grid">
+        ${visible
+          .map(
+            (
+              [
+                label,
+                value
+              ]
+            ) => `
+              <div class="data-card">
+                <span>
+                  ${esc(label)}
+                </span>
+
+                <strong>
+                  ${esc(value)}
+                </strong>
+              </div>
+            `
+          )
+          .join("")}
       </div>
-    `;
+    </section>
+  `;
+}
+
+async function consultarNominaPortal(accion, datos) {
+  const usuario = auth.currentUser;
+  if (!usuario) throw new Error('Inicia sesión para consultar la nómina.');
+
+  const token = await usuario.getIdToken();
+  const respuesta = await fetch(
+    'https://southamerica-west1-sist-op-rt.cloudfunctions.net/consultarPulseraPublica',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ accion, ...datos })
+    }
+  );
+
+  const resultado = await respuesta.json().catch(() => ({}));
+  if (!respuesta.ok || !resultado.ok) {
+    throw new Error(resultado.error || resultado.message || 'No se pudo completar la consulta.');
+  }
+
+  return resultado;
+}
+
+async function abrirFichaDesdeNomina(grupoVentasId, pasajero, boton) {
+  const modal = document.createElement('dialog');
+  modal.className = 'rtFichaNominaDialog';
+
+  const encabezado = document.createElement('header');
+  const titulo = document.createElement('strong');
+  titulo.textContent = pasajero.nombre;
+
+  const cerrar = document.createElement('button');
+  cerrar.type = 'button';
+  cerrar.className = 'btn sec';
+  cerrar.textContent = 'Cerrar';
+  cerrar.onclick = () => modal.close();
+
+  const contenido = document.createElement('div');
+  contenido.className = 'rtFichaNominaContenido';
+  contenido.textContent = 'Cargando ficha…';
+
+  encabezado.append(titulo, cerrar);
+  modal.append(encabezado, contenido);
+  document.body.append(modal);
+
+  modal.addEventListener('close', () => {
+    modal.remove();
+    if (boton.isConnected) boton.focus({ preventScroll: true });
+  }, { once: true });
+
+  modal.showModal();
+
+  try {
+    const resultado = await consultarNominaPortal('fichaPortalCoordinador', {
+      grupoVentasId,
+      inscripcionId: pasajero.inscripcionId
+    });
+
+    if (!modal.open) return;
+    contenido.innerHTML = buildPassengerHtml(
+      resultado.pasajero || {},
+      resultado.grupo || {}
+    );
+  } catch (error) {
+    if (modal.open) contenido.textContent = error.message;
+  }
+}
+
+async function renderNominaCoordinador(g, pane) {
+  if (!g || !pane) return;
+
+  const bloque = document.createElement('div');
+  bloque.className = 'act';
+
+  const encabezado = document.createElement('div');
+  encabezado.className = 'rowflex';
+
+  const titulo = document.createElement('h4');
+  titulo.textContent = 'NÓMINA DEL GRUPO';
+
+  const actualizar = document.createElement('button');
+  actualizar.type = 'button';
+  actualizar.className = 'btn sec';
+  actualizar.textContent = 'Actualizar';
+  actualizar.disabled = true;
+  actualizar.onclick = () => renderNominaCoordinador(g, pane);
+
+  const estado = document.createElement('p');
+  estado.className = 'muted';
+  estado.setAttribute('role', 'status');
+  estado.textContent = 'Cargando nómina…';
+
+  encabezado.append(titulo, actualizar);
+  bloque.append(encabezado, estado);
+  pane.replaceChildren(bloque);
+
+  try {
+    const grupoVentas = await buscarGrupoVentasParaNomina(g);
+    if (!grupoVentas) throw new Error('No se encontró el grupo en Ventas.');
+
+    const grupoVentasId = grupoVentas.id;
+    const { pasajeros } = await consultarNominaPortal('nominaPortalCoordinador', {
+      grupoVentasId
+    });
+
+    if (pane.firstElementChild !== bloque) return;
+    estado.textContent = pasajeros.length
+      ? `Integrantes · ${pasajeros.length}`
+      : 'Sin integrantes disponibles.';
+
+    for (const pasajero of pasajeros) {
+      const fila = document.createElement('div');
+      fila.className = 'card rtNominaPasajero';
+
+      const nombre = document.createElement('strong');
+      nombre.textContent = pasajero.nombre;
+      fila.append(nombre);
+
+      if (pasajero.talla) {
+        const talla = document.createElement('span');
+        talla.className = 'rtNominaTalla';
+        talla.textContent = `Polera ${pasajero.talla}`;
+        fila.append(talla);
+      }
+
+      const boton = document.createElement('button');
+      boton.type = 'button';
+      boton.className = 'btn sec';
+      boton.textContent = 'Ver ficha';
+      boton.setAttribute('aria-label', `Ver ficha de ${pasajero.nombre}`);
+      boton.onclick = () => abrirFichaDesdeNomina(grupoVentasId, pasajero, boton);
+
+      fila.append(boton);
+      bloque.append(fila);
+    }
+  } catch (error) {
+    estado.textContent = error.message;
+  } finally {
+    actualizar.disabled = false;
   }
 }
 
