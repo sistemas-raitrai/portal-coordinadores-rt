@@ -4736,186 +4736,162 @@ async function renderDocumentosViaje(
   }
 }
 
-async function buscarGrupoVentasParaNomina(
-  g,
-  {
-    force = false
-  } = {}
-) {
-  if (!g) {
-    return null;
+async function buscarGrupoVentasParaNomina(g, { force = false } = {}) {
+  if (!g) return null;
+
+  const texto = valor => String(valor ?? '').trim();
+
+  const idOperaciones = texto(g.id || g.grupoId || g.idGrupo);
+  const negocio = texto(g.numeroNegocio || g.negocio_id);
+  const identificador = texto(g.identificador);
+  const ano = Number(g.anoViaje || state.anoViajeActivo || 0);
+  const cacheKey = idOperaciones || negocio;
+  const cache = state.cache.gruposVentas;
+
+  if (!force && cacheKey && cache.has(cacheKey)) {
+    return cache.get(cacheKey);
   }
 
-  const cacheKey =
-    String(
-      g.id ||
-      g.numeroNegocio ||
-      ""
-    );
+  if (force && cacheKey) cache.delete(cacheKey);
 
-  if (
-    !force &&
-    state.cache
-      .gruposVentas
-      .has(cacheKey)
-  ) {
-    return state.cache
-      .gruposVentas
-      .get(cacheKey);
+  const ventas = collection(db, 'ventas_cotizaciones');
+  let errorConsulta = null;
+
+  function guardarResultado(grupoVentas) {
+    if (cacheKey) cache.set(cacheKey, grupoVentas);
+    return grupoVentas;
   }
 
-  const numeroTexto =
-    String(
-      g.numeroNegocio ||
-      ""
-    ).trim();
-
-  const numeroNumerico =
-    Number(
-      numeroTexto
-    );
-
-  if (!numeroTexto) {
-    return null;
+  function datosDocumento(snapshot) {
+    return { ...snapshot.data(), id: snapshot.id };
   }
 
-  const condiciones = [
-    [
-      "numeroNegocio",
-      numeroTexto
-    ],
+  function anoCompatible(item) {
+    const anoVentas = Number(item.anoViaje || 0);
+    return !ano || !anoVentas || anoVentas === ano;
+  }
 
-    [
-      "negocio_id",
-      numeroTexto
-    ]
-  ];
+  function variantesExactas(valor) {
+    const limpio = texto(valor);
+    if (!limpio) return [];
+    return /^\d+$/.test(limpio) ? [limpio, Number(limpio)] : [limpio];
+  }
 
-  if (
-    Number.isFinite(
-      numeroNumerico
-    )
-  ) {
-    condiciones.push(
-      [
-        "numeroNegocio",
-        numeroNumerico
-      ],
+  function numerosNegocio(valor) {
+    return [...new Set(texto(valor).match(/\d+/g) || [])];
+  }
 
-      [
-        "negocio_id",
-        numeroNumerico
-      ]
+  function elegirUnico(candidatos) {
+    const compatibles = candidatos.filter(anoCompatible);
+    if (!compatibles.length) return null;
+
+    const porIdentificador = identificador
+      ? compatibles.filter(item => texto(item.identificador) === identificador)
+      : [];
+
+    const porAno = compatibles.filter(item => ano && Number(item.anoViaje) === ano);
+
+    const preferidos = porIdentificador.length
+      ? porIdentificador
+      : porAno.length
+        ? porAno
+        : compatibles;
+
+    if (preferidos.length === 1) return preferidos[0];
+
+    throw new Error(
+      'Hay más de un grupo de Ventas que coincide con este viaje. ' +
+      'Revisa el ID de grupo o el identificador antes de abrir la nómina.'
     );
   }
 
-  const encontrados =
-    new Map();
+  async function buscarPorCampo(campos, valores) {
+    const encontrados = new Map();
+    if (!valores.length) return [];
 
-  for (
-    const [
-      campo,
-      valor
-    ] of condiciones
-  ) {
-    try {
-      const snapshot =
-        await getDocs(
-          query(
-            collection(
-              db,
-              "ventas_cotizaciones"
-            ),
-
-            where(
-              campo,
-              "==",
-              valor
-            ),
-
-            limit(10)
-          )
+    await Promise.all(campos.map(async campo => {
+      try {
+        const snapshot = await getDocs(
+          query(ventas, where(campo, 'in', valores))
         );
 
-      snapshot.docs.forEach(
-        documento => {
-          encontrados.set(
-            documento.id,
-            {
-              id:
-                documento.id,
-
-              ...documento.data()
-            }
-          );
+        for (const documento of snapshot.docs) {
+          encontrados.set(documento.id, datosDocumento(documento));
         }
-      );
+      } catch (error) {
+        errorConsulta ||= error;
+        console.warn('[VENTAS] No se pudo consultar', campo, error);
+      }
+    }));
+
+    return [...encontrados.values()];
+  }
+
+  // 1. Referencia explícita de Ventas o ID de grupo compartido.
+  const idsDirectos = [...new Set([
+    g.ventasCotizacionId,
+    g.cotizacionId,
+    g.idGrupo,
+    g.grupoId,
+    g.id
+  ].map(texto).filter(id => id && !id.includes('/')))];
+
+  for (const id of idsDirectos) {
+    try {
+      const snapshot = await getDoc(doc(ventas, id));
+      if (!snapshot.exists()) continue;
+
+      const candidato = datosDocumento(snapshot);
+      if (anoCompatible(candidato)) return guardarResultado(candidato);
     } catch (error) {
-      console.warn(
-        "[VENTAS] Consulta no disponible",
-        campo,
-        valor,
-        error
-      );
+      errorConsulta ||= error;
+      console.warn('[VENTAS] No se pudo verificar el ID', id, error);
     }
   }
 
-  const candidatos = [
-    ...encontrados.values()
-  ];
+  // 2. Mismo ID lógico, aunque el documento de Ventas tenga otro nombre.
+  const idsLogicos = [...new Set(
+    [g.idGrupo, g.grupoId, g.id].flatMap(variantesExactas)
+  )];
 
-  const anoViaje =
-    Number(
-      g.anoViaje ||
-      0
+  const porId = elegirUnico(
+    await buscarPorCampo(['idGrupo'], idsLogicos)
+  );
+
+  if (porId) return guardarResultado(porId);
+
+  // 3. Número de negocio exacto, guardado como texto o como número.
+  const porNegocio = elegirUnico(
+    await buscarPorCampo(['numeroNegocio', 'negocio_id'], variantesExactas(negocio))
+  );
+
+  if (porNegocio) return guardarResultado(porNegocio);
+
+  // 4. Negocio compuesto. Solo se consulta el año del viaje.
+  const numerosBuscados = numerosNegocio(negocio);
+
+  if (ano && numerosBuscados.length) {
+    const candidatosAno = await buscarPorCampo(['anoViaje'], [ano, String(ano)]);
+
+    const coincidencias = candidatosAno.filter(item =>
+      [item.numeroNegocio, item.negocio_id].some(valor => {
+        const numerosVentas = numerosNegocio(valor);
+        return numerosBuscados.every(numero => numerosVentas.includes(numero));
+      })
     );
 
-  const identificador =
-    String(
-      g.identificador ||
-      ""
-    ).trim();
-
-  const grupoVentas =
-    candidatos.find(
-      item =>
-        Number(
-          item.anoViaje ||
-          0
-        ) ===
-          anoViaje &&
-        (
-          !identificador ||
-          String(
-            item.identificador ||
-            ""
-          ).trim() ===
-            identificador
-        )
-    ) ||
-
-    candidatos.find(
-      item =>
-        Number(
-          item.anoViaje ||
-          0
-        ) ===
-        anoViaje
-    ) ||
-
-    candidatos[0] ||
-    null;
-
-  if (grupoVentas) {
-    state.cache
-      .gruposVentas
-      .set(
-        cacheKey,
-        grupoVentas
-      );
+    const compuesto = elegirUnico(coincidencias);
+    if (compuesto) return guardarResultado(compuesto);
   }
 
-  return grupoVentas;
+  if (errorConsulta) {
+    throw new Error(
+      'No se pudo completar la búsqueda del grupo en Ventas. ' +
+      'Reintenta y revisa la consola si el problema continúa.'
+    );
+  }
+
+  return null;
 }
 
 async function copiarTextoPortal(
