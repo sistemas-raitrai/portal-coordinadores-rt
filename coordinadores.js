@@ -764,13 +764,24 @@ function ensurePanel(id, html=''){
   return p;
 }
 
-function enforceOrder(){
-  const wrap=document.querySelector('.wrap');
-  // ORDEN CORRECTO: STAFF -> ALERTAS -> STATS -> NAV -> GRUPOS
-  ['staffBar','alertsFoldStrip','alertsPanelV2','statsPanel','navPanel','gruposPanel'].forEach(id=>{
-    const n=document.getElementById(id);
-    if(n) wrap.appendChild(n);
-  });
+function enforceOrder() {
+  const wrap = document.querySelector('.wrap');
+  if (!wrap) return;
+
+  const orden = [
+    'staffBar',
+    'alertsFoldStrip',
+    'alertsPanelV2',
+    'statsPanel',
+    'navPanel',
+    'gruposPanel',
+    'portalFooter'
+  ];
+
+  for (const id of orden) {
+    const panel = document.getElementById(id);
+    if (panel) wrap.appendChild(panel);
+  }
 }
 
 function getTodayLocalISO() {
