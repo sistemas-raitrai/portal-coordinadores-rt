@@ -5018,6 +5018,10 @@ async function compartirAccesoNFC(
   );
 }
 
+function esc(valor) {
+  return escapePortalHTML(String(valor ?? ''));
+}
+
 function buildPassengerHtml(
   passenger,
   group
