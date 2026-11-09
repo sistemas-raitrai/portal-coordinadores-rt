@@ -4,7 +4,7 @@ import { app, db, auth, storage } from './firebase-init-portal.js';
 import { onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
-  collection, collectionGroup, getDocs, getDoc, doc, updateDoc, addDoc, setDoc,
+  collection, collectionGroup, getDocs, getDoc, doc, updateDoc, addDoc, setDoc, getDocsFromServer, getDocFromServer,
   serverTimestamp, query, where, orderBy, limit, deleteField, deleteDoc, startAfter
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 import { ref as sRef, uploadBytes, getDownloadURL, listAll, deleteObject }
@@ -13311,34 +13311,26 @@ async function closeFinanzas(g){
 // STAFF “Todos” -> busca con collectionGroup; si hay coordinador seleccionado -> subcolección del coord.
 // Coordinador -> su propia subcolección.
 // ===== HELPERS FINANZAS (GASTOS APROBADOS) =====
-async function loadGastosAprobados(grupoId){
-  try{
-    const isStaff = !!state.is;
-    const viewAll = isStaff && state.viewingCoordId === '__ALL__';
-    const out = [];
-    if (viewAll){
-      const qs = await getDocs(query(
-        collectionGroup(db,'gastos'),
-        where('grupoId','==', grupoId),
-        where('estado','==','APROBADO')
-      ));
-      qs.forEach(d => out.push({ id:d.id, ...d.data() }));
-    } else {
-      const coordId = (typeof getActiveCoordIdForGastos==='function')
-        ? getActiveCoordIdForGastos()
-        : (state.viewingCoordId || state.user.uid);
-      const qs = await getDocs(query(
-        collection(db,'coordinadores', coordId, 'gastos'),
-        where('grupoId','==', grupoId),
-        where('estado','==','APROBADO')
-      ));
-      qs.forEach(d => out.push({ id:d.id, ...d.data() }));
-    }
-    return out;
-  }catch(e){
-    console.error('[loadGastosAprobados]', e);
-    return [];
-  }
+async function loadGastosParaFinanzas(grupoId, desdeServidor = false) {
+  const verTodos = !!state.is && state.viewingCoordId === '__ALL__';
+
+  const origen = verTodos
+    ? collectionGroup(db, 'gastos')
+    : collection(db, 'coordinadores', getActiveCoordIdForGastos(), 'gastos');
+
+  const consulta = query(origen, where('grupoId', '==', grupoId));
+  const snapshot = desdeServidor
+    ? await getDocsFromServer(consulta)
+    : await getDocs(consulta);
+
+  return snapshot.docs.map(documento => ({
+    ...documento.data(),
+    id: documento.id
+  }));
+}
+
+function estadoGastoParaFinanzas(gasto) {
+  return String(gasto?.estado || 'PENDIENTE').trim().toUpperCase();
 }
 
 function totalesPorMoneda(items){
@@ -13355,55 +13347,29 @@ function totalesPorMoneda(items){
 }
 
 
-// ¿Hay algún gasto en PENDIENTE (o sin estado) para el grupo?
-// Para docs antiguos sin `estado`, los tratamos como PENDIENTE (control local).
-async function existsGastoPendiente(grupoId){
-  try{
-    const isStaff = !!state.is;
-    const viewAll = isStaff && state.viewingCoordId === '__ALL__';
-
-    if (viewAll){
-      const qs = await getDocs(query(
-        collectionGroup(db,'gastos'),
-        where('grupoId','==', grupoId),
-        limit(200)
-      ));
-      let pend = false;
-      qs.forEach(d=>{
-        const est = String((d.data()?.estado || 'PENDIENTE')).toUpperCase();
-        if (est === 'PENDIENTE') pend = true;
-      });
-      return pend;
-    } else {
-      const coordId = (typeof getActiveCoordIdForGastos==='function'
-                        ? getActiveCoordIdForGastos()
-                        : (state.viewingCoordId || state?.user?.uid || ''));
-      if (!coordId) return false;
-      const qs = await getDocs(query(
-        collection(db,'coordinadores', coordId,'gastos'),
-        where('grupoId','==', grupoId),
-        limit(200)
-      ));
-      let pend = false;
-      qs.forEach(d=>{
-        const est = String((d.data()?.estado || 'PENDIENTE')).toUpperCase();
-        if (est === 'PENDIENTE') pend = true;
-      });
-      return pend;
-    }
-  }catch(e){
-    console.error('existsGastoPendiente()', e);
-    return false;
-  }
-}
-
 async function renderFinanzas(g, pane){
   pane.innerHTML='<div class="muted">CARGANDO…</div>';
   const qNorm = norm(state.groupQ||'');
 
   // 1) Carga abonos y gastos APROBADOS (base)
   let abonos = await loadAbonos(g.id);
-  const gastosAprob = await loadGastosAprobados(g.id);
+  let gastosRegistrados;
+
+  try {
+    gastosRegistrados = await loadGastosParaFinanzas(g.id);
+  } catch (error) {
+    console.error('[FINANZAS] No se pudieron cargar los gastos', error);
+    pane.textContent = 'No se pudieron cargar los gastos. Vuelve a abrir el viaje.';
+    return 0;
+  }
+
+  const gastosAprob = gastosRegistrados.filter(
+    gasto => estadoGastoParaFinanzas(gasto) === 'APROBADO'
+  );
+
+  const hayPendientes = gastosRegistrados.some(gasto =>
+    ['PENDIENTE', 'GUARDADO'].includes(estadoGastoParaFinanzas(gasto))
+  );
 
   D_FIN('renderFinanzas: abonos/gastos cargados', {
     grupoId: g?.id,
@@ -13490,6 +13456,15 @@ async function renderFinanzas(g, pane){
   const totAb = totalesPorMoneda(abonos);       // {CLP,USD,BRL,ARS}
   const totGa = totalesPorMoneda(gastosAprob);  // {CLP,USD,BRL,ARS}
 
+  const totGaRegistrados = totalesPorMoneda(gastosRegistrados);
+
+  const saldosOperativos = {
+    CLP: totAb.CLP - totGaRegistrados.CLP,
+    USD: totAb.USD - totGaRegistrados.USD,
+    BRL: totAb.BRL - totGaRegistrados.BRL,
+    ARS: totAb.ARS - totGaRegistrados.ARS
+  };
+
   // === Saldos por moneda (bolsillos internos, pero UI unificada) ===
   const saldos = {
     CLP: (totAb.CLP||0) - (totGa.CLP||0),
@@ -13499,7 +13474,6 @@ async function renderFinanzas(g, pane){
   };
   
   // 4) ¿Quedan gastos PENDIENTES? (bloquea cierre)
-  const hayPendientes = await existsGastoPendiente(g.id);
   const wrap=document.createElement('div'); wrap.style.cssText='display:grid;gap:.8rem'; pane.innerHTML=''; pane.appendChild(wrap);
 
   // RESUMEN
