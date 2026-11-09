@@ -780,6 +780,93 @@
         grid-template-columns: minmax(0, 1fr);
       }
     }
+
+    .rtNominaPasajero {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: .45rem;
+      margin: .4rem 0;
+    }
+    
+    .rtNominaPasajero .btn {
+      margin-inline-start: auto;
+    }
+    
+    .rtNominaTalla {
+      padding: .2rem .55rem;
+      border-radius: 999px;
+      background: #e8f4f1;
+      color: #174e49;
+      font-size: .8rem;
+      white-space: nowrap;
+    }
+    
+    .rtFichaNominaDialog {
+      width: min(720px, calc(100% - 24px));
+      max-height: 90dvh;
+      padding: 0;
+      border: 1px solid #ccd7e7;
+      border-radius: 14px;
+      background: #fff;
+      color: inherit;
+    }
+    
+    .rtFichaNominaDialog::backdrop {
+      background: #16203388;
+    }
+    
+    .rtFichaNominaDialog > header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .6rem;
+      position: sticky;
+      top: 0;
+      padding: .75rem;
+      background: #fff;
+      border-bottom: 1px solid #dce3ed;
+    }
+    
+    .rtFichaNominaContenido {
+      padding: .8rem;
+      overflow-wrap: anywhere;
+    }
+    
+    .rtFichaNominaContenido .info-section,
+    .rtFichaNominaContenido .person-header {
+      margin-bottom: .7rem;
+      padding: .7rem;
+      border: 1px solid #dce3ed;
+      border-radius: 10px;
+    }
+    
+    .rtFichaNominaContenido .data-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+      gap: .4rem;
+    }
+    
+    .rtFichaNominaContenido .data-card {
+      padding: .45rem;
+      border-radius: 8px;
+      background: #f4f6f9;
+      white-space: pre-wrap;
+    }
+    
+    .rtFichaNominaContenido .status-pill {
+      display: inline-block;
+      padding: .2rem .45rem;
+      border-radius: 999px;
+      background: #eef2f7;
+    }
+    
+    .rtFichaNominaContenido .status-pill.danger,
+    .rtFichaNominaContenido .alerts-box {
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
   </style>
 </head>
 <body>
