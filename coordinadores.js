@@ -1284,6 +1284,26 @@ window.openActividadModal ??= async ()=>{};
 window.staffResetInicio ??= async ()=>{};
 
 /* ====== ARRANQUE ====== */
+const btnCerrarSesion = document.getElementById('btnCerrarSesion');
+
+if (btnCerrarSesion) {
+  btnCerrarSesion.addEventListener('click', async () => {
+    if (btnCerrarSesion.disabled) return;
+
+    btnCerrarSesion.disabled = true;
+    btnCerrarSesion.textContent = 'CERRANDO SESIÓN…';
+
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('[PORTAL] Error al cerrar sesión', error);
+      btnCerrarSesion.disabled = false;
+      btnCerrarSesion.textContent = 'CERRAR SESIÓN';
+      alert('No se pudo cerrar la sesión. Intenta nuevamente.');
+    }
+  });
+}
+
 onAuthStateChanged(auth, async (user) => {
   if (!user){ location.href='index.html'; return; }
   state.user = user;
