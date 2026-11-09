@@ -13067,216 +13067,292 @@ async function listarSnapshotsFinanzas(gid, max = 20){
 }
 
 // =============== RESTABLECER VIAJE COMPLETO — HELPERS ===============
-async function resetViajeCompleto(g){
-  if (!state.is){ alert('Solo STAFF puede restablecer.'); return; }
-  const ok = confirm(
-    'Esto restablecerá el viaje COMPLETO:\n' +
-    '• Borra todos los GASTOS del grupo\n' +
-    '• Limpia Bitácora del itinerario\n' +
-    '• Elimina archivos de cierre (boleta/comprobante/constancia)\n' +
-    '• Reinicia el estado del viaje (inicio/fin/pax)\n' +
-    '• Desmarca los cierres y deja todo editable\n\n' +
+async function resetViajeCompleto(g) {
+  if (!state.is || !g?.id) {
+    alert('Solo STAFF puede restablecer un viaje.');
+    return;
+  }
+
+  const boton = document.getElementById('btnResetInicio');
+  if (boton?.disabled) return;
+
+  const confirmado = confirm(
+    'Se restablecerá este viaje a PENDIENTE.\n\n' +
+    'Se borrarán la asistencia, la bitácora, sus alertas, ' +
+    'todos los gastos del grupo y los archivos del cierre financiero.\n\n' +
+    'Se conservarán los abonos y el historial del viaje.\n\n' +
     '¿Continuar?'
   );
-  if (!ok) return;
 
-  const gid = g.id;
+  if (!confirmado) return;
+
+  if (boton) boton.disabled = true;
   showFlash('RESTABLECIENDO VIAJE…', 'warn');
 
-  // 1) Eliminar archivos de cierre (Storage)
-  try{
-    await wipeFinanzasFiles(gid);
-  }catch(e){
-    console.warn('[reset] wipeFinanzasFiles', e);
+  const gid = g.id;
+  const grupoRef = doc(db, 'grupos', gid);
+  const errores = [];
+  const conteos = {};
+
+  async function ejecutarPaso(nombre, tarea) {
+    try {
+      conteos[nombre] = await tarea();
+    } catch (error) {
+      errores.push(`${nombre}: ${error.message || error}`);
+      console.error(`[reset] ${nombre}`, error);
+    }
   }
 
-  // 2) Eliminar TODOS los gastos del grupo (en cualquier coordinador)
-  let borradosGa = 0;
-  try{
-    borradosGa = await wipeGastosForGroup(gid);
-  }catch(e){
-    console.warn('[reset] wipeGastosForGroup', e);
-  }
+  try {
+    const actual = await getDocFromServer(grupoRef);
+    if (!actual.exists()) throw new Error('El grupo ya no existe.');
 
-  // 3) Vaciar bitácora basada en itinerario del grupo
-  let borradosBit = 0;
-  try{
-    borradosBit = await wipeBitacoraFromItinerario(g);
-  }catch(e){
-    console.warn('[reset] wipeBitacora', e);
-  }
+    const datos = actual.data();
 
-  // 4) Quitar flags/summary de cierre y reiniciar estado de viaje
-  try{
-    await resetGroupFlags(gid);
-  }catch(e){
-    console.warn('[reset] resetGroupFlags', e);
-  }
+    await ejecutarPaso('Archivos de cierre', () => wipeFinanzasFiles(gid));
+    await ejecutarPaso('Gastos', () => wipeGastosForGroup(gid));
 
-  // 5) Registrar auditoría en historial viejo + HISTORIAL DEL VIAJE
-  const detalle = `Se restableció el viaje. gastos_borrados=${borradosGa}, bitacora_borrada=${borradosBit}`;
-  try{
+    await ejecutarPaso('Bitácora', () =>
+      wipeBitacoraFromItinerario({
+        ...g,
+        asistencias: datos.asistencias || {},
+        itinerarioActual: normalizeItinerario(datos.itinerario)
+      })
+    );
+
+    await ejecutarPaso('Alertas de bitácora', () => wipeAlertasBitacora(gid));
+
+    // Las claves de asistencia permiten encontrar notas si se necesita reintentar.
+    if (!errores.length) {
+      await ejecutarPaso('Estado del viaje y cierre', () => resetGroupFlags(gid));
+    }
+
+    if (errores.length) {
+      showFlash('RESTABLECIMIENTO INCOMPLETO', 'warn');
+      alert(
+        'Quedaron pasos pendientes. Puedes volver a ejecutar Restablecer.\n\n' +
+        errores.join('\n')
+      );
+      return;
+    }
+
+    const detalle =
+      `Gastos eliminados: ${conteos.Gastos || 0}. ` +
+      `Notas eliminadas: ${conteos.Bitácora || 0}. ` +
+      `Alertas eliminadas: ${conteos['Alertas de bitácora'] || 0}. ` +
+      'Abonos conservados.';
+
     await logHistorial(gid, 'RESTABLECER_VIAJE_COMPLETO', detalle);
-  }catch(e){
-    console.warn('[reset] logHistorial', e);
+
+    try {
+      await appendViajeLog(gid, 'RESTABLECER_VIAJE_COMPLETO', detalle);
+    } catch (error) {
+      console.error('[reset] No se pudo registrar el historial del viaje', error);
+      alert('El viaje quedó restablecido, pero no se pudo registrar la entrada en su historial.');
+    }
+
+    await reloadGroupAndRender(gid);
+    showFlash('VIAJE RESTABLECIDO', 'ok');
+  } catch (error) {
+    console.error('[reset] No se pudo restablecer el viaje', error);
+    showFlash('NO SE PUDO RESTABLECER EL VIAJE', 'warn');
+    alert(error.message || 'No se pudo comprobar el estado del viaje.');
+  } finally {
+    if (boton?.isConnected) boton.disabled = false;
   }
-  try{
-    await appendViajeLog(gid, 'RESTABLECER_VIAJE_COMPLETO', detalle);
-  }catch(e){
-    console.warn('[reset] appendViajeLog', e);
+}
+
+async function borrarArchivoRestablecimiento(archivoRef) {
+  try {
+    await deleteObject(archivoRef);
+  } catch (error) {
+    if (error.code !== 'storage/object-not-found') throw error;
+  }
+}
+
+async function wipeFinanzasFiles(grupoId) {
+  async function borrarCarpeta(carpeta) {
+    const listado = await listAll(carpeta);
+    let cantidad = 0;
+
+    for (const archivo of listado.items) {
+      await borrarArchivoRestablecimiento(archivo);
+      cantidad++;
+    }
+
+    for (const subcarpeta of listado.prefixes) {
+      cantidad += await borrarCarpeta(subcarpeta);
+    }
+
+    return cantidad;
   }
 
-  showFlash('VIAJE RESTABLECIDO', 'ok');
+  const carpeta = sRef(storage, `finanzas/${grupoId}`);
+  const cantidad = await borrarCarpeta(carpeta);
+  const restante = await listAll(carpeta);
 
-  // 6) Refrescar UI → que vuelva a aparecer INICIO DE VIAJE
-  try{
-    if (typeof reloadGroupAndRender === 'function'){
-      await reloadGroupAndRender(gid);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      setTimeout(() => document.getElementById('btnInicioViaje')?.focus?.(), 80);
-    }else if (typeof renderOneGroup === 'function'){
-      // Fallback: ajustar objeto en memoria a mano
-      delete g.paxViajando;
-      if (g.viaje){
-        delete g.viaje.inicio;
-        delete g.viaje.fin;
-        g.viaje.estado = 'PENDIENTE';
-      }else{
-        g.viaje = { estado:'PENDIENTE' };
+  if (restante.items.length || restante.prefixes.length) {
+    throw new Error('Quedan archivos en la carpeta de cierre financiero.');
+  }
+
+  return cantidad;
+}
+
+async function wipeGastosForGroup(grupoId) {
+  const consulta = query(
+    collectionGroup(db, 'gastos'),
+    where('grupoId', '==', grupoId)
+  );
+
+  const snapshot = await getDocsFromServer(consulta);
+
+  for (const gasto of snapshot.docs) {
+    const ruta = gasto.data().imgPath;
+
+    if (ruta) {
+      await borrarArchivoRestablecimiento(sRef(storage, ruta));
+    }
+
+    await deleteDoc(gasto.ref);
+  }
+
+  if (!(await getDocsFromServer(consulta)).empty) {
+    throw new Error('Todavía quedan gastos asociados al grupo.');
+  }
+
+  return snapshot.size;
+}
+
+async function wipeBitacoraFromItinerario(g) {
+  const rutasPorFecha = new Map();
+
+  function agregar(fecha, clave) {
+    if (!fecha || !clave || clave === HIST_ACTKEY) return;
+
+    if (!rutasPorFecha.has(fecha)) rutasPorFecha.set(fecha, new Set());
+    rutasPorFecha.get(fecha).add(clave);
+  }
+
+  for (const itinerario of [g.itinerario || {}, g.itinerarioActual || {}]) {
+    for (const [fecha, actividades] of Object.entries(itinerario)) {
+      for (const actividad of Object.values(actividades || {})) {
+        agregar(
+          fecha,
+          slug(
+            actividad?.actKey ||
+            actividad?.actividad ||
+            actividad?.nombre ||
+            actividad?.titulo ||
+            actividad?.servicio ||
+            'actividad'
+          )
+        );
       }
-      delete g.viajeInicioAt; delete g.viajeFinAt;
-      delete g.viajeInicioBy; delete g.viajeFinBy;
-      delete g.trip;
-      await renderOneGroup(g);
-    }else{
-      location.reload();
     }
-  }catch(e){
-    console.warn('[reset] refresh UI', e);
-    location.reload();
   }
-}
 
-// Borra recursivamente /finanzas/{grupoId}/... (boletas, comprobantes, efectivo_usd)
-async function wipeFinanzasFiles(grupoId){
-  async function delFolder(refFolder){
-    const l = await listAll(refFolder);
-    // borrar archivos directos
-    await Promise.all((l.items || []).map(it => deleteObject(it).catch(()=>{})));
-    // bajar a subcarpetas
-    for (const p of (l.prefixes || [])){ await delFolder(p); }
-  }
-  return delFolder(sRef(storage, `finanzas/${grupoId}`));
-}
-
-async function wipeGastosForGroup(grupoId){
-  let n = 0;
-
-  // 1) Intento con collectionGroup (rápido)
-  try{
-    const q1 = query(collectionGroup(db,'gastos'), where('grupoId','==', grupoId));
-    const qs = await getDocs(q1);
-    for (const d of qs.docs){
-      const x = d.data() || {};
-      if (x.imgPath){ try{ await deleteObject(sRef(storage, x.imgPath)); }catch{} }
-      try{ await deleteDoc(d.ref); n++; }catch{}
+  // Incluye actividades retiradas del itinerario que aún tienen un registro.
+  for (const [fecha, registros] of Object.entries(g.asistencias || {})) {
+    for (const clave of Object.keys(registros || {})) {
+      agregar(fecha, clave);
     }
-    return n;
-  }catch(e){
-    console.warn('[reset] collectionGroup requiere índice, usando fallback por coordinador:', e?.message||e);
   }
 
-  // 2) Fallback: escanear por coordinador
-  try{
-    for (const c of (state.coordinadores || [])){
-      const base = collection(db,'coordinadores', c.id, 'gastos');
-      const qs = await getDocs(base);
-      for (const d of qs.docs){
-        const x = d.data() || {};
-        if (x.grupoId !== grupoId) continue;
-        if (x.imgPath){ try{ await deleteObject(sRef(storage, x.imgPath)); }catch{} }
-        try{ await deleteDoc(d.ref); n++; }catch{}
+  let cantidad = 0;
+
+  for (const [fecha, claves] of rutasPorFecha) {
+    for (const clave of claves) {
+      const ruta = collection(db, 'grupos', g.id, 'bitacora', clave, fecha);
+      const snapshot = await getDocsFromServer(ruta);
+
+      for (const nota of snapshot.docs) {
+        await deleteDoc(nota.ref);
+        cantidad++;
+      }
+
+      if (!(await getDocsFromServer(ruta)).empty) {
+        throw new Error(`Quedan notas de la actividad ${clave} del ${fecha}.`);
       }
     }
-  }catch(e){
-    console.warn('[reset] fallback coordinador error', e);
   }
-  return n;
+
+  return cantidad;
 }
 
+async function wipeAlertasBitacora(grupoId) {
+  const consulta = query(
+    collection(db, 'alertas'),
+    where('groupInfo.grupoId', '==', grupoId)
+  );
 
+  function esNotaDeActividad(documento) {
+    const alerta = documento.data();
+    const actividad = alerta.groupInfo?.actividad;
 
-
-// Borra entradas de bitácora recorriendo el itinerario del grupo
-async function wipeBitacoraFromItinerario(g){
-  const it = g.itinerario || {};
-  let n = 0;
-  const fechas = Object.keys(it);
-  for (const f of fechas){
-    const arr = Array.isArray(it[f]) ? it[f] : Object.values(it[f]||{});
-    for (const a of arr){
-      const actKey = slugActKey(a);
-      if (!actKey) continue;
-      const coll = collection(db,'grupos', g.id, 'bitacora', actKey, f);
-      const qs = await getDocs(coll);
-      for (const d of qs.docs){ try{ await deleteDoc(d.ref); n++; }catch{} }
-    }
+    return Boolean(
+      actividad &&
+      alerta.groupInfo?.fechaActividad &&
+      String(alerta.mensaje || '').startsWith(
+        `NOTA EN ${String(actividad).toUpperCase()}: `
+      )
+    );
   }
-  return n;
+
+  const snapshot = await getDocsFromServer(consulta);
+  const alertas = snapshot.docs.filter(esNotaDeActividad);
+
+  for (const alerta of alertas) {
+    await deleteDoc(alerta.ref);
+  }
+
+  const restante = await getDocsFromServer(consulta);
+  if (restante.docs.some(esNotaDeActividad)) {
+    throw new Error('Todavía quedan alertas generadas por notas de bitácora.');
+  }
+
+  return alertas.length;
 }
 
-// Normaliza clave de actividad usando EXACTAMENTE la misma lógica
-// que cuando guardas bitácora (slug(actividad) → minúsculas sin espacios)
-function slugActKey(a){
-  // nombre de actividad o claves alternativas
-  const nombreAct =
-    a?.actKey ||
-    a?.actividad ||
-    a?.nombre ||
-    a?.titulo ||
-    a?.servicio ||
-    '';
+async function resetGroupFlags(grupoId) {
+  const grupoRef = doc(db, 'grupos', grupoId);
+  const cierreRef = doc(db, 'grupos', grupoId, 'finanzas', 'summary');
 
-  if (!nombreAct) return '';
-  // Usa la función slug que ya tienes definida arriba:
-  // const slug = s => norm(s).slice(0,60);
-  return slug(nombreAct);
-}
+  await deleteDoc(cierreRef);
 
-// Quita flags/summary y vuelve “editable” (coordinador sale de solo-lectura)
-// Quita flags de cierre, reabre summary y
-// deja el viaje como PENDIENTE (sin inicio/fin/pax)
-async function resetGroupFlags(grupoId){
-  try{
-    const ref = doc(db,'grupos',grupoId);
+  await updateDoc(grupoRef, {
+    asistencias: deleteField(),
+    paxViajando: deleteField(),
+    'viaje.inicio': deleteField(),
+    'viaje.fin': deleteField(),
+    'viaje.estado': 'PENDIENTE',
+    viajeInicioAt: deleteField(),
+    viajeFinAt: deleteField(),
+    viajeInicioBy: deleteField(),
+    viajeFinBy: deleteField(),
+    trip: deleteField(),
+    finanzasSummary: deleteField()
+  });
 
-    await updateDoc(ref, {
-      // Volver al estado inicial de viaje
-      paxViajando: deleteField(),
-      'viaje.inicio': deleteField(),          // sin hora de inicio
-      'viaje.fin.at': deleteField(),          // quitamos solo el timestamp de fin
-      'viaje.estado': 'PENDIENTE',           // vuelve al estado inicial
+  const [grupo, cierre] = await Promise.all([
+    getDocFromServer(grupoRef),
+    getDocFromServer(cierreRef)
+  ]);
 
-      // Flags de rendición / boleta en falso (siguen existiendo, pero “no hechos”)
-      'viaje.fin.rendicionOk': false,
-      'viaje.fin.boletaOk': false,
-      'viaje.fin.cierreFinanzas': deleteField(),
+  const datos = grupo.data();
 
-      // Campos legacy que usabas antes
-      viajeInicioAt: deleteField(),
-      viajeFinAt: deleteField(),
-      viajeInicioBy: deleteField(),
-      viajeFinBy: deleteField(),
-
-      // “trip” y resumen de finanzas también vuelven a cero
-      trip: deleteField(),
-      finanzasSummary: deleteField()
-    });
-
-  } catch (e) {
-    console.warn('[reset] resetGroupFlags.updateDoc', e);
+  if (
+    !grupo.exists() ||
+    cierre.exists() ||
+    datos.asistencias !== undefined ||
+    datos.paxViajando !== undefined ||
+    datos.viaje?.estado !== 'PENDIENTE' ||
+    datos.viaje?.inicio !== undefined ||
+    datos.viaje?.fin !== undefined
+  ) {
+    throw new Error('El servidor todavía muestra datos de asistencia o cierre.');
   }
 }
+
 
 // Auditoría (mantener historial)
 async function logHistorial(grupoId, accion, detalle){
@@ -13485,13 +13561,13 @@ async function renderFinanzas(g, pane){
       <div>
         CLP ${fmtCL(totAb.CLP||0)} · USD ${fmtCL(totAb.USD||0)} · BRL ${fmtCL(totAb.BRL||0)} · ARS ${fmtCL(totAb.ARS||0)}
       </div>
-      <div class="lab">GASTOS (APROBADOS)</div>
+      <div class="lab">GASTOS REGISTRADOS</div>
       <div>
-        CLP ${fmtCL(totGa.CLP||0)} · USD ${fmtCL(totGa.USD||0)} · BRL ${fmtCL(totGa.BRL||0)} · ARS ${fmtCL(totGa.ARS||0)}
+        CLP ${fmtCL(totGaRegistrados.CLP)} · USD ${fmtCL(totGaRegistrados.USD)} · BRL ${fmtCL(totGaRegistrados.BRL)} · ARS ${fmtCL(totGaRegistrados.ARS)}
       </div>
-      <div class="lab">SALDOS</div>
+      <div class="lab">SALDO OPERATIVO</div>
       <div>
-        CLP ${fmtCL(saldos.CLP||0)} · USD ${fmtCL(saldos.USD||0)} · BRL ${fmtCL(saldos.BRL||0)} · ARS ${fmtCL(saldos.ARS||0)}
+        CLP ${fmtCL(saldosOperativos.CLP)} · USD ${fmtCL(saldosOperativos.USD)} · BRL ${fmtCL(saldosOperativos.BRL)} · ARS ${fmtCL(saldosOperativos.ARS)}
       </div>
     </div>
   `;
