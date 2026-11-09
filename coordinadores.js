@@ -13931,7 +13931,12 @@ async function renderFinanzas(g, pane){
     const listo = sinPendientes && brlOk && arsOk && boletaOk && okTransf && okCash;
   
     const btn = cierre.querySelector('#btnCloseFin');
-    if (btn) btn.disabled = !listo;
+    if (btn) {
+      const cerrado = sumPrev?.closed === true;
+
+      btn.disabled = cerrado || !listo;
+      btn.textContent = cerrado ? 'FINANZAS CERRADAS' : 'CERRAR FINANZAS';
+    }
   
     // Mensajes guía
     const hints = [];
@@ -14168,6 +14173,7 @@ async function renderFinanzas(g, pane){
   // === Cerrar finanzas (bloquea edición para coordinador) ===
   const closeBtn = cierre.querySelector('#btnCloseFin');
   if (closeBtn) closeBtn.onclick = async ()=>{
+    if (sumPrev?.closed === true) return;
     try {
       const actuales = await loadGastosParaFinanzas(g.id, true);
 
