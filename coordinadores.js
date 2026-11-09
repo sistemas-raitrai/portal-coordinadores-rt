@@ -4777,10 +4777,6 @@ async function buscarGrupoVentasParaNomina(g, { force = false } = {}) {
     return /^\d+$/.test(limpio) ? [limpio, Number(limpio)] : [limpio];
   }
 
-  function numerosNegocio(valor) {
-    return [...new Set(texto(valor).match(/\d+/g) || [])];
-  }
-
   function elegirUnico(candidatos) {
     const compatibles = candidatos.filter(anoCompatible);
     if (!compatibles.length) return null;
@@ -4867,21 +4863,27 @@ async function buscarGrupoVentasParaNomina(g, { force = false } = {}) {
 
   if (porNegocio) return guardarResultado(porNegocio);
 
-  // 4. Negocio compuesto. Solo se consulta el año del viaje.
-  const numerosBuscados = numerosNegocio(negocio);
-
-  if (ano && numerosBuscados.length) {
-    const candidatosAno = await buscarPorCampo(['anoViaje'], [ano, String(ano)]);
-
-    const coincidencias = candidatosAno.filter(item =>
-      [item.numeroNegocio, item.negocio_id].some(valor => {
-        const numerosVentas = numerosNegocio(valor);
-        return numerosBuscados.every(numero => numerosVentas.includes(numero));
-      })
+  // 4. Resolver en el backend si la búsqueda habitual no encontró el grupo.
+  if (ano && /\d/.test(negocio)) {
+    const { grupoVentasId } = await consultarNominaPortal(
+      'resolverGrupoVentasPortal',
+      {
+        numeroNegocio: negocio,
+        anoViaje: ano
+      }
     );
 
-    const compuesto = elegirUnico(coincidencias);
-    if (compuesto) return guardarResultado(compuesto);
+    if (grupoVentasId) {
+      const snapshot = await getDoc(doc(ventas, grupoVentasId));
+
+      if (!snapshot.exists()) {
+        throw new Error('El grupo encontrado en Ventas ya no está disponible.');
+      }
+
+      return guardarResultado(datosDocumento(snapshot));
+    }
+
+    return null;
   }
 
   if (errorConsulta) {
