@@ -13820,9 +13820,9 @@ async function renderFinanzas(g, pane){
   
   // === Requisitos dinámicos ===
   function checkReady(){
-    // Políticas por moneda
-    const needTransfCLP = (saldos.CLP || 0) > 0;  // sobra CLP → transferencia + comprobante
-    const needCashUSD   = (saldos.USD || 0) > 0;  // sobra USD → efectivo USD + constancia
+    const sinPendientes = !hayPendientes;
+    const needTransfCLP = sinPendientes && (saldos.CLP || 0) > 0;
+    const needCashUSD = sinPendientes && (saldos.USD || 0) > 0;
     const brlZero       = Math.abs(saldos.BRL||0) < 0.005;
     const arsZero       = Math.abs(saldos.ARS||0) < 0.005;
   
@@ -13850,7 +13850,6 @@ async function renderFinanzas(g, pane){
     const boletaSugerida = 70000 * Math.max(0, dias||0);
   
     // Condiciones para habilitar
-    const sinPendientes = !hayPendientes;                  // NO deben existir gastos en PENDIENTE
     const brlOk = brlZero, arsOk = arsZero;                // BRL y ARS deben ser 0 exacto
     const boletaOk = sumPrevOkBoleta;                      // boleta subida
     const listo = sinPendientes && brlOk && arsOk && boletaOk && okTransf && okCash;
@@ -13863,7 +13862,9 @@ async function renderFinanzas(g, pane){
     // Línea informativa de boleta
     hints.push(`• MONTO BRUTO DE BOLETA: CLP ${fmtCL(boletaSugerida)} (${dias||0} DÍAS).`);
     if (!boletaOk) hints.push('• FALTA SUBIR BOLETA DEL SII.');
-    if (!sinPendientes) hints.push('• HAY GASTOS PENDIENTES: DEBEN SER APROBADOS O RECHAZADOS.');
+    if (!sinPendientes) {
+      hints.push('• FALTAN GASTOS POR REVISAR. EL MONTO A DEVOLVER SE MOSTRARÁ CUANDO TERMINE LA REVISIÓN.');
+    }
     if (!brlOk) hints.push('• BRL DEBE QUEDAR EN 0.');
     if (!arsOk) hints.push('• ARS DEBE QUEDAR EN 0.');
     // Mostrar SALDO por moneda (monto a devolver a la empresa) con instrucciones si falta marcar/cargar
@@ -14091,6 +14092,31 @@ async function renderFinanzas(g, pane){
   // === Cerrar finanzas (bloquea edición para coordinador) ===
   const closeBtn = cierre.querySelector('#btnCloseFin');
   if (closeBtn) closeBtn.onclick = async ()=>{
+    try {
+      const actuales = await loadGastosParaFinanzas(g.id, true);
+
+      if (actuales.some(gasto =>
+        ['PENDIENTE', 'GUARDADO'].includes(estadoGastoParaFinanzas(gasto))
+      )) {
+        alert('Faltan gastos por revisar. El cierre financiero sigue abierto.');
+        await renderFinanzas(g, pane);
+        return;
+      }
+
+      const aprobadosActuales = totalesPorMoneda(
+        actuales.filter(gasto => estadoGastoParaFinanzas(gasto) === 'APROBADO')
+      );
+
+      if (Object.keys(totGa).some(moneda => totGa[moneda] !== aprobadosActuales[moneda])) {
+        alert('Los gastos aprobados cambiaron. Revisa el monto de devolución actualizado antes de cerrar.');
+        await renderFinanzas(g, pane);
+        return;
+      }
+    } catch (error) {
+      console.error('[FINANZAS] No se pudo verificar el cierre', error);
+      alert('No se pudieron verificar los gastos. Intenta cerrar nuevamente.');
+      return;
+    }
     // Revalidación con mensajes concretos
     const needTransf = (saldos.CLP || 0) > 0;
     const needCash   = (saldos.USD || 0) > 0;
