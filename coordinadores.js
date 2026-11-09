@@ -5502,11 +5502,42 @@ async function abrirDocumentoPerfil(coordinadorId, tipo, nombre) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+function calcularRenovacionPerfil(tipo, valorEmision) {
+  const emision = fechaPerfilISO(valorEmision);
+  if (!emision) return '';
+
+  const fecha = new Date(`${emision}T12:00:00Z`);
+  if (!Number.isFinite(fecha.getTime())) return '';
+
+  if (tipo === 'antecedentes' || tipo === 'inhabilidad') {
+    const dias = tipo === 'antecedentes' ? 60 : 90;
+    fecha.setUTCDate(fecha.getUTCDate() + dias);
+    return fecha.toISOString().slice(0, 10);
+  }
+
+  if (tipo === 'primerosAuxilios') {
+    const ano = fecha.getUTCFullYear() + 2;
+    const mes = fecha.getUTCMonth();
+    const dia = fecha.getUTCDate();
+    const ultimoDia = new Date(Date.UTC(ano, mes + 1, 0)).getUTCDate();
+
+    return new Date(Date.UTC(ano, mes, Math.min(dia, ultimoDia)))
+      .toISOString().slice(0, 10);
+  }
+
+  return '';
+}
+
 function crearDocumentoPerfil(perfil, tipo, titulo) {
   const foto = tipo === 'foto';
   const carnet = tipo.startsWith('carnet');
   const meta = perfil.documentos?.[tipo];
-  const venceActual = carnet ? perfil.carnetVence || meta?.vence : meta?.vence;
+  const certificado = !foto && !carnet;
+  const venceActual = certificado
+    ? calcularRenovacionPerfil(tipo, meta?.emision)
+    : carnet
+      ? perfil.carnetVence || meta?.vence || ''
+      : '';
 
   const form = document.createElement('form');
   form.className = 'card rtPerfilForm';
@@ -5527,7 +5558,9 @@ function crearDocumentoPerfil(perfil, tipo, titulo) {
   estado.className = 'muted';
   estado.textContent = foto
     ? (perfil.fotoURL ? 'Foto cargada' : 'Sin foto')
-    : textoVigenciaPerfil(meta, venceActual);
+    : certificado && meta && !fechaPerfilISO(meta.emision)
+      ? 'Falta fecha de emisión'
+      : textoVigenciaPerfil(meta, venceActual);
   form.append(estado);
 
   const mensaje = document.createElement('p');
@@ -5562,19 +5595,32 @@ function crearDocumentoPerfil(perfil, tipo, titulo) {
   archivo.input.required = foto || !meta;
   form.append(archivo.label);
 
-  const emision = crearCampoPerfil('Fecha de emisión', 'date', fechaPerfilISO(meta?.emision));
+  const emision = crearCampoPerfil(
+    'Fecha de emisión',
+    'date',
+    fechaPerfilISO(meta?.emision)
+  );
+
   const vence = crearCampoPerfil(
-    carnet ? 'Vencimiento del carnet' : 'Vencimiento o próxima renovación',
+    carnet ? 'Vencimiento del carnet' : 'Próxima renovación',
     'date',
     fechaPerfilISO(venceActual)
   );
 
-  if (!foto && !carnet) {
+  if (certificado) {
     emision.input.required = true;
-    form.append(emision.label);
+    vence.input.readOnly = true;
+
+    const actualizarRenovacion = () => {
+      vence.input.value = calcularRenovacionPerfil(tipo, emision.input.value);
+    };
+
+    emision.input.addEventListener('input', actualizarRenovacion);
+    emision.input.addEventListener('change', actualizarRenovacion);
+    form.append(emision.label, vence.label);
   }
 
-  if (!foto) {
+  if (carnet) {
     vence.input.required = true;
     form.append(vence.label);
   }
