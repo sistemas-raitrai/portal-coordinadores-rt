@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coordinación General · Rai Trai</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f6f3f9;color:#271a32;font:1rem system-ui,sans-serif}
+main{max-width:42rem;margin:auto;padding:1rem 1rem max(2rem,env(safe-area-inset-bottom))}
+header{padding:1rem 0}
+h1{margin:.5rem 0;font-size:clamp(1.65rem,6vw,2.3rem)}
+p{line-height:1.5}
+label{display:block;margin-bottom:.45rem;font-weight:700}
+button,select,a.action{font:inherit;min-height:48px;border-radius:.8rem;padding:.75rem}
+button,select{width:100%;background:white;color:inherit;border:1px solid #d5c9df}
+button{cursor:pointer;text-align:left}
+button:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #6a2f91;outline-offset:2px}
+nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem;margin:1rem 0}
+nav button{min-height:68px;font-weight:700}
+nav button[aria-current=true]{background:#4a235f;color:white;border-color:#4a235f}
+article{background:#fff;padding:1rem;border:1px solid #e3d9ea;border-radius:.8rem;margin:.75rem 0}
+article h3{margin:0 0 .75rem}
+ul{padding-left:1.3rem} li+li{margin-top:.6rem}
+.secondary{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1rem}
+a.action{display:inline-flex;align-items:center;color:#4a235f}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<header><h1>Coordinación General</h1><p id="perfil"></p></header>
+<p role="status" id="estado"></p>
+<section id="portal" hidden>
+  <label for="destino">Destino</label>
+  <select id="destino"></select>
+  <nav id="menu" aria-label="Funciones"></nav>
+  <section id="contenido" aria-labelledby="titulo" hidden>
+    <h2 id="titulo" tabindex="-1"></h2>
+    <label for="grupo" id="label-grupo" hidden>Grupo</label>
+    <select id="grupo" hidden></select>
+    <div id="resultado" aria-live="polite"></div>
+  </section>
+</section>
+<div class="secondary">
+  <a class="action" href="./coordinadores.html">Portal de Coordinadores</a>
+</div>
+</main>
+<script type="module" src="./coordinacion-general.js"></script>
+</body>
+</html>
