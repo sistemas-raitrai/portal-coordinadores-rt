@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Constancia de renuncia a actividad · Rai Trai</title>
+<style>
+body{background:#f6f3f9;color:#271a32;font:1rem system-ui,sans-serif;margin:0}
+main{max-width:38rem;margin:auto;padding:1rem}
+canvas{touch-action:none;width:100%;background:white;border:1px solid #7b6a83;border-radius:.5rem;display:block}
+button{min-height:48px;padding:.5rem 1rem;margin:.6rem 0;font:inherit}
+label{display:block;padding:.5rem 0}
+</style>
+<main>
+<h1>Constancia de renuncia a actividad</h1>
+<div id="datos"></div>
+<p id="estado" role="status">Consultando constancia…</p>
+<form id="form" hidden>
+  <label for="firma">Firma del adulto acompañante</label>
+  <canvas id="firma" width="560" height="210" aria-label="Área para dibujar la firma"></canvas>
+  <button type="button" id="limpiar">Borrar firma</button>
+  <label><input type="checkbox" id="acepta" required> Leí la constancia y confirmo mi firma.</label>
+  <button type="submit" id="enviar">Firmar constancia</button>
+</form>
+</main>
+<script type="module" src="./firma-renuncia-actividad.js"></script>
+</html>
