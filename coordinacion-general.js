@@ -1,3 +1,4 @@
+import { mostrarCaja } from './coordinacion-general-caja.js';
 import { auth, db } from './firebase-init-portal.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 
@@ -5,12 +6,17 @@ import {
   collection, doc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, where
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 
+import { mostrarHoteles, mostrarComidas, mostrarDocumentos, mostrarRenuncia } from './coordinacion-general-consultas.js';
+
 const API = 'https://southamerica-west1-sist-op-rt.cloudfunctions.net/controlCoordinadoresApi';
 const $ = id => document.getElementById(id);
 const labels = {
   itinerario: 'Itinerarios',
+  hoy: 'Hoy',
   nomina: 'Nóminas',
-  fichas: 'Fichas médicas',
+  hoteles: 'Hoteles',
+  comidas: 'Comidas especiales',
+  documentos: 'Documentos',
   nfc: 'Pulseras NFC',
   renuncia: 'Renuncia a actividad',
   caja: 'Caja'
@@ -482,7 +488,7 @@ async function cargarPasajeros() {
   const grupoId = $('grupo').value;
   if (!grupoId) return;
   const destino = destination().id;
-  const soloFichas = section === 'fichas';
+  const soloFichas = !destination().modulos.includes('nomina');
   const puedeVerFichas = destination().modulos.includes('fichas');
   resultado.textContent = 'Cargando pasajeros…';
 
@@ -569,10 +575,13 @@ function renderMenu() {
   const selected = destination();
   if (!selected) return;
 
-  for (const id of selected.modulos) {
+  const menu = [...new Set(selected.modulos.map(id => id === 'fichas' ? 'nomina' : id))];
+  if (menu.includes('caja')) menu.unshift(...menu.splice(menu.indexOf('caja'), 1));
+  for (const id of menu) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = labels[id] || id;
+    if (id === 'caja') button.style.cssText = 'grid-column:1/-1;background:#155e52;color:white';
     button.addEventListener('click', () => {
       for (const item of $('menu').children) item.removeAttribute('aria-current');
       button.setAttribute('aria-current', 'true');
@@ -591,7 +600,16 @@ async function openModule() {
   $('grupo').hidden = $('label-grupo').hidden = true;
   $('grupo').replaceChildren();
   $('resultado').textContent = 'Cargando…';
-  if (!['itinerario', 'nomina', 'fichas', 'nfc'].includes(section)) {
+  if (section === 'hoy') {
+    mostrarHoy(request, destination().id);
+    return;
+  }
+  const vistas = { hoteles: mostrarHoteles, documentos: mostrarDocumentos, caja: mostrarCaja };
+  if (vistas[section]) {
+    void vistas[section]({ api, destino: destination().id, panel: $('resultado'), vigente: () => request === generation });
+    return;
+  }
+  if (!['itinerario', 'nomina', 'nfc', 'comidas', 'renuncia'].includes(section)) {
     $('resultado').textContent = 'Este módulo está pendiente de integración.';
     return;
   }
@@ -642,17 +660,43 @@ $('destino').addEventListener('change', () => {
   renderMenu();
 });
 $('grupo').addEventListener('change', () => {
-  if (section === 'nfc') void abrirGrabadorNfc();
+  if (section === 'renuncia' || section === 'comidas') {
+    const request = nuevaVista();
+    const mostrar = section === 'renuncia' ? mostrarRenuncia : mostrarComidas;
+    void mostrar({ api, destino: destination().id, grupoId: $('grupo').value,
+      panel: $('resultado'), vigente: () => request === generation });
+  } else if (section === 'nfc') void abrirGrabadorNfc();
   else if (section === 'itinerario') void loadItinerary();
   else if (section === 'nomina' || section === 'fichas') void cargarPasajeros();
 });
 
+const botonPerfil = document.createElement('button');
+botonPerfil.type = 'button';
+botonPerfil.textContent = 'Mi perfil';
+botonPerfil.hidden = true;
+const panelPerfil = document.createElement('dialog');
+panelPerfil.style.cssText = 'width:min(100% - 2rem, 38rem);max-height:90dvh;overflow:auto';
+const cerrarPerfil = document.createElement('button');
+cerrarPerfil.type = 'button';
+cerrarPerfil.textContent = 'Cerrar perfil';
+cerrarPerfil.addEventListener('click', () => panelPerfil.close());
+const contenidoPerfil = document.createElement('section');
+panelPerfil.append(cerrarPerfil, contenidoPerfil);
+document.body.append(panelPerfil);
+document.querySelector('main header').append(botonPerfil);
+panelPerfil.addEventListener('close', () => contenidoPerfil.replaceChildren());
+botonPerfil.addEventListener('click', () => {
+  panelPerfil.showModal();
+  void renderPerfilPortal(contenidoPerfil);
+});
 onAuthStateChanged(auth, async user => {
   const request = nuevaVista();
   $('portal').hidden = true;
   $('resultado').replaceChildren();
   $('perfil').textContent = '';
+  if (panelPerfil.open) panelPerfil.close();
   account = user;
+  botonPerfil.hidden = !user;
   if (!user) {
     $('estado').textContent = 'Inicia sesión desde el Portal de Coordinadores.';
     return;
@@ -876,3 +920,513 @@ function guardarGrabacionNfc(lote, ref, codigo, url, usuario) {
     });
   });
 }
+function mostrarHoy(vista, destino) {
+  const resultado = $('resultado');
+  const controles = document.createElement('div');
+  const fecha = document.createElement('input');
+  fecha.type = 'date';
+  fecha.setAttribute('aria-label', 'Fecha de operación');
+  const hoy = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Santiago' }).format(new Date());
+  fecha.value = hoy;
+  const lista = document.createElement('div');
+  let consulta = 0;
+
+  async function consultar() {
+    const numero = ++consulta;
+    if (!fecha.value) {
+      lista.textContent = 'Selecciona una fecha.';
+      return;
+    }
+    lista.textContent = 'Cargando operación…';
+    try {
+      const datos = await api('generalHoy', { destino, fecha: fecha.value });
+      if (vista !== generation || numero !== consulta) return;
+      lista.textContent = datos.grupos.length ? '' : 'No hay actividades para este destino en la fecha seleccionada.';
+      if (datos.actividadesSinTramo) {
+        const aviso = document.createElement('p');
+        aviso.textContent = `${datos.actividadesSinTramo} actividades de grupos mixtos tienen tramo por confirmar. Puedes consultarlas en Itinerarios.`;
+        lista.append(aviso);
+      }
+      for (const grupo of datos.grupos) {
+        const tarjeta = document.createElement('article');
+        const titulo = document.createElement('h3');
+        titulo.textContent = grupo.nombre;
+        const detalle = document.createElement('ul');
+        for (const actividad of grupo.actividades) {
+          const item = document.createElement('li');
+          item.textContent = [actividad.hora, actividad.nombre, actividad.ciudad].filter(Boolean).join(' · ');
+          detalle.append(item);
+        }
+        tarjeta.append(titulo, detalle);
+        lista.append(tarjeta);
+      }
+    } catch (error) {
+      if (vista === generation && numero === consulta) lista.textContent = error.message;
+    }
+  }
+
+  for (const [texto, pasos] of [['Anterior', -1], ['Hoy', 0], ['Siguiente', 1]]) {
+    const boton = document.createElement('button');
+    boton.type = 'button';
+    boton.textContent = texto;
+    boton.addEventListener('click', () => {
+      fecha.value ||= hoy;
+      if (pasos) fecha.stepUp(pasos);
+      else fecha.value = hoy;
+      void consultar();
+    });
+    controles.append(boton);
+  }
+  controles.style.cssText = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem;margin:.75rem 0';
+  fecha.style.cssText = 'width:100%;min-height:48px;font:inherit';
+  fecha.addEventListener('change', consultar);
+  resultado.replaceChildren(fecha, controles, lista);
+  void consultar();
+}
+const RT_DOCUMENTOS_PERFIL = [
+  ['foto', 'Foto de perfil'],
+  ['antecedentes', 'Certificado de antecedentes'],
+  ['inhabilidad', 'Certificado de inhabilidad para trabajar con menores'],
+  ['primerosAuxilios', 'Certificado de primeros auxilios'],
+  ['carnetAnverso', 'Carnet de identidad · anverso'],
+  ['carnetReverso', 'Carnet de identidad · reverso']
+];
+
+const llamarApiPerfil = api;
+const dmy = fecha => fecha.split('-').reverse().join('-');
+function obtenerFechaChile() {
+  const [ano, mes, dia] = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'America/Santiago'
+  }).format(new Date()).split('-');
+  return { ano, mes, dia };
+}
+
+function fechaPerfilISO(valor) {
+  return String(valor ?? '').match(/^\d{4}-\d{2}-\d{2}/)?.[0] || '';
+}
+
+function textoVigenciaPerfil(meta, vencimiento) {
+  if (!meta) return 'Faltante';
+
+  const vence = fechaPerfilISO(vencimiento);
+  if (!vence) return 'Sin vigencia informada';
+
+  const { ano, mes, dia } = obtenerFechaChile();
+  const hoy = `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+  const dias = (Date.parse(vence) - Date.parse(hoy)) / 86400000;
+
+  if (dias < 0) return `Vencido · ${dmy(vence)}`;
+  if (dias <= 30) return `Por vencer · ${dmy(vence)}`;
+  return `Vigente hasta ${dmy(vence)}`;
+}
+
+async function prepararArchivoPerfil(file, tipo) {
+  const carnet = tipo.startsWith('carnet');
+  const max = (carnet ? 12 : tipo === 'foto' ? 5 : 10) * 1024 * 1024;
+  const imagenes = ['image/jpeg', 'image/png', 'image/webp'];
+  const permitidos = carnet || tipo === 'foto'
+    ? imagenes
+    : [...imagenes, 'application/pdf'];
+
+  if (!permitidos.includes(file.type)) {
+    throw new Error('Selecciona un archivo en un formato admitido.');
+  }
+
+  if (!file.size || file.size > max) {
+    throw new Error(`Selecciona un archivo de hasta ${max / 1024 / 1024} MB.`);
+  }
+
+  let contenido = file;
+  let mime = file.type;
+
+  if (carnet) {
+    const url = URL.createObjectURL(file);
+
+    try {
+      const imagen = new Image();
+      await new Promise((resolve, reject) => {
+        imagen.onload = resolve;
+        imagen.onerror = () => reject(new Error('No se pudo abrir la imagen.'));
+        imagen.src = url;
+      });
+
+      const escala = Math.min(1, 1200 / Math.max(imagen.width, imagen.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(imagen.width * escala));
+      canvas.height = Math.max(1, Math.round(imagen.height * escala));
+
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(imagen, 0, 0, canvas.width, canvas.height);
+
+      let comprimida = null;
+      for (const calidad of [0.88, 0.75, 0.6, 0.45, 0.3]) {
+        comprimida = await new Promise(resolve =>
+          canvas.toBlob(resolve, 'image/jpeg', calidad)
+        );
+        if (comprimida?.size <= 180000) break;
+      }
+
+      if (!comprimida || comprimida.size > 180000) {
+        throw new Error('La imagen del carnet es demasiado grande.');
+      }
+
+      contenido = comprimida;
+      mime = 'image/jpeg';
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  const base64 = await new Promise((resolve, reject) => {
+    const lector = new FileReader();
+    lector.onload = () => resolve(String(lector.result).split(',')[1]);
+    lector.onerror = () => reject(new Error('No se pudo leer el archivo.'));
+    lector.readAsDataURL(contenido);
+  });
+
+  return {
+    nombre: carnet ? `${tipo}.jpg` : file.name,
+    mime,
+    base64
+  };
+}
+
+function crearCampoPerfil(texto, tipo, valor = '') {
+  const label = document.createElement('label');
+  label.className = 'rtPerfilCampo';
+  label.append(document.createTextNode(texto));
+
+  const input = document.createElement(tipo === 'textarea' ? 'textarea' : 'input');
+
+  if (tipo !== 'textarea') input.type = tipo;
+  if (tipo !== 'file') input.value = valor;
+
+  label.append(input);
+  return { label, input };
+}
+
+async function abrirDocumentoPerfil(coordinadorId, tipo, nombre) {
+  const resultado = await llamarApiPerfil('myFileRead', { coordinadorId, tipo });
+  const admitidos = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+  const mime = admitidos.includes(resultado.mime)
+    ? resultado.mime
+    : 'application/octet-stream';
+
+  const bytes = Uint8Array.from(atob(resultado.base64), letra => letra.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = nombre || tipo;
+  document.body.append(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function calcularRenovacionPerfil(tipo, valorEmision) {
+  const emision = fechaPerfilISO(valorEmision);
+  if (!emision) return '';
+
+  const fecha = new Date(`${emision}T12:00:00Z`);
+  if (!Number.isFinite(fecha.getTime())) return '';
+
+  if (tipo === 'antecedentes' || tipo === 'inhabilidad') {
+    const dias = tipo === 'antecedentes' ? 60 : 90;
+    fecha.setUTCDate(fecha.getUTCDate() + dias);
+    return fecha.toISOString().slice(0, 10);
+  }
+
+  if (tipo === 'primerosAuxilios') {
+    const ano = fecha.getUTCFullYear() + 2;
+    const mes = fecha.getUTCMonth();
+    const dia = fecha.getUTCDate();
+    const ultimoDia = new Date(Date.UTC(ano, mes + 1, 0)).getUTCDate();
+
+    return new Date(Date.UTC(ano, mes, Math.min(dia, ultimoDia)))
+      .toISOString().slice(0, 10);
+  }
+
+  return '';
+}
+
+function crearDocumentoPerfil(perfil, tipo, titulo) {
+  const foto = tipo === 'foto';
+  const carnet = tipo.startsWith('carnet');
+  const meta = perfil.documentos?.[tipo];
+  const certificado = !foto && !carnet;
+  const venceActual = certificado
+    ? calcularRenovacionPerfil(tipo, meta?.emision)
+    : carnet
+      ? perfil.carnetVence || meta?.vence || ''
+      : '';
+
+  const form = document.createElement('form');
+  form.className = 'card rtPerfilForm';
+
+  const encabezado = document.createElement('h4');
+  encabezado.textContent = titulo;
+  form.append(encabezado);
+
+  if (foto && perfil.fotoURL) {
+    const imagen = document.createElement('img');
+    imagen.className = 'rtPerfilFoto';
+    imagen.alt = 'Foto de perfil';
+    imagen.src = perfil.fotoURL;
+    form.append(imagen);
+  }
+
+  const estado = document.createElement('p');
+  estado.className = 'muted';
+  estado.textContent = foto
+    ? (perfil.fotoURL ? 'Foto cargada' : 'Sin foto')
+    : certificado && meta && !fechaPerfilISO(meta.emision)
+      ? 'Falta fecha de emisión'
+      : textoVigenciaPerfil(meta, venceActual);
+  form.append(estado);
+
+  const mensaje = document.createElement('p');
+  mensaje.setAttribute('role', 'status');
+
+  if (meta) {
+    const abrir = document.createElement('button');
+    abrir.type = 'button';
+    abrir.className = 'btn sec';
+    abrir.textContent = 'Descargar archivo';
+
+    abrir.onclick = async () => {
+      abrir.disabled = true;
+      mensaje.textContent = '';
+
+      try {
+        await abrirDocumentoPerfil(perfil.id, tipo, meta.nombre);
+      } catch (error) {
+        mensaje.textContent = error.message;
+      } finally {
+        abrir.disabled = false;
+      }
+    };
+
+    form.append(abrir);
+  }
+
+  const archivo = crearCampoPerfil('Seleccionar archivo', 'file');
+  archivo.input.accept = foto || carnet
+    ? 'image/jpeg,image/png,image/webp'
+    : 'application/pdf,image/jpeg,image/png,image/webp';
+  archivo.input.required = foto || !meta;
+  form.append(archivo.label);
+
+  const emision = crearCampoPerfil(
+    'Fecha de emisión',
+    'date',
+    fechaPerfilISO(meta?.emision)
+  );
+
+  const vence = crearCampoPerfil(
+    carnet ? 'Vencimiento del carnet' : 'Próxima renovación',
+    'date',
+    fechaPerfilISO(venceActual)
+  );
+
+  if (certificado) {
+    emision.input.required = true;
+    vence.input.readOnly = true;
+
+    const actualizarRenovacion = () => {
+      vence.input.value = calcularRenovacionPerfil(tipo, emision.input.value);
+    };
+
+    emision.input.addEventListener('input', actualizarRenovacion);
+    emision.input.addEventListener('change', actualizarRenovacion);
+    form.append(emision.label, vence.label);
+  }
+
+  if (carnet) {
+    vence.input.required = true;
+    form.append(vence.label);
+  }
+
+  const guardar = document.createElement('button');
+  guardar.type = 'submit';
+  guardar.className = 'btn ok';
+  guardar.textContent = 'Guardar';
+  form.append(guardar, mensaje);
+
+  form.onsubmit = async event => {
+    event.preventDefault();
+    guardar.disabled = true;
+    mensaje.textContent = 'Guardando…';
+
+    try {
+      const data = {
+        coordinadorId: perfil.id,
+        tipo,
+        emision: emision.input.value,
+        vence: vence.input.value
+      };
+
+      const file = archivo.input.files[0];
+      if (file) data.archivo = await prepararArchivoPerfil(file, tipo);
+
+      await llamarApiPerfil('myAssetSave', data);
+
+      archivo.input.value = '';
+      archivo.input.required = foto;
+      mensaje.textContent = 'Guardado. Abre Perfil nuevamente para ver el archivo actualizado.';
+
+      if (!foto) {
+        estado.textContent = textoVigenciaPerfil(
+          { nombre: file?.name || meta?.nombre },
+          vence.input.value
+        );
+      }
+    } catch (error) {
+      mensaje.textContent = error.message;
+    } finally {
+      guardar.disabled = false;
+    }
+  };
+
+  return form;
+}
+
+function crearFormularioDatosPerfil(perfil) {
+  const form = document.createElement('form');
+  form.className = 'card rtPerfilForm';
+
+  const campos = [
+    ['nombre', 'Nombre', 'text'],
+    ['correo', 'Correo electrónico', 'email'],
+    ['rut', 'RUT', 'text'],
+    ['fechaNacimiento', 'Fecha de nacimiento', 'date'],
+    ['telefono', 'Teléfono', 'tel'],
+    ['direccion', 'Dirección', 'text'],
+    ['ciudadResidencia', 'Ciudad de residencia', 'text'],
+    ['celularMarcaModelo', 'Marca y modelo del celular', 'text'],
+    ['tallaPolera', 'Talla de polera', 'text'],
+    ['sexo', 'Sexo', 'text'],
+    ['notas', 'Información adicional', 'textarea'],
+    ['banco', 'Banco', 'text'],
+    ['tipoCuenta', 'Tipo de cuenta', 'text'],
+    ['numeroCuenta', 'Número de cuenta', 'text']
+  ];
+
+  const inputs = {};
+
+  for (const [campo, etiqueta, tipo] of campos) {
+    const valor = tipo === 'date'
+      ? fechaPerfilISO(perfil[campo])
+      : perfil[campo] ?? '';
+    const { label, input } = crearCampoPerfil(etiqueta, tipo, valor);
+
+    if (campo === 'nombre' || campo === 'correo') input.readOnly = true;
+    if (campo === 'tallaPolera') input.placeholder = 'XS, S, M, L, XL o XXL';
+    if (campo === 'sexo') input.placeholder = 'hombre, mujer o sin_informar';
+
+    inputs[campo] = input;
+    form.append(label);
+  }
+
+  const guardar = document.createElement('button');
+  guardar.type = 'submit';
+  guardar.className = 'btn ok';
+  guardar.textContent = 'Guardar mis datos';
+
+  const mensaje = document.createElement('p');
+  mensaje.setAttribute('role', 'status');
+  form.append(guardar, mensaje);
+
+  form.onsubmit = async event => {
+    event.preventDefault();
+    guardar.disabled = true;
+    mensaje.textContent = 'Guardando…';
+
+    try {
+      const banco = ['banco', 'tipoCuenta', 'numeroCuenta'];
+      const valores = {};
+      const antes = {};
+
+      for (const [campo, input] of Object.entries(inputs)) {
+        if (input.readOnly || banco.includes(campo)) continue;
+
+        const anterior = campo === 'fechaNacimiento'
+          ? fechaPerfilISO(perfil[campo])
+          : String(perfil[campo] ?? '');
+
+        if (input.value.trim() === anterior) continue;
+
+        valores[campo] = input.value.trim();
+        antes[campo] = perfil[campo] ?? '';
+      }
+
+      const bancoEditado = banco.some(campo =>
+        inputs[campo].value.trim() !== String(perfil[campo] ?? '')
+      );
+
+      if (bancoEditado) {
+        for (const campo of banco) {
+          valores[campo] = inputs[campo].value.trim();
+          antes[campo] = perfil[campo] ?? '';
+        }
+        antes.datosTransferir = perfil.datosTransferir ?? '';
+      }
+
+      if (!Object.keys(valores).length) {
+        mensaje.textContent = 'Tus datos están al día.';
+        return;
+      }
+
+      await llamarApiPerfil('myProfileSave', {
+        coordinadorId: perfil.id,
+        valores,
+        antes,
+        bancoEditado
+      });
+
+      const resultado = await llamarApiPerfil('myProfileGet');
+      Object.assign(perfil, resultado.perfil);
+
+      for (const [campo, input] of Object.entries(inputs)) {
+        input.value = campo === 'fechaNacimiento'
+          ? fechaPerfilISO(perfil[campo])
+          : perfil[campo] ?? '';
+      }
+
+      mensaje.textContent = 'Datos guardados.';
+    } catch (error) {
+      mensaje.textContent = error.message;
+    } finally {
+      guardar.disabled = false;
+    }
+  };
+
+  return form;
+}
+
+async function renderPerfilPortal(panel) {
+  panel.textContent = 'Cargando perfil…';
+
+  try {
+    const { perfil } = await llamarApiPerfil('myProfileGet');
+    panel.replaceChildren();
+
+    const titulo = document.createElement('h3');
+    titulo.textContent = 'Mi perfil';
+    panel.append(titulo, crearFormularioDatosPerfil(perfil));
+
+    const documentos = document.createElement('h3');
+    documentos.textContent = 'Foto y documentos';
+    panel.append(documentos);
+
+    for (const [tipo, nombre] of RT_DOCUMENTOS_PERFIL) {
+      panel.append(crearDocumentoPerfil(perfil, tipo, nombre));
+    }
+
+  } catch (error) {
+    panel.textContent = error.message;
+  }
+}
+
