@@ -1,3 +1,4 @@
+import { mostrarCaja } from './coordinacion-general-caja.js';
 /* COORDINADORES.JS — PORTAL COORDINADORES RT */
 
 import { app, db, auth, storage } from './firebase-init-portal.js';
@@ -2346,6 +2347,7 @@ async function loadGruposForCoordinador(
         <div class="rtPerfilPanel" id="rtPerfilSinViajes"></div>
       `;
 
+      agregarBotonFondosPersonales(cont);
       const panel = cont.querySelector('#rtPerfilSinViajes');
       cont.querySelector('#rtAbrirPerfilSinViajes').onclick = () =>
         renderPerfilPortal(panel);
@@ -14240,6 +14242,7 @@ async function renderFinanzas(g, pane){
     }
   });
 
+  agregarBotonFondosPersonales(pane);
   const hitsAb = qNorm ? abonos.filter(a => norm([a.asunto,a.comentarios,a.medio,String(a.valor||0)].join(' ')).includes(qNorm)).length : 0;
   return hitsAb + (ghits||0);
 }
@@ -14639,4 +14642,29 @@ async function purgeGastosForGroup(grupoId){
       }catch(err){ console.warn('purgeGastos coord', c.id, err); }
     }
   }catch(e){ console.error('purgeGastosForGroup', e); }
+}
+
+function agregarBotonFondosPersonales(pane) {
+  const boton = document.createElement('button');
+  boton.type = 'button';
+  boton.className = 'btn sec';
+  boton.textContent = 'Fondos recibidos y pagos delegados';
+  boton.addEventListener('click', () => {
+    const dialogo = document.createElement('dialog');
+    dialogo.style.cssText = 'width:min(100% - 2rem, 42rem);max-height:90dvh;overflow:auto';
+    const cerrar = document.createElement('button');
+    cerrar.type = 'button';
+    cerrar.textContent = 'Cerrar';
+    cerrar.addEventListener('click', () => dialogo.close());
+    const contenido = document.createElement('section');
+    dialogo.append(cerrar, contenido);
+    dialogo.addEventListener('close', () => dialogo.remove(), { once:true });
+    document.body.append(dialogo);
+    dialogo.showModal();
+    void mostrarCaja({
+      api: llamarApiPerfil, panel:contenido, soloPersonal:true,
+      vigente: () => dialogo.open && dialogo.isConnected
+    });
+  });
+  pane.prepend(boton);
 }
