@@ -610,7 +610,7 @@ async function openModule() {
     return;
   }
   if (!['itinerario', 'nomina', 'nfc', 'comidas', 'renuncia'].includes(section)) {
-    $('resultado').textContent = 'Este módulo está pendiente de integración.';
+    $('resultado').textContent = 'Esta función no está disponible en esta versión del portal.';
     return;
   }
   try {
@@ -619,7 +619,13 @@ async function openModule() {
     $('resultado').textContent = grupos.length ? '' : 'No hay grupos para este destino.';
     if (!grupos.length) return;
     $('grupo').append(new Option('Selecciona un grupo', ''));
-    for (const group of grupos) $('grupo').append(new Option(group.nombre, group.id));
+    for (const group of grupos) {
+      const inicio = group.fechaInicio?.split('-').reverse().join('/');
+      const nombre = section === 'itinerario'
+        ? `${inicio ? 'Inicio ' + inicio : 'Sin fecha de inicio'} · ${group.nombre}`
+        : group.nombre;
+      $('grupo').append(new Option(nombre, group.id));
+    }
     $('grupo').hidden = $('label-grupo').hidden = false;
   } catch (error) {
     if (request === generation) $('resultado').textContent = error.message;
@@ -675,7 +681,27 @@ botonPerfil.type = 'button';
 botonPerfil.textContent = 'Mi perfil';
 botonPerfil.hidden = true;
 const panelPerfil = document.createElement('dialog');
-panelPerfil.style.cssText = 'width:min(100% - 2rem, 38rem);max-height:90dvh;overflow:auto';
+panelPerfil.className = 'cg-perfil-dialogo';
+const estilosPerfil = document.createElement('style');
+estilosPerfil.textContent = `
+  .cg-perfil-dialogo { box-sizing:border-box; width:min(calc(100% - 1.5rem),42rem); max-height:90dvh;
+    overflow:auto; border:1px solid #d9cde3; border-radius:1rem; background:#f9f6fb; color:#271a32; padding:1rem; }
+  .cg-perfil-dialogo::backdrop { background:rgba(36,24,46,.48); }
+  .cg-perfil-dialogo h3 { margin:1rem 0 .7rem; }
+  .cg-perfil-dialogo form { display:grid; gap:.9rem; margin:0 0 1rem; padding:1rem;
+    background:#fff; border:1px solid #e3d9ea; border-radius:.8rem; }
+  .cg-perfil-dialogo fieldset { min-width:0; display:grid; gap:.65rem; margin:0; padding:0; border:0; }
+  .cg-perfil-dialogo legend { color:#542c6f; font-weight:700; margin-bottom:.5rem; }
+  .cg-perfil-dialogo .rtPerfilCampo { display:grid; gap:.35rem; min-width:0; margin:0; }
+  .cg-perfil-dialogo input, .cg-perfil-dialogo textarea {
+    box-sizing:border-box; width:100%; min-width:0; min-height:44px; padding:.6rem;
+    border:1px solid #d5c9df; border-radius:.45rem; background:#fff; font:inherit; color:inherit; }
+  .cg-perfil-dialogo input[readonly] { background:#f2edf5; }
+  .cg-perfil-dialogo textarea { min-height:5rem; }
+  .cg-perfil-dialogo button[type=submit] { background:#4a235f; border-color:#4a235f; color:#fff; }
+  .cg-perfil-dialogo [role=status]:empty { display:none; }
+`;
+document.head.append(estilosPerfil);
 const cerrarPerfil = document.createElement('button');
 cerrarPerfil.type = 'button';
 cerrarPerfil.textContent = 'Cerrar perfil';
@@ -1315,6 +1341,12 @@ function crearFormularioDatosPerfil(perfil) {
   ];
 
   const inputs = {};
+  let bloque;
+  const secciones = {
+    nombre: 'Identificación y contacto',
+    celularMarcaModelo: 'Información adicional',
+    banco: 'Datos bancarios'
+  };
 
   for (const [campo, etiqueta, tipo] of campos) {
     const valor = tipo === 'date'
@@ -1327,7 +1359,14 @@ function crearFormularioDatosPerfil(perfil) {
     if (campo === 'sexo') input.placeholder = 'hombre, mujer o sin_informar';
 
     inputs[campo] = input;
-    form.append(label);
+    if (secciones[campo]) {
+      bloque = document.createElement('fieldset');
+      const titulo = document.createElement('legend');
+      titulo.textContent = secciones[campo];
+      bloque.append(titulo);
+      form.append(bloque);
+    }
+    bloque.append(label);
   }
 
   const guardar = document.createElement('button');
