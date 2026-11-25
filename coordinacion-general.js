@@ -1,6 +1,6 @@
 import { mostrarCaja } from './coordinacion-general-caja.js';
 import { auth, db } from './firebase-init-portal.js';
-import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 
 import {
   collection, doc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, where
@@ -684,6 +684,10 @@ const panelPerfil = document.createElement('dialog');
 panelPerfil.className = 'cg-perfil-dialogo';
 const estilosPerfil = document.createElement('style');
 estilosPerfil.textContent = `
+  .cg-ingreso { display:grid; gap:.85rem; margin:.75rem 0; }
+  .cg-ingreso[hidden] { display:none; }
+  .cg-ingreso input { box-sizing:border-box; display:block; width:100%; min-height:46px;
+    padding:.65rem; border:1px solid #d5c9df; border-radius:.65rem; font:inherit; }
   .cg-perfil-dialogo { box-sizing:border-box; width:min(calc(100% - 1.5rem),42rem); max-height:90dvh;
     overflow:auto; border:1px solid #d9cde3; border-radius:1rem; background:#f9f6fb; color:#271a32; padding:1rem; }
   .cg-perfil-dialogo::backdrop { background:rgba(36,24,46,.48); }
@@ -715,6 +719,49 @@ botonPerfil.addEventListener('click', () => {
   panelPerfil.showModal();
   void renderPerfilPortal(contenidoPerfil);
 });
+const ingreso = document.createElement('form');
+ingreso.className = 'cg-ingreso';
+ingreso.hidden = true;
+const correoIngreso = document.createElement('input');
+correoIngreso.type = 'email';
+correoIngreso.autocomplete = 'username';
+correoIngreso.required = true;
+const claveIngreso = document.createElement('input');
+claveIngreso.type = 'password';
+claveIngreso.autocomplete = 'current-password';
+claveIngreso.required = true;
+const entrar = document.createElement('button');
+entrar.textContent = 'Iniciar sesión';
+const salir = document.createElement('button');
+salir.type = 'button';
+salir.textContent = 'Cerrar sesión';
+salir.hidden = true;
+for (const [nombre, campo] of [['Correo electrónico', correoIngreso], ['Contraseña', claveIngreso]]) {
+  const label = document.createElement('label');
+  label.textContent = nombre;
+  label.append(campo);
+  ingreso.append(label);
+}
+ingreso.append(entrar);
+$('estado').after(ingreso);
+botonPerfil.after(salir);
+ingreso.addEventListener('submit', async event => {
+  event.preventDefault();
+  entrar.disabled = true;
+  try {
+    await signInWithEmailAndPassword(auth, correoIngreso.value.trim(), claveIngreso.value);
+    ingreso.reset();
+  } catch {
+    $('estado').textContent = 'No se pudo iniciar sesión. Revisa el correo y la contraseña.';
+  } finally {
+    entrar.disabled = false;
+  }
+});
+salir.addEventListener('click', async () => {
+  try { await signOut(auth); }
+  catch { $('estado').textContent = 'No se pudo cerrar la sesión. Intenta nuevamente.'; }
+});
+
 onAuthStateChanged(auth, async user => {
   const request = nuevaVista();
   $('portal').hidden = true;
@@ -723,8 +770,10 @@ onAuthStateChanged(auth, async user => {
   if (panelPerfil.open) panelPerfil.close();
   account = user;
   botonPerfil.hidden = !user;
+  ingreso.hidden = !!user;
+  salir.hidden = !user;
   if (!user) {
-    $('estado').textContent = 'Inicia sesión desde el Portal de Coordinadores.';
+    $('estado').textContent = 'Inicia sesión para entrar a Coordinación General.';
     return;
   }
   $('estado').textContent = 'Consultando asignaciones…';
@@ -1468,4 +1517,3 @@ async function renderPerfilPortal(panel) {
     panel.textContent = error.message;
   }
 }
-
