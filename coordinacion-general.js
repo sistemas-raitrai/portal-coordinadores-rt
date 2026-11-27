@@ -581,7 +581,7 @@ function renderMenu() {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = labels[id] || id;
-    if (id === 'caja') button.style.cssText = 'grid-column:1/-1;background:#155e52;color:white';
+    if (id === 'caja') button.classList.add('cg-modulo-caja');
     button.addEventListener('click', () => {
       for (const item of $('menu').children) item.removeAttribute('aria-current');
       button.setAttribute('aria-current', 'true');
@@ -744,7 +744,7 @@ for (const [nombre, campo] of [['Correo electrónico', correoIngreso], ['Contras
 }
 ingreso.append(entrar);
 $('estado').after(ingreso);
-botonPerfil.after(salir);
+($('sesion-acciones') || document.querySelector('main')).append(salir);
 ingreso.addEventListener('submit', async event => {
   event.preventDefault();
   entrar.disabled = true;
