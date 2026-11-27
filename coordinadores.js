@@ -6,7 +6,7 @@ import { onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-auth.js';
 import {
   collection, collectionGroup, getDocs, getDoc, doc, updateDoc, addDoc, setDoc, getDocsFromServer, getDocFromServer,
-  serverTimestamp, query, where, orderBy, limit, deleteField, deleteDoc, startAfter
+  serverTimestamp, query, where, orderBy, limit, deleteField, deleteDoc, startAfter, writeBatch
 } from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js';
 import { ref as sRef, uploadBytes, getDownloadURL, listAll, deleteObject }
   from 'https://www.gstatic.com/firebasejs/11.7.3/firebase-storage.js';
@@ -5515,7 +5515,242 @@ async function abrirFichaDesdeNomina(grupoVentasId, pasajero, boton) {
   }
 }
 
-async function renderNominaCoordinador(g, pane) {
+function cargarDatosNomina(g, actualizar = false) {
+  if (!actualizar && datosNominaPorViaje.has(g)) return datosNominaPorViaje.get(g);
+
+  const consulta = (async () => {
+    const grupoVentas = await buscarGrupoVentasParaNomina(g);
+    if (!grupoVentas) throw new Error('No se encontró el grupo en Ventas.');
+
+    const grupoVentasId = grupoVentas.id;
+    const { pasajeros } = await consultarNominaPortal('nominaPortalCoordinador', { grupoVentasId });
+    if (!Array.isArray(pasajeros)) throw new Error('La nómina no está disponible.');
+    return { grupoVentasId, pasajeros: pasajeros.filter(pasajero => pasajero.anulado !== true) };
+  })();
+
+  datosNominaPorViaje.set(g, consulta);
+  void consulta.catch(() => {
+    if (datosNominaPorViaje.get(g) === consulta) datosNominaPorViaje.delete(g);
+  });
+  return consulta;
+}
+
+const datosNominaPorViaje = new WeakMap();
+const fichasPorNomina = new WeakMap();
+
+function cargarFichasNomina(nomina) {
+  if (fichasPorNomina.has(nomina)) return fichasPorNomina.get(nomina);
+
+  const { grupoVentasId, pasajeros } = nomina;
+  const fichas = new Array(pasajeros.length);
+  let siguiente = 0;
+
+  async function cargarPendientes() {
+    while (siguiente < pasajeros.length) {
+      const indice = siguiente++;
+      try {
+        const { pasajero } = await consultarNominaPortal('fichaPortalCoordinador', {
+          grupoVentasId,
+          inscripcionId: pasajeros[indice].inscripcionId
+        });
+        fichas[indice] = pasajero || null;
+      } catch (error) {
+        console.warn('[Nómina] No se pudo consultar una ficha:', error.code || error.name);
+        fichas[indice] = null;
+      }
+    }
+  }
+
+  const consulta = Promise.all(
+    Array.from({ length: Math.min(5, pasajeros.length) }, cargarPendientes)
+  ).then(() => {
+    if (fichas.some(ficha => !ficha)) fichasPorNomina.delete(nomina);
+    return fichas;
+  });
+
+  fichasPorNomina.set(nomina, consulta);
+  return consulta;
+}
+
+function resumirFichasNomina(fichas) {
+  const tipos = new Map();
+  let completas = 0;
+  let pendientes = 0;
+  let dietas = 0;
+  let alergias = 0;
+  let sinConsultar = 0;
+
+  for (const ficha of fichas) {
+    if (!ficha) {
+      sinConsultar++;
+      continue;
+    }
+    if (ficha.anulado === true) continue;
+    if (ficha.fichaCompleta) completas++;
+    else pendientes++;
+
+    const salud = ficha.salud || {};
+    const listaTipos = Array.isArray(salud.dietaTipos) ? salud.dietaTipos : [];
+    const restricciones = Array.isArray(salud.dietaRestricciones) ? salud.dietaRestricciones : [];
+    const alimentos = Array.isArray(salud.alergiasAlimentarias) ? salud.alergiasAlimentarias : [];
+    const categorias = new Set(
+      [...listaTipos, ...restricciones].map(tipo => String(tipo || '').trim().toUpperCase()).filter(Boolean)
+    );
+    if (alimentos.length) {
+      alergias++;
+      categorias.add('ALERGIA ALIMENTARIA');
+    }
+    const dietaDeclarada = norm(String(salud.dietaFlag || '')) === 'si' ||
+      Boolean(String(salud.dietaDetalle || '').trim());
+    if (!dietaDeclarada && !categorias.size) continue;
+    dietas++;
+    if (!categorias.size) categorias.add('POR REVISAR EN FICHA');
+    for (const categoria of categorias) tipos.set(categoria, (tipos.get(categoria) || 0) + 1);
+  }
+
+  return { completas, pendientes, dietas, alergias, sinConsultar, tipos };
+}
+
+async function renderMetricasNomina(nomina, bloque) {
+  const metricas = document.createElement('section');
+  metricas.className = 'card';
+
+  const titulo = document.createElement('h4');
+  titulo.textContent = 'RESUMEN DEL GRUPO';
+
+  const tallas = new Map();
+  for (const pasajero of nomina.pasajeros) {
+    const talla = String(pasajero.talla || '').trim().toUpperCase() || 'SIN TALLA';
+    tallas.set(talla, (tallas.get(talla) || 0) + 1);
+  }
+
+  const poleras = document.createElement('p');
+  poleras.textContent = tallas.size
+    ? 'Poleras · ' + [...tallas].map(([talla, cantidad]) => `${talla} ${cantidad}`).join(' · ')
+    : 'Sin poleras registradas.';
+
+  const estado = document.createElement('p');
+  estado.setAttribute('role', 'status');
+  estado.textContent = 'Calculando comidas especiales y estado de fichas…';
+  metricas.append(titulo, poleras, estado);
+  bloque.append(metricas);
+
+  const resumen = resumirFichasNomina(await cargarFichasNomina(nomina));
+  const desglose = [...resumen.tipos].sort(([a], [b]) => a.localeCompare(b, 'es'))
+    .map(([tipo, cantidad]) => `${tipo} ${cantidad}`).join(' · ');
+  estado.textContent = `Comidas especiales · ${resumen.dietas} pasajero(s)${desglose ? ' · ' + desglose : ''}`;
+
+  const fichas = document.createElement('p');
+  fichas.textContent = `Fichas completas ${resumen.completas} · Pendientes ${resumen.pendientes} · Alergias alimentarias ${resumen.alergias}`;
+  metricas.append(fichas);
+
+  if (resumen.sinConsultar) {
+    const aviso = document.createElement('p');
+    aviso.textContent = `Resultados parciales. No se pudieron consultar ${resumen.sinConsultar} ficha(s). Usa Actualizar para reintentar.`;
+    metricas.append(aviso);
+  }
+}
+
+async function abrirManifiestoViaje(g) {
+  const ventana = window.open('', '_blank');
+  if (!ventana) {
+    alert('Permite las ventanas emergentes para abrir el manifiesto.');
+    return;
+  }
+
+  ventana.opener = null;
+  ventana.document.title = 'Manifiesto de pasajeros';
+  ventana.document.body.textContent = 'Cargando manifiesto…';
+
+  try {
+    const nomina = await cargarDatosNomina(g);
+    const fichas = await cargarFichasNomina(nomina);
+    if (ventana.closed) return;
+
+    const nombreGrupo = nombreOperativoGrupo(g);
+    const titulos = ['N.º', 'Nombre', 'Fecha nac.', 'Nacionalidad', 'Ocupación', 'Sexo', 'RUT / documento', 'País de residencia'];
+    const encabezados = titulos.map(titulo => `<th scope="col">${esc(titulo)}</th>`).join('');
+    const fila = valores => '<tr>' + valores.map(valor => `<td>${esc(valor ?? '')}</td>`).join('') + '</tr>';
+    const fecha = valor => {
+      const iso = toISO(valor || '');
+      return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso.split('-').reverse().join('/') : '';
+    };
+
+    const pasajeros = nomina.pasajeros.map((registro, indice) => {
+      const ficha = fichas[indice] || {};
+      const identidad = ficha.identificacion || {};
+      const sexo = identidad.sexo || identidad.genero || registro.sexo || '';
+      return fila([
+        indice + 1,
+        identidad.nombreCompleto || registro.nombre,
+        fecha(identidad.fechaNacimiento || registro.fechaNacimiento),
+        identidad.nacionalidad || registro.nacionalidad,
+        identidad.ocupacion || registro.ocupacion || ficha.tipoViajante || registro.tipoViajante,
+        sexo,
+        identidad.documento || ficha.documento || registro.documento || registro.rut,
+        identidad.paisResidencia || ficha.paisResidencia || registro.paisResidencia
+      ]);
+    }).join('');
+
+    const coord = typeof g.coordinadorNombre === 'string' ? g.coordinadorNombre :
+      typeof g.coordinador === 'string' ? g.coordinador : '';
+    const conductores = Array.isArray(g.conductores) ? g.conductores : [];
+    const tripulacion = [0, 1].map(indice => {
+      const conductor = conductores[indice];
+      const datos = conductor && typeof conductor === 'object' ? conductor : {};
+      return fila([indice + 1, datos.nombre || (typeof conductor === 'string' ? conductor : ''),
+        fecha(datos.fechaNacimiento), datos.nacionalidad, 'CONDUCTOR', datos.sexo, datos.documento || datos.rut, datos.paisResidencia]);
+    }).join('') + fila([3, coord, '', '', 'COORDINADOR', '', '', '']);
+
+    const logo = new URL('RaitraiLogo.png', document.baseURI).href;
+    const tabla = (titulo, filas) => `<table><caption>${titulo}</caption><thead><tr>${encabezados}</tr></thead><tbody>${filas}</tbody></table>`;
+    const faltantes = fichas.filter(ficha => !ficha).length;
+    const docManifiesto = ventana.document;
+    docManifiesto.open();
+    docManifiesto.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>Manifiesto de pasajeros · ${esc(nombreGrupo)}</title>
+      <style>
+        @page { size: A4 landscape; margin: 10mm; }
+        body { margin: 16px; font: 12px Arial, sans-serif; color: #161616; }
+        header { display: grid; grid-template-columns: 110px 1fr 110px; align-items: center; text-align: center; }
+        img { max-width: 104px; max-height: 44px; }
+        h1 { font-size: 18px; margin: 5px 0; } header p { margin: 4px; }
+        .datos { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; margin: 12px 0; border: 1px solid #444; }
+        .datos div { padding: 5px; border-right: 1px solid #444; min-height: 15px; }
+        .datos div:last-child { border-right: 0; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+        caption { text-align: left; font-weight: bold; margin: 4px 0; }
+        th, td { padding: 4px; border: 1px solid #444; overflow-wrap: anywhere; }
+        th { text-align: left; } th:nth-child(2) { width: 26%; }
+        thead { display: table-header-group; } tr { break-inside: avoid; }
+        .acciones { margin: 0 0 14px; }
+        @media print { body { margin: 0; } .acciones { display: none; } }
+      </style></head><body>
+      <div class="acciones">
+        <button type="button" id="imprimir">Imprimir / guardar PDF</button>
+        ${faltantes ? `<p>No se pudieron consultar ${faltantes} ficha(s). Vuelve a abrir el manifiesto para reintentar.</p>` : ''}
+      </div>
+      <header><img src="${esc(logo)}" alt="Rai Trai Turismo"><div>
+        <p>AGENCIA DE VIAJES TURISMO RAITRAI</p><h1>MANIFIESTO DE PASAJEROS</h1>
+        <strong>${esc(nombreGrupo)}</strong></div></header>
+      <div class="datos">
+        <div><strong>Empresa</strong> ${esc(g.empresaTransporte || '')}</div>
+        <div><strong>Bus</strong> ${esc(g.numeroBus || (typeof g.bus === 'string' ? g.bus : ''))}</div>
+        <div><strong>Patente</strong> ${esc(g.patenteBus || g.patente || '')}</div>
+        <div><strong>Fecha</strong> ${esc(fecha(g.fechaInicio))}</div>
+      </div>
+      ${tabla('Conductores y coordinación', tripulacion)}
+      ${tabla('Pasajeros', pasajeros)}
+      </body></html>`);
+    docManifiesto.close();
+    docManifiesto.getElementById('imprimir').onclick = () => ventana.print();
+  } catch (error) {
+    if (!ventana.closed) ventana.document.body.textContent = error.message || 'No se pudo abrir el manifiesto.';
+  }
+}
+
+async function renderNominaCoordinador(g, pane, refrescar = false) {
   if (!g || !pane) return;
 
   const bloque = document.createElement('div');
@@ -5532,7 +5767,7 @@ async function renderNominaCoordinador(g, pane) {
   actualizar.className = 'btn sec';
   actualizar.textContent = 'Actualizar';
   actualizar.disabled = true;
-  actualizar.onclick = () => renderNominaCoordinador(g, pane);
+  actualizar.onclick = () => renderNominaCoordinador(g, pane, true);
 
   const estado = document.createElement('p');
   estado.className = 'muted';
@@ -5544,18 +5779,15 @@ async function renderNominaCoordinador(g, pane) {
   pane.replaceChildren(bloque);
 
   try {
-    const grupoVentas = await buscarGrupoVentasParaNomina(g);
-    if (!grupoVentas) throw new Error('No se encontró el grupo en Ventas.');
-
-    const grupoVentasId = grupoVentas.id;
-    const { pasajeros } = await consultarNominaPortal('nominaPortalCoordinador', {
-      grupoVentasId
-    });
+    const nomina = await cargarDatosNomina(g, refrescar);
+    const { grupoVentasId, pasajeros } = nomina;
 
     if (pane.firstElementChild !== bloque) return;
     estado.textContent = pasajeros.length
       ? `Integrantes · ${pasajeros.length}`
       : 'Sin integrantes disponibles.';
+
+    void renderMetricasNomina(nomina, bloque);
 
     for (const pasajero of pasajeros) {
       const fila = document.createElement('div');
@@ -6224,6 +6456,7 @@ async function renderOneGroup(
       <button id="tabPerfil" class="btn sec" type="button">PERFIL</button>
       <button id="tabItin" class="btn sec" type="button">ITINERARIO</button>
       <button id="tabNomina" class="btn sec" type="button">NÓMINA</button>
+      <button id="btnManifiesto" class="btn sec" type="button">MANIFIESTO</button>
       <button id="tabDocs" class="btn sec" type="button">DOCUMENTOS</button>
       <button id="tabNfc" class="btn sec" type="button">NFC / PULSERAS</button>
       <button id="tabEncuesta" class="btn sec" type="button">ENCUESTA</button>
@@ -6380,6 +6613,8 @@ async function renderOneGroup(
   
   const btnNomina =
     buttons.nomina;
+
+  tabs.querySelector('#btnManifiesto').onclick = () => abrirManifiestoViaje(g);
   
   const btnNfc =
     buttons.nfc;
@@ -7514,6 +7749,22 @@ async function renderResumen(g, pane){
   );
 
   pane.appendChild(wrap);
+
+  const utilidad = document.createElement('section');
+  utilidad.className = 'act';
+  utilidad.innerHTML = `
+    <h4>NÚMEROS DE UTILIDAD</h4>
+    <div class="card">
+      <strong>Operaciones</strong>
+      <div><a href="https://wa.me/56950117289" target="_blank" rel="noopener noreferrer">Alejandra Santis · +56 9 5011 7289</a></div>
+      <div><a href="https://wa.me/56983415663" target="_blank" rel="noopener noreferrer">Ricardo Gallardo · +56 9 8341 5663</a></div>
+    </div>
+    <div class="card">
+      <strong>Sistemas</strong>
+      <div><a href="https://wa.me/56952270713" target="_blank" rel="noopener noreferrer">Ignacio Pastor · +56 9 5227 0713</a></div>
+    </div>
+  `;
+  wrap.appendChild(utilidad);
 
   // ===== HOTELES (múltiples) =====
   try{
@@ -13081,8 +13332,8 @@ async function resetViajeCompleto(g) {
   const confirmado = confirm(
     'Se restablecerá este viaje a PENDIENTE.\n\n' +
     'Se borrarán la asistencia, la bitácora, sus alertas, ' +
-    'todos los gastos del grupo y los archivos del cierre financiero.\n\n' +
-    'Se conservarán los abonos y el historial del viaje.\n\n' +
+    'todos los abonos (incluidos los confirmados), los gastos con sus comprobantes ' +
+    'y el cierre financiero con sus archivos y respaldos guardados.\n\n' +
     '¿Continuar?'
   );
 
@@ -13113,6 +13364,8 @@ async function resetViajeCompleto(g) {
 
     await ejecutarPaso('Archivos de cierre', () => wipeFinanzasFiles(gid));
     await ejecutarPaso('Gastos', () => wipeGastosForGroup(gid));
+    await ejecutarPaso('Abonos', () => wipeViajeCollection(gid, 'finanzas_abonos'));
+    await ejecutarPaso('Respaldos financieros', () => wipeViajeCollection(gid, 'finanzas_snapshots'));
 
     await ejecutarPaso('Bitácora', () =>
       wipeBitacoraFromItinerario({
@@ -13142,12 +13395,20 @@ async function resetViajeCompleto(g) {
       `Gastos eliminados: ${conteos.Gastos || 0}. ` +
       `Notas eliminadas: ${conteos.Bitácora || 0}. ` +
       `Alertas eliminadas: ${conteos['Alertas de bitácora'] || 0}. ` +
-      'Abonos conservados.';
+      `Abonos eliminados: ${conteos.Abonos || 0}. ` +
+      `Respaldos financieros eliminados: ${conteos['Respaldos financieros'] || 0}.`;
 
     await logHistorial(gid, 'RESTABLECER_VIAJE_COMPLETO', detalle);
 
     try {
-      await appendViajeLog(gid, 'RESTABLECER_VIAJE_COMPLETO', detalle);
+      await addDoc(collection(db, 'grupos', gid, 'viajeLog'), {
+        type: 'RESTABLECER_VIAJE_COMPLETO',
+        text: detalle,
+        meta: null,
+        by: (state.user.email || '').toLowerCase(),
+        byUid: state.user.uid,
+        ts: serverTimestamp()
+      });
     } catch (error) {
       console.error('[reset] No se pudo registrar el historial del viaje', error);
       alert('El viaje quedó restablecido, pero no se pudo registrar la entrada en su historial.');
@@ -13198,6 +13459,21 @@ async function wipeFinanzasFiles(grupoId) {
   }
 
   return cantidad;
+}
+
+async function wipeViajeCollection(grupoId, nombre) {
+  const coleccion = collection(db, 'grupos', grupoId, nombre);
+  const snapshot = await getDocsFromServer(coleccion);
+
+  for (const registro of snapshot.docs) {
+    await deleteDoc(registro.ref);
+  }
+
+  if (!(await getDocsFromServer(coleccion)).empty) {
+    throw new Error(`Todavía quedan registros en ${nombre}.`);
+  }
+
+  return snapshot.size;
 }
 
 async function wipeGastosForGroup(grupoId) {
@@ -13319,9 +13595,9 @@ async function resetGroupFlags(grupoId) {
   const grupoRef = doc(db, 'grupos', grupoId);
   const cierreRef = doc(db, 'grupos', grupoId, 'finanzas', 'summary');
 
-  await deleteDoc(cierreRef);
-
-  await updateDoc(grupoRef, {
+  const batch = writeBatch(db);
+  batch.delete(cierreRef);
+  batch.update(grupoRef, {
     asistencias: deleteField(),
     paxViajando: deleteField(),
     'viaje.inicio': deleteField(),
@@ -13334,6 +13610,8 @@ async function resetGroupFlags(grupoId) {
     trip: deleteField(),
     finanzasSummary: deleteField()
   });
+
+  await batch.commit();
 
   const [grupo, cierre] = await Promise.all([
     getDocFromServer(grupoRef),
@@ -13425,6 +13703,82 @@ function totalesPorMoneda(items){
 }
 
 
+async function cargarAbonosSugeridos(g) {
+  const snapshot = await getDocsFromServer(collection(db, 'grupos', g.id, 'finanzas_abonos'));
+  const abonos = snapshot.docs.map(registro => registro.data());
+  let guardados = 0;
+  const sugeridos = await suggestAbonosFromItin(g) || [];
+  D_FIN('renderFinanzas: sugeridos calculados', {
+    grupoId: g?.id,
+    sugeridos: sugeridos.length
+  });
+
+  if (sugeridos.length){
+    const yaExiste = (sug)=>{
+      const refSug   = (Array.isArray(sug.refActs) && sug.refActs[0]) || {};
+      const fSugRaw  = refSug.fechaISO || sug.fecha;
+      const actSug   = (refSug.actividad || '').toString();
+      const provSug  = (sug.provWhitelistHit || '').toString().toUpperCase();
+      const monSug   = (sug.moneda || '').toString().toUpperCase();
+      const valSug   = Number(sug.valor || 0);
+      const fSugISO  = toISO(fSugRaw || '');
+
+      return abonos.some(a=>{
+        const refA   = (Array.isArray(a.refActs) && a.refActs[0]) || {};
+        const fARaw  = refA.fechaISO || a.fecha;
+        const actA   = (refA.actividad || '').toString();
+        const provA  = (a.provWhitelistHit || '').toString().toUpperCase();
+        const monA   = (a.moneda || '').toString().toUpperCase();
+        const valA   = Number(a.valor || 0);
+        const fAISO  = toISO(fARaw || '');
+
+        // (1) Coincidencia fuerte por proveedor + actividad + fecha
+        if (provA && provA === provSug && fAISO === fSugISO && actA === actSug) return true;
+
+        // (2) Fallback: mismo asunto + fecha + moneda + valor
+        if (
+          fAISO === fSugISO &&
+          monA === monSug &&
+          valA === valSug &&
+          String(a.asunto || '') === String(sug.asunto || '')
+        ) return true;
+
+        return false;
+      });
+    };
+
+    for (const sug of sugeridos){
+      if (yaExiste(sug)){
+        D_FIN('renderFinanzas: sugerido ya existe, omitido', {
+          grupoId: g?.id,
+          asunto: sug.asunto,
+          fecha: sug.fecha,
+          moneda: sug.moneda,
+          valor: sug.valor
+        });
+        continue;
+      }
+
+      const id = await saveAbono(g.id, sug);
+      const saved = { id, ...sug };
+      abonos.push(saved);
+
+      D_FIN('renderFinanzas: abono sugerido GUARDADO', {
+        grupoId: g?.id,
+        abonoId: id,
+        asunto: sug.asunto,
+        fecha: sug.fecha,
+        moneda: sug.moneda,
+        valor: sug.valor
+      });
+      guardados++;
+    }
+  }else{
+    D_FIN('renderFinanzas: no llegaron sugerencias', { grupoId: g?.id });
+  }
+  return guardados;
+}
+
 async function renderFinanzas(g, pane){
   pane.innerHTML='<div class="muted">CARGANDO…</div>';
   const qNorm = norm(state.groupQ||'');
@@ -13454,81 +13808,6 @@ async function renderFinanzas(g, pane){
     abonos: abonos.length,
     gastosAprob: gastosAprob.length
   });
-
-  // 1.b) Genera y GUARDA abonos sugeridos en EFECTIVO según itinerario
-  try{
-    const sugeridos = await suggestAbonosFromItin(g) || [];
-    D_FIN('renderFinanzas: sugeridos calculados', {
-      grupoId: g?.id,
-      sugeridos: sugeridos.length
-    });
-
-    if (sugeridos.length){
-      const yaExiste = (sug)=>{
-        const refSug   = (Array.isArray(sug.refActs) && sug.refActs[0]) || {};
-        const fSugRaw  = refSug.fechaISO || sug.fecha;
-        const actSug   = (refSug.actividad || '').toString();
-        const provSug  = (sug.provWhitelistHit || '').toString().toUpperCase();
-        const monSug   = (sug.moneda || '').toString().toUpperCase();
-        const valSug   = Number(sug.valor || 0);
-        const fSugISO  = toISO(fSugRaw || '');
-
-        return abonos.some(a=>{
-          const refA   = (Array.isArray(a.refActs) && a.refActs[0]) || {};
-          const fARaw  = refA.fechaISO || a.fecha;
-          const actA   = (refA.actividad || '').toString();
-          const provA  = (a.provWhitelistHit || '').toString().toUpperCase();
-          const monA   = (a.moneda || '').toString().toUpperCase();
-          const valA   = Number(a.valor || 0);
-          const fAISO  = toISO(fARaw || '');
-
-          // (1) Coincidencia fuerte por proveedor + actividad + fecha
-          if (provA && provA === provSug && fAISO === fSugISO && actA === actSug) return true;
-
-          // (2) Fallback: mismo asunto + fecha + moneda + valor
-          if (
-            fAISO === fSugISO &&
-            monA === monSug &&
-            valA === valSug &&
-            String(a.asunto || '') === String(sug.asunto || '')
-          ) return true;
-
-          return false;
-        });
-      };
-
-      for (const sug of sugeridos){
-        if (yaExiste(sug)){
-          D_FIN('renderFinanzas: sugerido ya existe, omitido', {
-            grupoId: g?.id,
-            asunto: sug.asunto,
-            fecha: sug.fecha,
-            moneda: sug.moneda,
-            valor: sug.valor
-          });
-          continue;
-        }
-
-        const id = await saveAbono(g.id, sug);
-        const saved = { id, ...sug };
-        abonos.push(saved);
-
-        D_FIN('renderFinanzas: abono sugerido GUARDADO', {
-          grupoId: g?.id,
-          abonoId: id,
-          asunto: sug.asunto,
-          fecha: sug.fecha,
-          moneda: sug.moneda,
-          valor: sug.valor
-        });
-      }
-    }else{
-      D_FIN('renderFinanzas: no llegaron sugerencias', { grupoId: g?.id });
-    }
-  }catch(e){
-    console.warn('[FIN] Error generando abonos sugeridos en efectivo:', e);
-    D_FIN('renderFinanzas: ERROR en sugeridos', { grupoId: g?.id, error: String(e) });
-  }
 
   // 2) Totales por moneda (sin conversión)
   const totAb = totalesPorMoneda(abonos);       // {CLP,USD,BRL,ARS}
@@ -13704,15 +13983,25 @@ async function renderFinanzas(g, pane){
       });
     };
 
-    // CARGAR SUGERIDOS: vuelve a correr renderFinanzas,
-    // que ya incluye la lógica de suggestAbonosFromItin + yaExiste
-    if (btnReload) btnReload.onclick = async ()=>{
-      await renderFinanzas(g, pane);
+    // Abrir Finanzas solo consulta. Las sugerencias se guardan desde este botón.
+    if (btnReload) btnReload.onclick = async () => {
+      if (btnReload.disabled || !state.is) return;
+      btnReload.disabled = true;
+      try {
+        const guardados = await cargarAbonosSugeridos(g);
+        await renderFinanzas(g, pane);
+        showFlash(guardados ? `ABONOS SUGERIDOS GUARDADOS: ${guardados}` : 'SIN NUEVOS ABONOS SUGERIDOS', 'ok');
+      } catch (error) {
+        console.error('[FIN] No se pudieron cargar todos los abonos sugeridos', error);
+        alert('No se pudieron guardar todas las sugerencias. Puedes volver a intentarlo.');
+      } finally {
+        btnReload.disabled = false;
+      }
     };
 
-    // RESET AUTO: borra todos los abonos autoCalc NO locked y recarga sugeridos
+    // RESET AUTO: borra los abonos automáticos sin confirmar
     if (btnReset) btnReset.onclick = async ()=>{
-      if (!confirm('Esto eliminará todos los abonos automáticos NO confirmados y recargará las sugerencias del sistema. ¿Continuar?')) return;
+      if (!confirm('Esto eliminará todos los abonos automáticos NO confirmados. ¿Continuar?')) return;
 
       try{
         const actuales = await loadAbonos(g.id);
@@ -13732,7 +14021,6 @@ async function renderFinanzas(g, pane){
         return;
       }
 
-      // Volvemos a cargar FINANZAS: esto recrea la UI y recalcula sugeridos
       await renderFinanzas(g, pane);
     };
   }
