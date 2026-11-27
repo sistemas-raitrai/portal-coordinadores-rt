@@ -28,6 +28,9 @@ function select(opciones) {
 }
 const dinero = (monto, moneda) => new Intl.NumberFormat('es-CL', {style:'currency', currency:moneda}).format(monto);
 const normal = valor => String(valor ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+const MONEDAS = ['CLP','ARS','BRL','USD'];
+const FONDOS = [['proveedores','Pago a proveedores'],['coordinacion','Gastos de coordinación']];
+const nombreFondo = clave => FONDOS.find(([id]) => id === clave)?.[1] || 'Saldo anterior';
 const etiquetaMovimiento = {
   abono:'Abono recibido', gasto:'Gasto', entrega:'Entrega de fondos', pago_delegado:'Pago delegado',
   pago_iniciado:'Pago iniciado', pago_ejecutado:'Pago ejecutado', devolucion:'Devolución'
@@ -59,13 +62,29 @@ export async function mostrarCaja({ api, destino = '', panel, vigente = () => tr
   try {
     const caja = await api('generalCaja');
     if (!vigente()) return;
-    const saldo = Object.entries(caja.saldos).map(([moneda,monto]) => dinero(monto,moneda));
+    const mostrarSaldos = saldos => Object.entries(saldos || {})
+      .map(([moneda,monto]) => `${moneda} ${dinero(monto,moneda)}`).join(' · ') || 'Sin saldo registrado.';
+    const saldoAnterior = Object.values(caja.saldoAnterior || {}).some(monto => monto > 0);
+    const saldos = nodo('div');
+    saldos.className = 'cg-caja-saldos';
+    const tarjetas = !soloPersonal && caja.general && caja.saldosPorFondo
+      ? [...FONDOS.map(([fondo,titulo]) => [titulo,caja.saldosPorFondo[fondo]]),
+        ...(saldoAnterior ? [['Saldo anterior', caja.saldoAnterior]] : [])]
+      : [['Saldo disponible', caja.saldos]];
+    for (const [titulo, valores] of tarjetas) {
+      const tarjeta = nodo('article');
+      tarjeta.append(nodo('h3',titulo),nodo('p',mostrarSaldos(valores)));
+      saldos.append(tarjeta);
+    }
     const acciones = nodo('div');
+    acciones.className = 'cg-caja-acciones';
+    const secundarias = nodo('div');
+    secundarias.className = 'cg-caja-secundarias';
     const formulario = nodo('div');
     const estado = nodo('p');
     estado.setAttribute('role','status');
     const lista = nodo('div');
-    panel.replaceChildren(nodo('p', saldo.length ? saldo.join(' · ') : 'Sin saldo registrado.'),acciones,formulario,estado,lista);
+    panel.replaceChildren(saldos,acciones,formulario,estado,lista);
 
     async function pedirCatalogo() {
       catalogo ||= await api('generalCajaCatalogo',{destino});
@@ -95,7 +114,7 @@ export async function mostrarCaja({ api, destino = '', panel, vigente = () => tr
       });
     }
 
-    function buscadorPersonas(personas, vacio) {
+    function buscadorPersonas(personas, vacio, titulo = 'Responsable') {
       const filtro = input('search');
       filtro.placeholder = 'Buscar por nombre';
       const persona = select([['',vacio]]);
@@ -109,7 +128,7 @@ export async function mostrarCaja({ api, destino = '', panel, vigente = () => tr
       }
       filtro.addEventListener('input',filtrar);
       filtrar();
-      return {persona, filtros:[campo('Buscar persona',filtro), campo('Responsable',persona)]};
+      return {persona, filtros:[campo('Buscar persona',filtro), campo(titulo,persona)]};
     }
 
     async function abrir(tipo, entrega = null, abonoAdmin = false) {
@@ -117,9 +136,14 @@ export async function mostrarCaja({ api, destino = '', panel, vigente = () => tr
       formulario.replaceChildren(nodo('p','Cargando formulario…'));
       try {
         const requierePersona = abonoAdmin || ['entrega','pago'].includes(tipo) || (tipo === 'gasto' && !caja.general);
-        const datos = requierePersona ? await pedirCatalogo() : null;
+        const registrarOrigen = tipo === 'abono';
+        const opcionesFondo = tipo === 'gasto' ? FONDOS.filter(([id]) => id === 'coordinacion')
+          : tipo === 'pago' ? FONDOS.filter(([id]) => id === 'proveedores') : FONDOS;
+        const fondo = select([...opcionesFondo,
+          ...(saldoAnterior && ['gasto','pago','entrega'].includes(tipo) ? [['','Saldo anterior']] : [])]);
+        const datos = requierePersona || registrarOrigen ? await pedirCatalogo() : null;
         if (!vigente()) return;
-        const moneda = select((entrega ? [entrega.moneda] : ['CLP','ARS','BRL','USD']).map(x=>[x,x]));
+        const moneda = select((entrega ? [entrega.moneda] : MONEDAS).map(x=>[x,x]));
         const monto = input('number');
         monto.required = true;
         monto.min = '0.01';
@@ -136,15 +160,45 @@ export async function mostrarCaja({ api, destino = '', panel, vigente = () => tr
         const comprobante = input('file');
         comprobante.accept = 'application/pdf,image/jpeg,image/png';
         comprobante.required = ['abono','gasto'].includes(tipo);
-        const campos = [campo('Concepto',concepto),campo('Moneda',moneda),campo('Monto',monto)];
+        const campos = [campo('Concepto',concepto)];
+        if (tipo !== 'devolucion') campos.push(campo('Fondo',fondo));
+        const campoMoneda = campo(tipo === 'pago' ? 'Moneda que sale de Caja' : 'Moneda',moneda);
+        const campoMonto = campo(tipo === 'gasto' ? 'Monto descontado de Caja' : 'Monto',monto);
+        campos.push(campoMoneda,campoMonto);
+        const origen = registrarOrigen
+          ? buscadorPersonas(datos.personas.filter(p => p.id !== caja.id), 'Rai Trai', 'Entregado por') : null;
+        if (origen) campos.push(...origen.filtros);
+        const monedaLocal = select(['BRL','ARS','CLP'].map(m => [m,m]));
+        if (normal(destino).includes('bariloche')) monedaLocal.value = 'ARS';
+        const montoLocal = input('number');
+        const archivoBancario = input('file');
+        archivoBancario.accept = comprobante.accept;
+        const detalleGasto = nodo('div');
+        detalleGasto.append(campo('Moneda de la compra',monedaLocal),campo('Monto en moneda local',montoLocal),
+          campo('Comprobante bancario del cargo en CLP',archivoBancario));
+        const etiquetaArchivo = campo(tipo === 'gasto' ? 'Comprobante de la compra' : 'Comprobante de recepción',comprobante);
+        function configurarImportes() {
+          const gastoCLP = tipo === 'gasto' && fondo.value === 'coordinacion';
+          moneda.disabled = gastoCLP;
+          if (gastoCLP) moneda.value = 'CLP';
+          monto.min = monto.step = moneda.value === 'CLP' ? '1' : '0.01';
+          montoLocal.min = montoLocal.step = monedaLocal.value === 'CLP' ? '1' : '0.01';
+          detalleGasto.hidden = !gastoCLP;
+          montoLocal.required = archivoBancario.required = gastoCLP;
+        }
+        fondo.addEventListener('change',configurarImportes);
+        moneda.addEventListener('change',configurarImportes);
+        monedaLocal.addEventListener('change',configurarImportes);
+        configurarImportes();
         const fecha = input('date', new Intl.DateTimeFormat('sv-SE', {timeZone:'America/Santiago'}).format(new Date()));
         if (tipo === 'abono') {
           fecha.required = true;
           fecha.max = fecha.value;
-          campos.push(campo('Fecha de transferencia',fecha));
+          campos.push(campo('Fecha de recepción',fecha));
         }
         if (tipo === 'pago') campos.push(campo('Grupo asociado',grupo));
-        if (comprobante.required) campos.push(campo('Comprobante',comprobante));
+        if (comprobante.required) campos.push(etiquetaArchivo);
+        if (tipo === 'gasto') campos.push(detalleGasto);
         let persona;
         if (requierePersona) {
           const personas = datos.personas.filter(p => p.id !== caja.id &&
@@ -171,6 +225,9 @@ export async function mostrarCaja({ api, destino = '', panel, vigente = () => tr
           const [proveedorTipo, proveedorId] = proveedor.value.split(/:(.*)/s);
           await api('generalCajaGuardar',{
             id,tipo,destino,moneda:moneda.value,monto:monto.value,concepto:concepto.value,
+            fondo:tipo === 'devolucion' ? '' : fondo.value,
+            entregadoPorId:origen?.persona.value || '', monedaLocal:monedaLocal.value, montoLocal:montoLocal.value,
+            archivoBancario:archivoBancario.required ? await archivoBase64(archivoBancario.files[0]) : null,
             fecha:tipo === 'abono' ? fecha.value : '', personaId:persona?.value || '',grupoId:grupo.value,entregaId:entrega?.id || '',
             proveedorTipo,proveedorId,proveedorNombre:otro.value,
             archivo:comprobante.required ? await archivoBase64(comprobante.files[0]) : null
@@ -181,14 +238,21 @@ export async function mostrarCaja({ api, destino = '', panel, vigente = () => tr
       }
     }
 
-    if (!soloPersonal && caja.general) acciones.append(
+    if (!soloPersonal && (caja.general || caja.admin)) {
+      const recibir = boton(caja.admin ? 'Abonar a otro general' : 'Registrar dinero recibido',
+        () => abrir('abono',null,caja.admin));
+      recibir.className = 'cg-caja-recibir';
+      acciones.append(recibir);
+    }
+    if (!soloPersonal && caja.general) secundarias.append(
       boton('Registrar gasto',()=>abrir('gasto')),
       boton('Pagar proveedor',()=>abrir('pago')),
       boton('Entregar a coordinador',()=>abrir('entrega'))
     );
-    if (!soloPersonal && caja.general && !caja.admin) acciones.append(boton('Registrar dinero recibido',()=>abrir('abono')));
-    if (!soloPersonal && caja.admin) acciones.append(boton('Abonar a otro general',()=>abrir('abono',null,true)));
-    if (!soloPersonal && caja.asistente && !caja.general) acciones.append(boton('Preparar gasto',()=>abrir('gasto')));
+    if (!soloPersonal && caja.asistente && !caja.general) {
+      secundarias.append(boton('Preparar gasto',()=>abrir('gasto')));
+    }
+    if (secundarias.childNodes.length) acciones.append(secundarias);
 
     for (const pago of caja.pagos.filter(x=>x.estado==='pendiente')) {
       const tarjeta = nodo('article');
@@ -197,16 +261,29 @@ export async function mostrarCaja({ api, destino = '', panel, vigente = () => tr
       if (pago.responsableId === caja.id) tarjeta.append(boton('Registrar pago y comprobante',()=>{
         const monto = input('number',String(pago.monto));
         monto.required = true;
-        monto.min = '0.01';
+        monto.min = monto.step = pago.moneda === 'CLP' ? '1' : '0.01';
         monto.max = String(pago.monto);
-        monto.step = '0.01';
+        const monedaProveedor = select(MONEDAS.map(m => [m,m]));
+        monedaProveedor.value = pago.moneda;
+        const montoProveedor = input('number');
+        const detalleProveedor = campo('Monto pagado al proveedor',montoProveedor);
+        function configurarProveedor() {
+          const distinta = monedaProveedor.value !== pago.moneda;
+          detalleProveedor.hidden = !distinta;
+          montoProveedor.required = distinta;
+          montoProveedor.min = montoProveedor.step = monedaProveedor.value === 'CLP' ? '1' : '0.01';
+        }
+        monedaProveedor.addEventListener('change',configurarProveedor);
+        configurarProveedor();
         const forma = select(['EFECTIVO','TRANSFERENCIA','Envío Global66','OTRO'].map(x=>[x,x]));
         const comprobante = input('file');
         comprobante.required = true;
         comprobante.accept = 'application/pdf,image/jpeg,image/png';
-        guardarFormulario([campo('Monto pagado · ' + pago.moneda,monto),campo('Forma de pago',forma),
+        guardarFormulario([campo('Monto que salió de Caja · ' + pago.moneda,monto),
+          campo('Moneda del pago al proveedor',monedaProveedor),detalleProveedor,campo('Forma de pago',forma),
           campo('Comprobante',comprobante)], 'Confirmar pago', async id => {
           await api('generalCajaConfirmarPago',{id,pagoId:pago.id,monto:monto.value,
+            monedaProveedor:monedaProveedor.value, montoProveedor:montoProveedor.required ? montoProveedor.value : monto.value,
             formaPago:forma.value,archivo:await archivoBase64(comprobante.files[0])});
         });
       }));
@@ -231,8 +308,17 @@ export async function mostrarCaja({ api, destino = '', panel, vigente = () => tr
       const tarjeta = nodo('article');
       tarjeta.append(nodo('strong',etiquetaMovimiento[mov.tipo] || mov.tipo),
         nodo('p',`${mov.fecha} · ${dinero(mov.monto,mov.moneda)} · ${mov.concepto}`));
-      if (mov.comprobante) tarjeta.append(boton('Ver comprobante',async()=>{
-        try { descargar(await api('generalCajaComprobante',{movimientoId:mov.id})); }
+      if (mov.fondo) tarjeta.append(nodo('p',nombreFondo(mov.fondo)));
+      if (mov.entregadoPor) tarjeta.append(nodo('p','Entregado por ' + mov.entregadoPor.nombre));
+      if (mov.compraLocal) tarjeta.append(nodo('p','Compra local · ' + dinero(mov.compraLocal.monto,mov.compraLocal.moneda)));
+      if (mov.monedaProveedor && mov.monedaProveedor !== mov.moneda) {
+        tarjeta.append(nodo('p','Pagado al proveedor · ' + dinero(mov.montoProveedor,mov.monedaProveedor)));
+      }
+      for (const [visible,clase,titulo] of [
+        [mov.comprobante,'principal',mov.compraLocal ? 'Ver comprobante de compra' : 'Ver comprobante'],
+        [mov.comprobanteBancario,'bancario','Ver comprobante bancario']
+      ]) if (visible) tarjeta.append(boton(titulo,async()=>{
+        try { descargar(await api('generalCajaComprobante',{movimientoId:mov.id,clase})); }
         catch(error) { estado.textContent = error.message; }
       }));
       if (['entrega','pago_delegado'].includes(mov.tipo)) {
