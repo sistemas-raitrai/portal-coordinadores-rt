@@ -3,28 +3,56 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f7f7fb">
 <title>Coordinación General · Rai Trai</title>
 <style>
+:root{
+  color-scheme:light;
+  --fondo:#f7f7fb;
+  --texto:#241b31;
+  --borde:#ddd7e6;
+  --acento:#56326f;
+  --caja:#176353;
+}
 *{box-sizing:border-box}
-body{margin:0;background:#f6f3f9;color:#271a32;font:1rem system-ui,sans-serif}
-main{max-width:42rem;margin:auto;padding:1rem 1rem max(2rem,env(safe-area-inset-bottom))}
-header{padding:1rem 0}
-h1{margin:.5rem 0;font-size:clamp(1.65rem,6vw,2.3rem)}
+body{margin:0;background:var(--fondo);color:var(--texto);font:1rem system-ui,sans-serif}
+main{max-width:52rem;margin:auto;padding:clamp(1rem,4vw,2rem) clamp(1rem,4vw,2rem) max(2rem,env(safe-area-inset-bottom))}
+header{padding:.5rem 0 1rem}
+h1{margin:0;font-size:clamp(1.75rem,6vw,2.6rem);letter-spacing:-.03em}
+h2{margin:0 0 1rem}
 p{line-height:1.5}
-label{display:block;margin-bottom:.45rem;font-weight:700}
-button,select,a.action{font:inherit;min-height:48px;border-radius:.8rem;padding:.75rem}
-button,select{width:100%;background:white;color:inherit;border:1px solid #d5c9df}
-button{cursor:pointer;text-align:left}
-button:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #6a2f91;outline-offset:2px}
-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem;margin:1rem 0}
-nav button{min-height:68px;font-weight:700}
-nav button[aria-current=true]{background:#4a235f;color:white;border-color:#4a235f}
-article{background:#fff;padding:1rem;border:1px solid #e3d9ea;border-radius:.8rem;margin:.75rem 0}
-article h3{margin:0 0 .75rem}
-ul{padding-left:1.3rem} li+li{margin-top:.6rem}
-.secondary{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1rem}
-a.action{display:inline-flex;align-items:center;color:#4a235f}
+label{display:block;margin-bottom:.45rem;font-weight:650}
+button,select,input,textarea{font:inherit;color:inherit}
+button,select{width:100%;min-height:48px;border-radius:.75rem;padding:.7rem .85rem;background:#fff;border:1px solid var(--borde)}
+button{cursor:pointer;text-align:left;font-weight:600}
+button:hover:not(:disabled){box-shadow:0 2px 8px #35234918}
+button:disabled{opacity:.65;cursor:wait}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid var(--acento);outline-offset:2px}
+#menu{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(.55rem,2.7vw,1rem);margin:1rem 0 1.4rem}
+#menu button{min-height:62px;overflow-wrap:anywhere}
+#menu button[aria-current=true]{background:var(--acento);color:#fff;border-color:var(--acento)}
+#menu .cg-modulo-caja{grid-column:1/-1;background:var(--caja);color:#fff;border-color:var(--caja)}
+#menu .cg-modulo-caja[aria-current=true]{background:#124b40;box-shadow:0 0 0 2px #124b40 inset,0 0 0 4px #fff inset}
+#contenido{background:#fff;border:1px solid var(--borde);border-radius:1rem;padding:clamp(.85rem,3vw,1.4rem);min-width:0}
+article{background:#fff;padding:1rem;border:1px solid var(--borde);border-radius:.85rem;margin:.75rem 0;overflow-wrap:anywhere}
+article h3{margin:0 0 .5rem}
+article button+button{margin-top:.55rem}
+ul{padding-left:1.3rem}
+li+li{margin-top:.6rem}
+.cg-caja-saldos{display:grid;gap:.65rem;grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr));margin-bottom:.85rem}
+.cg-caja-saldos article{background:#f6faf8;margin:0}
+.cg-caja-saldos p{margin:0}
+.cg-caja-acciones,.cg-caja-secundarias{display:grid;gap:.65rem}
+.cg-caja-recibir{background:var(--caja);border-color:var(--caja);color:#fff;font-weight:750}
+.cg-caja-acciones+div:not(:empty){margin-top:1rem}
+.cg-caja-acciones+div form{display:grid;gap:.65rem}
+.cg-caja-acciones+div input{border:1px solid var(--borde);border-radius:.6rem;padding:.5rem;min-width:0}
+#sesion-acciones{margin-top:1.65rem}
+#sesion-acciones button{text-align:center}
 [hidden]{display:none!important}
+@media(min-width:44rem){
+  .cg-caja-secundarias{grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))}
+}
 </style>
 </head>
 <body>
@@ -42,9 +70,7 @@ a.action{display:inline-flex;align-items:center;color:#4a235f}
     <div id="resultado" aria-live="polite"></div>
   </section>
 </section>
-<div class="secondary">
-  <a class="action" href="./coordinadores.html">Portal de Coordinadores</a>
-</div>
+<footer id="sesion-acciones"></footer>
 </main>
 <script type="module" src="./coordinacion-general.js"></script>
 </body>
