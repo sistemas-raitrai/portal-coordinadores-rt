@@ -5651,6 +5651,100 @@ async function renderMetricasNomina(nomina, bloque) {
   }
 }
 
+let bibliotecaPdfManifiesto;
+
+function cargarBibliotecaPdfManifiesto() {
+  if (!bibliotecaPdfManifiesto) {
+    bibliotecaPdfManifiesto = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js';
+      script.onload = () => {
+        const Pdf = globalThis.jspdf?.jsPDF;
+        if (Pdf) resolve(Pdf);
+        else reject(new Error('El generador PDF no está disponible.'));
+      };
+      script.onerror = () => {
+        script.remove();
+        reject(new Error('No se pudo cargar el generador PDF. Revisa la conexión y vuelve a intentarlo.'));
+      };
+      document.head.append(script);
+    }).catch(error => {
+      bibliotecaPdfManifiesto = null;
+      throw error;
+    });
+  }
+  return bibliotecaPdfManifiesto;
+}
+
+function dibujarHojaManifiesto({ logo, nombre, datos, tripulacion, pasajeros, pagina, total }) {
+  const hoja = document.createElement('canvas');
+  hoja.width = 2970;
+  hoja.height = 2100;
+  const ctx = hoja.getContext('2d');
+  ctx.scale(10, 10);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, 297, 210);
+  ctx.fillStyle = '#161616';
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 0.13;
+  ctx.textBaseline = 'middle';
+
+  function texto(valor, x, y, ancho, tam, negrita = false, centrado = false) {
+    ctx.font = `${negrita ? 'bold ' : ''}${tam}px Arial, sans-serif`;
+    ctx.textAlign = centrado ? 'center' : 'left';
+    ctx.fillText(String(valor ?? '').replace(/\s+/g, ' ').trim(), x, y, ancho);
+  }
+
+  if (logo) {
+    const escala = Math.min(32 / logo.naturalWidth, 14 / logo.naturalHeight);
+    ctx.drawImage(logo, 9, 7, logo.naturalWidth * escala, logo.naturalHeight * escala);
+  } else {
+    texto('RAI TRAI TURISMO', 9, 13, 34, 3.2, true);
+  }
+  texto('AGENCIA DE VIAJES TURISMO RAITRAI', 148.5, 8, 204, 2.9, false, true);
+  texto('MANIFIESTO DE PASAJEROS', 148.5, 13, 204, 4.5, true, true);
+  texto(nombre, 148.5, 18.5, 204, 3.4, true, true);
+
+  const columnas = [9, 70, 26, 34, 36, 12, 37, 55];
+  const etiquetas = ['N.º', 'Nombre', 'Fecha nac.', 'Nacionalidad', 'Ocupación', 'Sexo', 'RUT / documento', 'País de residencia'];
+  const altoFila = pasajeros.length > 38 ? 3.14 : 3.70;
+  function fila(valores, y, anchos, alto, encabezado = false) {
+    let x = 9;
+    anchos.forEach((ancho, indice) => {
+      ctx.strokeRect(x, y, ancho, alto);
+      const centro = indice === 0 && anchos === columnas;
+      texto(valores[indice], x + (centro ? ancho / 2 : 1.3), y + alto / 2,
+        ancho - 2.6, encabezado ? 2.72 : 2.65, encabezado, centro);
+      x += ancho;
+    });
+  }
+
+  fila(datos, 22, [109, 55, 55, 60], 5.5, true);
+  let y = 31;
+  if (pagina === 1) {
+    texto('CONDUCTORES Y COORDINACIÓN', 9, y, 279, 2.9, true);
+    y += 2.2;
+    fila(etiquetas, y, columnas, 4, true);
+    y += 4;
+    for (const persona of tripulacion) {
+      fila(persona, y, columnas, 3.75);
+      y += 3.75;
+    }
+    y += 3.4;
+  }
+  texto('PASAJEROS', 9, y, 279, 2.9, true);
+  y += 2.2;
+  fila(etiquetas, y, columnas, 4, true);
+  y += 4;
+  for (const pasajero of pasajeros) {
+    fila(pasajero, y, columnas, altoFila);
+    y += altoFila;
+  }
+  texto(`Página ${pagina} de ${total}`, 148.5, 204, 80, 2.6, false, true);
+  return hoja;
+}
+
+
 async function abrirManifiestoViaje(g) {
   const ventana = window.open('', '_blank');
   if (!ventana) {
@@ -5668,9 +5762,6 @@ async function abrirManifiestoViaje(g) {
     if (ventana.closed) return;
 
     const nombreGrupo = nombreOperativoGrupo(g);
-    const titulos = ['N.º', 'Nombre', 'Fecha nac.', 'Nacionalidad', 'Ocupación', 'Sexo', 'RUT / documento', 'País de residencia'];
-    const encabezados = titulos.map(titulo => `<th scope="col">${esc(titulo)}</th>`).join('');
-    const fila = valores => '<tr>' + valores.map(valor => `<td>${esc(valor ?? '')}</td>`).join('') + '</tr>';
     const fecha = valor => {
       const iso = toISO(valor || '');
       return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso.split('-').reverse().join('/') : '';
@@ -5680,17 +5771,20 @@ async function abrirManifiestoViaje(g) {
       const ficha = fichas[indice] || {};
       const identidad = ficha.identificacion || {};
       const sexo = identidad.sexo || identidad.genero || registro.sexo || '';
-      return fila([
+      const categoria = norm(sexo);
+      const ocupacion = identidad.ocupacion || registro.ocupacion || ficha.tipoViajante || registro.tipoViajante || '';
+      return [
         indice + 1,
         identidad.nombreCompleto || registro.nombre,
         fecha(identidad.fechaNacimiento || registro.fechaNacimiento),
         identidad.nacionalidad || registro.nacionalidad,
-        identidad.ocupacion || registro.ocupacion || ficha.tipoViajante || registro.tipoViajante,
-        sexo,
+        String(ocupacion).replace(/_/g, ' ').toUpperCase(),
+        ['masculino', 'm'].includes(categoria) ? 'M' :
+          ['femenino', 'f'].includes(categoria) ? 'F' : sexo,
         identidad.documento || ficha.documento || registro.documento || registro.rut,
         identidad.paisResidencia || ficha.paisResidencia || registro.paisResidencia
-      ]);
-    }).join('');
+      ];
+    });
 
     const coord = typeof g.coordinadorNombre === 'string' ? g.coordinadorNombre :
       typeof g.coordinador === 'string' ? g.coordinador : '';
@@ -5698,53 +5792,98 @@ async function abrirManifiestoViaje(g) {
     const tripulacion = [0, 1].map(indice => {
       const conductor = conductores[indice];
       const datos = conductor && typeof conductor === 'object' ? conductor : {};
-      return fila([indice + 1, datos.nombre || (typeof conductor === 'string' ? conductor : ''),
-        fecha(datos.fechaNacimiento), datos.nacionalidad, 'CONDUCTOR', datos.sexo, datos.documento || datos.rut, datos.paisResidencia]);
-    }).join('') + fila([3, coord, '', '', 'COORDINADOR', '', '', '']);
+      return [indice + 1, datos.nombre || (typeof conductor === 'string' ? conductor : ''),
+        fecha(datos.fechaNacimiento), datos.nacionalidad, 'CONDUCTOR', datos.sexo, datos.documento || datos.rut, datos.paisResidencia];
+    });
+    tripulacion.push([3, coord, '', '', 'COORDINADOR', '', '', '']);
 
-    const logo = new URL('RaitraiLogo.png', document.baseURI).href;
-    const tabla = (titulo, filas) => `<table><caption>${titulo}</caption><thead><tr>${encabezados}</tr></thead><tbody>${filas}</tbody></table>`;
-    const faltantes = fichas.filter(ficha => !ficha).length;
+    const logo = new Image();
+    logo.src = new URL('RaitraiLogo.png', document.baseURI).href;
+    await logo.decode().catch(() => {});
+    if (ventana.closed) return;
+
     const docManifiesto = ventana.document;
-    docManifiesto.open();
-    docManifiesto.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">
-      <meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>Manifiesto de pasajeros · ${esc(nombreGrupo)}</title>
-      <style>
-        @page { size: A4 landscape; margin: 10mm; }
-        body { margin: 16px; font: 12px Arial, sans-serif; color: #161616; }
-        header { display: grid; grid-template-columns: 110px 1fr 110px; align-items: center; text-align: center; }
-        img { max-width: 104px; max-height: 44px; }
-        h1 { font-size: 18px; margin: 5px 0; } header p { margin: 4px; }
-        .datos { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; margin: 12px 0; border: 1px solid #444; }
-        .datos div { padding: 5px; border-right: 1px solid #444; min-height: 15px; }
-        .datos div:last-child { border-right: 0; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-        caption { text-align: left; font-weight: bold; margin: 4px 0; }
-        th, td { padding: 4px; border: 1px solid #444; overflow-wrap: anywhere; }
-        th { text-align: left; } th:nth-child(2) { width: 26%; }
-        thead { display: table-header-group; } tr { break-inside: avoid; }
-        .acciones { margin: 0 0 14px; }
-        @media print { body { margin: 0; } .acciones { display: none; } }
-      </style></head><body>
-      <div class="acciones">
-        <button type="button" id="imprimir">Imprimir / guardar PDF</button>
-        ${faltantes ? `<p>No se pudieron consultar ${faltantes} ficha(s). Vuelve a abrir el manifiesto para reintentar.</p>` : ''}
-      </div>
-      <header><img src="${esc(logo)}" alt="Rai Trai Turismo"><div>
-        <p>AGENCIA DE VIAJES TURISMO RAITRAI</p><h1>MANIFIESTO DE PASAJEROS</h1>
-        <strong>${esc(nombreGrupo)}</strong></div></header>
-      <div class="datos">
-        <div><strong>Empresa</strong> ${esc(g.empresaTransporte || '')}</div>
-        <div><strong>Bus</strong> ${esc(g.numeroBus || (typeof g.bus === 'string' ? g.bus : ''))}</div>
-        <div><strong>Patente</strong> ${esc(g.patenteBus || g.patente || '')}</div>
-        <div><strong>Fecha</strong> ${esc(fecha(g.fechaInicio))}</div>
-      </div>
-      ${tabla('Conductores y coordinación', tripulacion)}
-      ${tabla('Pasajeros', pasajeros)}
-      </body></html>`);
-    docManifiesto.close();
-    docManifiesto.getElementById('imprimir').onclick = () => ventana.print();
+    docManifiesto.title = `Manifiesto de pasajeros · ${nombreGrupo}`;
+    docManifiesto.documentElement.lang = 'es';
+    const vistaMovil = docManifiesto.createElement('meta');
+    vistaMovil.name = 'viewport';
+    vistaMovil.content = 'width=device-width, initial-scale=1';
+    const estilos = docManifiesto.createElement('style');
+    estilos.textContent = `
+      @page { size: A4 landscape; margin: 0; }
+      body { margin: 0; background: #e8ebef; color: #161616; font: 15px Arial,sans-serif; }
+      .acciones { padding: 12px; background: #fff; }
+      .acciones button { padding: 9px 12px; margin: 0 8px 4px 0; }
+      canvas { display:block; width:min(100%, 1200px); height:auto; margin:12px auto; }
+      @media print {
+        body { background:#fff; }
+        .acciones { display:none; }
+        canvas { width:297mm; height:209.8mm; margin:0; break-inside:avoid; }
+        canvas + canvas { break-before:page; }
+      }
+    `;
+    docManifiesto.head.append(vistaMovil, estilos);
+    const acciones = docManifiesto.createElement('div');
+    acciones.className = 'acciones';
+    const descargar = docManifiesto.createElement('button');
+    descargar.textContent = 'Descargar PDF';
+    const imprimir = docManifiesto.createElement('button');
+    imprimir.textContent = 'Imprimir';
+    imprimir.onclick = () => ventana.print();
+    acciones.append(descargar, imprimir);
+
+    const faltantes = fichas.filter(ficha => !ficha).length;
+    const aviso = docManifiesto.createElement('div');
+    if (faltantes) aviso.textContent = `No se pudieron consultar ${faltantes} ficha(s). Vuelve a abrir el manifiesto para reintentar.`;
+    const estadoPdf = docManifiesto.createElement('div');
+    acciones.append(aviso, estadoPdf);
+    docManifiesto.body.replaceChildren(acciones);
+
+    const datos = [
+      `Empresa: ${g.empresaTransporte || ''}`,
+      `Bus: ${g.numeroBus ?? (typeof g.bus === 'string' ? g.bus : '')}`,
+      `Patente: ${g.patenteBus || g.patente || ''}`,
+      `Fecha: ${fecha(g.fechaInicio)}`
+    ];
+    const hojas = [];
+    const total = Math.max(1, Math.ceil(pasajeros.length / 45));
+    for (let indice = 0; indice < total; indice++) {
+      const hoja = dibujarHojaManifiesto({
+        logo: logo.naturalWidth ? logo : null, nombre: nombreGrupo, datos, tripulacion,
+        pasajeros: pasajeros.slice(indice * 45, indice * 45 + 45), pagina: indice + 1, total
+      });
+      hoja.setAttribute('role', 'img');
+      hoja.setAttribute('aria-label', `Manifiesto de pasajeros, página ${indice + 1} de ${total}`);
+      hojas.push(hoja);
+      docManifiesto.body.append(hoja);
+    }
+
+    descargar.onclick = async () => {
+      descargar.disabled = true;
+      estadoPdf.textContent = 'Generando PDF…';
+      try {
+        const Pdf = await cargarBibliotecaPdfManifiesto();
+        if (ventana.closed) return;
+        const pdf = new Pdf({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
+        for (const [indice, hoja] of hojas.entries()) {
+          if (indice) pdf.addPage('a4', 'landscape');
+          pdf.addImage(hoja, 'JPEG', 0, 0, 297, 210, undefined, 'FAST');
+        }
+        const url = ventana.URL.createObjectURL(pdf.output('blob'));
+        const enlace = docManifiesto.createElement('a');
+        enlace.href = url;
+        enlace.download = `Manifiesto-${slug(nombreGrupo) || 'pasajeros'}.pdf`;
+        acciones.append(enlace);
+        enlace.click();
+        enlace.remove();
+        ventana.setTimeout(() => ventana.URL.revokeObjectURL(url), 60000);
+        estadoPdf.textContent = '';
+      } catch (error) {
+        estadoPdf.textContent = error.message || 'No se pudo descargar el PDF. Puedes usar Imprimir.';
+      } finally {
+        descargar.disabled = false;
+      }
+    };
   } catch (error) {
     if (!ventana.closed) ventana.document.body.textContent = error.message || 'No se pudo abrir el manifiesto.';
   }
@@ -13344,52 +13483,42 @@ async function resetViajeCompleto(g) {
 
   const gid = g.id;
   const grupoRef = doc(db, 'grupos', gid);
-  const errores = [];
-  const conteos = {};
-
-  async function ejecutarPaso(nombre, tarea) {
-    try {
-      conteos[nombre] = await tarea();
-    } catch (error) {
-      errores.push(`${nombre}: ${error.message || error}`);
-      console.error(`[reset] ${nombre}`, error);
-    }
-  }
+  let paso = 'Lectura del viaje';
+  let borradoIniciado = false;
 
   try {
     const actual = await getDocFromServer(grupoRef);
     if (!actual.exists()) throw new Error('El grupo ya no existe.');
-
     const datos = actual.data();
+    const grupoActual = {
+      ...g,
+      asistencias: datos.asistencias || {},
+      itinerarioActual: normalizeItinerario(datos.itinerario)
+    };
+    const tareas = [
+      ['Gastos', soloLectura => wipeGastosForGroup(gid, soloLectura)],
+      ['Archivos de cierre', soloLectura => wipeFinanzasFiles(gid, soloLectura)],
+      ['Abonos', soloLectura => wipeViajeCollection(gid, 'finanzas_abonos', soloLectura)],
+      ['Respaldos financieros', soloLectura => wipeViajeCollection(gid, 'finanzas_snapshots', soloLectura)],
+      ['Bitácora', soloLectura => wipeBitacoraFromItinerario(grupoActual, soloLectura)],
+      ['Alertas de bitácora', soloLectura => wipeAlertasBitacora(gid, soloLectura)]
+    ];
 
-    await ejecutarPaso('Archivos de cierre', () => wipeFinanzasFiles(gid));
-    await ejecutarPaso('Gastos', () => wipeGastosForGroup(gid));
-    await ejecutarPaso('Abonos', () => wipeViajeCollection(gid, 'finanzas_abonos'));
-    await ejecutarPaso('Respaldos financieros', () => wipeViajeCollection(gid, 'finanzas_snapshots'));
-
-    await ejecutarPaso('Bitácora', () =>
-      wipeBitacoraFromItinerario({
-        ...g,
-        asistencias: datos.asistencias || {},
-        itinerarioActual: normalizeItinerario(datos.itinerario)
-      })
-    );
-
-    await ejecutarPaso('Alertas de bitácora', () => wipeAlertasBitacora(gid));
-
-    // Las claves de asistencia permiten encontrar notas si se necesita reintentar.
-    if (!errores.length) {
-      await ejecutarPaso('Estado del viaje y cierre', () => resetGroupFlags(gid));
+    for (const [nombre, tarea] of tareas) {
+      paso = `Comprobación de ${nombre.toLowerCase()}`;
+      await tarea(true);
     }
+    paso = 'Comprobación del cierre financiero';
+    await getDocFromServer(doc(db, 'grupos', gid, 'finanzas', 'summary'));
 
-    if (errores.length) {
-      showFlash('RESTABLECIMIENTO INCOMPLETO', 'warn');
-      alert(
-        'Quedaron pasos pendientes. Puedes volver a ejecutar Restablecer.\n\n' +
-        errores.join('\n')
-      );
-      return;
+    const conteos = {};
+    borradoIniciado = true;
+    for (const [nombre, tarea] of tareas) {
+      paso = nombre;
+      conteos[nombre] = await tarea(false);
     }
+    paso = 'Estado del viaje y cierre';
+    await resetGroupFlags(gid);
 
     const detalle =
       `Gastos eliminados: ${conteos.Gastos || 0}. ` +
@@ -13417,9 +13546,10 @@ async function resetViajeCompleto(g) {
     await reloadGroupAndRender(gid);
     showFlash('VIAJE RESTABLECIDO', 'ok');
   } catch (error) {
-    console.error('[reset] No se pudo restablecer el viaje', error);
-    showFlash('NO SE PUDO RESTABLECER EL VIAJE', 'warn');
-    alert(error.message || 'No se pudo comprobar el estado del viaje.');
+    console.error(`[reset] ${paso}`, error);
+    showFlash(borradoIniciado ? 'RESTABLECIMIENTO INCOMPLETO' : 'NO SE PUDO RESTABLECER EL VIAJE', 'warn');
+    alert(`${paso}: ${error.message || error}\n\n` +
+      (borradoIniciado ? 'Algunos datos pueden haberse borrado. Puedes reintentar.' : 'El restablecimiento se detuvo antes de borrar registros.'));
   } finally {
     if (boton?.isConnected) boton.disabled = false;
   }
@@ -13433,13 +13563,13 @@ async function borrarArchivoRestablecimiento(archivoRef) {
   }
 }
 
-async function wipeFinanzasFiles(grupoId) {
+async function wipeFinanzasFiles(grupoId, soloLectura) {
   async function borrarCarpeta(carpeta) {
     const listado = await listAll(carpeta);
     let cantidad = 0;
 
     for (const archivo of listado.items) {
-      await borrarArchivoRestablecimiento(archivo);
+      if (!soloLectura) await borrarArchivoRestablecimiento(archivo);
       cantidad++;
     }
 
@@ -13452,6 +13582,7 @@ async function wipeFinanzasFiles(grupoId) {
 
   const carpeta = sRef(storage, `finanzas/${grupoId}`);
   const cantidad = await borrarCarpeta(carpeta);
+  if (soloLectura) return cantidad;
   const restante = await listAll(carpeta);
 
   if (restante.items.length || restante.prefixes.length) {
@@ -13461,9 +13592,10 @@ async function wipeFinanzasFiles(grupoId) {
   return cantidad;
 }
 
-async function wipeViajeCollection(grupoId, nombre) {
+async function wipeViajeCollection(grupoId, nombre, soloLectura) {
   const coleccion = collection(db, 'grupos', grupoId, nombre);
   const snapshot = await getDocsFromServer(coleccion);
+  if (soloLectura) return snapshot.size;
 
   for (const registro of snapshot.docs) {
     await deleteDoc(registro.ref);
@@ -13476,32 +13608,50 @@ async function wipeViajeCollection(grupoId, nombre) {
   return snapshot.size;
 }
 
-async function wipeGastosForGroup(grupoId) {
-  const consulta = query(
-    collectionGroup(db, 'gastos'),
-    where('grupoId', '==', grupoId)
-  );
+async function consultarGastosGrupoStaff(grupoId, leer) {
+  const filtro = where('grupoId', '==', grupoId);
+  try {
+    const snapshot = await leer(query(collectionGroup(db, 'gastos'), filtro));
+    return snapshot.docs;
+  } catch (error) {
+    const faltaIndice = error.code === 'failed-precondition' &&
+      /index|índice/i.test(error.message || '');
+    if (!faltaIndice) throw error;
+  }
 
-  const snapshot = await getDocsFromServer(consulta);
+  // Los gastos del portal se guardan en coordinadores/{id}/gastos.
+  // Consultar cada subcolección usa el índice normal de grupoId.
+  const coordinadores = await leer(collection(db, 'coordinadores'));
+  const gastos = [];
+  const tamanioLote = 8;
 
-  for (const gasto of snapshot.docs) {
+  for (let inicio = 0; inicio < coordinadores.docs.length; inicio += tamanioLote) {
+    const lote = coordinadores.docs.slice(inicio, inicio + tamanioLote);
+    const resultados = await Promise.all(lote.map(coordinador =>
+      leer(query(collection(coordinador.ref, 'gastos'), filtro))
+    ));
+    for (const resultado of resultados) gastos.push(...resultado.docs);
+  }
+  return gastos;
+}
+
+async function wipeGastosForGroup(grupoId, soloLectura) {
+  const gastos = await consultarGastosGrupoStaff(grupoId, getDocsFromServer);
+  if (soloLectura) return gastos.length;
+
+  for (const gasto of gastos) {
     const ruta = gasto.data().imgPath;
-
-    if (ruta) {
-      await borrarArchivoRestablecimiento(sRef(storage, ruta));
-    }
-
+    if (ruta) await borrarArchivoRestablecimiento(sRef(storage, ruta));
     await deleteDoc(gasto.ref);
   }
 
-  if (!(await getDocsFromServer(consulta)).empty) {
+  if ((await consultarGastosGrupoStaff(grupoId, getDocsFromServer)).length) {
     throw new Error('Todavía quedan gastos asociados al grupo.');
   }
-
-  return snapshot.size;
+  return gastos.length;
 }
 
-async function wipeBitacoraFromItinerario(g) {
+async function wipeBitacoraFromItinerario(g, soloLectura) {
   const rutasPorFecha = new Map();
 
   function agregar(fecha, clave) {
@@ -13543,10 +13693,9 @@ async function wipeBitacoraFromItinerario(g) {
       const ruta = collection(db, 'grupos', g.id, 'bitacora', clave, fecha);
       const snapshot = await getDocsFromServer(ruta);
 
-      for (const nota of snapshot.docs) {
-        await deleteDoc(nota.ref);
-        cantidad++;
-      }
+      cantidad += snapshot.size;
+      if (soloLectura) continue;
+      for (const nota of snapshot.docs) await deleteDoc(nota.ref);
 
       if (!(await getDocsFromServer(ruta)).empty) {
         throw new Error(`Quedan notas de la actividad ${clave} del ${fecha}.`);
@@ -13557,7 +13706,7 @@ async function wipeBitacoraFromItinerario(g) {
   return cantidad;
 }
 
-async function wipeAlertasBitacora(grupoId) {
+async function wipeAlertasBitacora(grupoId, soloLectura) {
   const consulta = query(
     collection(db, 'alertas'),
     where('groupInfo.grupoId', '==', grupoId)
@@ -13578,6 +13727,7 @@ async function wipeAlertasBitacora(grupoId) {
 
   const snapshot = await getDocsFromServer(consulta);
   const alertas = snapshot.docs.filter(esNotaDeActividad);
+  if (soloLectura) return alertas.length;
 
   for (const alerta of alertas) {
     await deleteDoc(alerta.ref);
@@ -13670,16 +13820,15 @@ async function closeFinanzas(g){
 async function loadGastosParaFinanzas(grupoId, desdeServidor = false) {
   const verTodos = !!state.is && state.viewingCoordId === '__ALL__';
 
-  const origen = verTodos
-    ? collectionGroup(db, 'gastos')
-    : collection(db, 'coordinadores', getActiveCoordIdForGastos(), 'gastos');
+  const leer = desdeServidor ? getDocsFromServer : getDocs;
+  const documentos = verTodos
+    ? await consultarGastosGrupoStaff(grupoId, leer)
+    : (await leer(query(
+      collection(db, 'coordinadores', getActiveCoordIdForGastos(), 'gastos'),
+      where('grupoId', '==', grupoId)
+    ))).docs;
 
-  const consulta = query(origen, where('grupoId', '==', grupoId));
-  const snapshot = desdeServidor
-    ? await getDocsFromServer(consulta)
-    : await getDocs(consulta);
-
-  return snapshot.docs.map(documento => ({
+  return documentos.map(documento => ({
     ...documento.data(),
     id: documento.id
   }));
