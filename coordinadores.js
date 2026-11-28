@@ -9238,6 +9238,15 @@ async function renderActs(
     tarjeta.dataset.actKey =
       actKey;
 
+    const horas = [act.horaInicio, act.hora, act.horaFin]
+      .map(valor => String(valor ?? '').trim())
+      .map(valor => /^--[:.]--$/.test(valor) ? '' : valor);
+    const inicio = horas[0] || horas[1];
+    const fin = horas[2];
+    const horario = inicio
+      ? (fin && fin !== inicio ? `${inicio} – ${fin}` : inicio)
+      : (fin ? `Término ${fin} · Inicio por confirmar` : 'Hora por confirmar');
+
     const estadoHTML = estado
       ? (
           ' · <span class="muted">' +
@@ -9275,6 +9284,9 @@ async function renderActs(
             actName.toUpperCase()
           )}
           ${estadoHTML}
+          <span class="muted" style="display:block;font-size:.85em">
+            ${escapeHTMLServicio(horario)}
+          </span>
         </h4>
 
         <span
