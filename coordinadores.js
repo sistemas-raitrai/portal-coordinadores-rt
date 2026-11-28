@@ -5757,8 +5757,13 @@ async function abrirManifiestoViaje(g) {
   ventana.document.body.textContent = 'Cargando manifiesto…';
 
   try {
-    const nomina = await cargarDatosNomina(g);
-    const fichas = await cargarFichasNomina(nomina);
+    const logo = new Image();
+    logo.src = new URL('RaitraiLogo.png', document.baseURI).href;
+    const [{ pasajeros: registros }] = await Promise.all([
+      consultarNominaPortal('manifiestoPortalCoordinador', { grupoId: g.id }),
+      logo.decode().catch(() => {})
+    ]);
+    if (!Array.isArray(registros)) throw new Error('El manifiesto no está disponible.');
     if (ventana.closed) return;
 
     const nombreGrupo = nombreOperativoGrupo(g);
@@ -5767,22 +5772,19 @@ async function abrirManifiestoViaje(g) {
       return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso.split('-').reverse().join('/') : '';
     };
 
-    const pasajeros = nomina.pasajeros.map((registro, indice) => {
-      const ficha = fichas[indice] || {};
-      const identidad = ficha.identificacion || {};
-      const sexo = identidad.sexo || identidad.genero || registro.sexo || '';
+    const pasajeros = registros.map((registro, indice) => {
+      const sexo = registro.sexo || '';
       const categoria = norm(sexo);
-      const ocupacion = identidad.ocupacion || registro.ocupacion || ficha.tipoViajante || registro.tipoViajante || '';
       return [
         indice + 1,
-        identidad.nombreCompleto || registro.nombre,
-        fecha(identidad.fechaNacimiento || registro.fechaNacimiento),
-        identidad.nacionalidad || registro.nacionalidad,
-        String(ocupacion).replace(/_/g, ' ').toUpperCase(),
+        registro.nombre,
+        fecha(registro.fechaNacimiento),
+        registro.nacionalidad,
+        String(registro.ocupacion || '').replace(/_/g, ' ').toUpperCase(),
         ['masculino', 'm'].includes(categoria) ? 'M' :
           ['femenino', 'f'].includes(categoria) ? 'F' : sexo,
-        identidad.documento || ficha.documento || registro.documento || registro.rut,
-        identidad.paisResidencia || ficha.paisResidencia || registro.paisResidencia
+        registro.documento,
+        registro.paisResidencia
       ];
     });
 
@@ -5796,11 +5798,6 @@ async function abrirManifiestoViaje(g) {
         fecha(datos.fechaNacimiento), datos.nacionalidad, 'CONDUCTOR', datos.sexo, datos.documento || datos.rut, datos.paisResidencia];
     });
     tripulacion.push([3, coord, '', '', 'COORDINADOR', '', '', '']);
-
-    const logo = new Image();
-    logo.src = new URL('RaitraiLogo.png', document.baseURI).href;
-    await logo.decode().catch(() => {});
-    if (ventana.closed) return;
 
     const docManifiesto = ventana.document;
     docManifiesto.title = `Manifiesto de pasajeros · ${nombreGrupo}`;
@@ -5832,11 +5829,8 @@ async function abrirManifiestoViaje(g) {
     imprimir.onclick = () => ventana.print();
     acciones.append(descargar, imprimir);
 
-    const faltantes = fichas.filter(ficha => !ficha).length;
-    const aviso = docManifiesto.createElement('div');
-    if (faltantes) aviso.textContent = `No se pudieron consultar ${faltantes} ficha(s). Vuelve a abrir el manifiesto para reintentar.`;
     const estadoPdf = docManifiesto.createElement('div');
-    acciones.append(aviso, estadoPdf);
+    acciones.append(estadoPdf);
     docManifiesto.body.replaceChildren(acciones);
 
     const datos = [
@@ -9020,9 +9014,15 @@ function renderItinerario(g, pane, preferDate) {
   barra.className = 'date-pills rtFechasItinerario';
   barra.style.setProperty('--rt-columnas-fechas', columnas);
 
-  const actividades = document.createElement('div');
-  actividades.className = 'acts';
-  pane.append(barra, actividades);
+  const panelActividades = document.createElement('div');
+  pane.append(barra, panelActividades);
+
+  function mostrarDia(fecha) {
+    const actividades = document.createElement('div');
+    actividades.className = 'acts';
+    panelActividades.replaceChildren(actividades);
+    void renderActs(g, fecha, actividades);
+  }
 
   const clave = `rt_last_date_${g.id}`;
   const inicial = [preferDate, localStorage.getItem(clave), toISO(new Date())]
@@ -9057,13 +9057,13 @@ function renderItinerario(g, pane, preferDate) {
       }
 
       localStorage.setItem(clave, fecha);
-      renderActs(g, fecha, actividades);
+      mostrarDia(fecha);
     };
 
     barra.append(boton);
   }
 
-  renderActs(g, inicial, actividades);
+  mostrarDia(inicial);
   return countItinHits(g, qNorm);
 }
 
@@ -9197,10 +9197,7 @@ async function renderActs(
   }
 
   if (!actividades.length) {
-    cont.innerHTML =
-      '<div class="muted">' +
-        'SIN ACTIVIDADES PARA ESTE DÍA.' +
-      '</div>';
+    cont.insertAdjacentHTML('beforeend', '<div class="muted">SIN ACTIVIDADES PARA ESTE DÍA.</div>');
 
     return;
   }
@@ -9269,13 +9266,13 @@ async function renderActs(
         style="
           display:flex;
           align-items:center;
-          justify-content:space-between;
-          gap:.75rem;
+          gap:.65rem;
         "
       >
         <h4
           style="
             margin:0;
+            flex:1;
             min-width:0;
             overflow-wrap:anywhere;
           "
@@ -9528,7 +9525,7 @@ async function renderActs(
               'btn sec';
 
             botonFinalizar.textContent =
-              'FINALIZAR…';
+              tipoVoucher === 'CORREO' ? 'VOUCHER POR CORREO' : 'FINALIZAR…';
 
             botonFinalizar.onclick =
               async () => {
@@ -10688,6 +10685,10 @@ function renderVoucherHTMLSync(g, fechaISO, act, proveedorDoc=null, compact=fals
     </div>`;
 }
 async function openVoucherModal(g, fechaISO, act, servicio, tipo){
+  if (tipo === 'CORREO' && getSavedAsistencia(g, fechaISO, act.actividad)?.paxFinal == null) {
+    alert('Primero guarda la asistencia de la actividad.');
+    return;
+  }
   const back=document.getElementById('modalBack');
   const title=document.getElementById('modalTitle');
   const body=document.getElementById('modalBody');
@@ -10695,10 +10696,10 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
 
    let proveedorDoc = null;
    try {
-     if (servicio?.proveedor) {
+     if ((servicio?.proveedor || act.proveedor) && (tipo !== 'CORREO' || !servicio?.correoProveedor)) {
        proveedorDoc = await findProveedorDocByDestino(
          (g.destino || '').toString().toUpperCase(),
-         servicio.proveedor
+         servicio?.proveedor || act.proveedor
        );
      }
    } catch(_) {}
@@ -10716,128 +10717,69 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
     document.getElementById('vchOk').onclick   =()=> setEstadoServicio(g,fechaISO,act,'FINALIZADA', true);
     document.getElementById('vchPend').onclick =()=> setEstadoServicio(g,fechaISO,act,'PENDIENTE',  true);
 
-} else if (tipo === 'CORREO') {
-  // ——— 1) Exige asistencia guardada ———
-  const asis = getSavedAsistencia(g, fechaISO, act.actividad);
-  if (asis?.paxFinal == null) { alert('PRIMERO GUARDA LA ASISTENCIA (PAX).'); return; }
+  } else if (tipo === 'CORREO') {
+    const asis = getSavedAsistencia(g, fechaISO, act.actividad);
 
-  // ——— 2) Intentar prellenar correo del proveedor ———
-  let provEmail = String(servicio?.correoProveedor || '').trim();
-  if (!provEmail) {
-    try {
-      const prov = await findProveedorDocByDestino(
-        (g.destino || '').toString().toUpperCase(),
-        (servicio?.proveedor || act.proveedor || '').toString()
-      );
-      provEmail = String(prov?.correo || prov?.email || '').trim();
-    } catch(_) {}
-  }
+    const provEmail = String(servicio?.correoProveedor || proveedorDoc?.correo || proveedorDoc?.email || '').trim();
+    const code = (g.numeroNegocio || '') + (g.identificador ? '-' + g.identificador : '');
+    const actividadTX = String(act.actividad || '').toUpperCase();
+    const grupoTX = nombreOperativoGrupo(g);
+    const fechaTX = dmy(fechaISO);
+    const paxTX = asis.paxFinal;
+    const referencia = code ? `${grupoTX} (${code})` : grupoTX;
+    const subject = `Confirmación de asistencia — ${actividadTX} — ${fechaTX} — ${referencia}`;
+    const defaultBody = `Hola,
 
-  // ——— 3) Datos base ———
-  const code        = (g.numeroNegocio||'') + (g.identificador?('-'+g.identificador):'');
-  const actividadTX = (act.actividad||'').toString().toUpperCase();
-  const grupoTX     = (nombreOperativoGrupo(g)).toString().toUpperCase();
-  const destinoTX   = (g.destino||'—').toString().toUpperCase();
-  const programaTX  = (g.programa||'—').toString().toUpperCase();
-  const fechaTX     = dmy(fechaISO);
-  const paxTX       = (asis?.paxFinal ?? '—');
-  const coordTX     = (g.coordinadorNombre || '—').toString().toUpperCase();
-  const subject     = `CONFIRMACIÓN DE ASISTENCIA — ${actividadTX} — ${fechaTX} — ${grupoTX} (${code})`;
+Confirmamos ${paxTX} asistentes para ${actividadTX} el ${fechaTX}.
+Grupo: ${referencia}.
 
-  // cuerpo por defecto (texto plano, editable)
-  const defaultBody =
-`ESTIMADOS ${(act.proveedor||'PROVEEDOR').toString().toUpperCase()}:
+Saludos,
+${g.coordinadorNombre || 'Equipo Rai Trai'}`;
+    const actKey = slug(act.actividad || 'actividad');
+    const correoGuardado = g.serviciosEstado?.[fechaISO]?.[actKey]?.correo;
+    const correoYaEnviado = correoGuardado?.estado === 'ENVIADA';
 
-CONFIRMAMOS LA ASISTENCIA PARA EL SERVICIO INDICADO:
+    body.innerHTML = `
+      <form class="rtVoucherCorreo">
+        <p>Envía el correo desde tu aplicación y vuelve para confirmar el envío.</p>
+        <label>Para <input name="destinatario" type="email" required value="${escapeHTMLServicio(provEmail)}"></label>
+        <details>
+          <summary>Revisar o editar el mensaje</summary>
+          <label>CC <input name="copia" type="email" value="operaciones@raitrai.cl"></label>
+          <label>Asunto <input name="asunto" value="${escapeHTMLServicio(subject)}"></label>
+          <label>Mensaje <textarea name="mensaje" rows="7">${escapeHTMLServicio(defaultBody)}</textarea></label>
+        </details>
+        <div class="rowflex">
+          <button type="submit" class="btn sec">Abrir correo</button>
+          <button type="button" name="finalizar" class="btn ok"${correoYaEnviado ? '' : ' disabled'}>
+            ${correoYaEnviado ? 'Finalizar actividad' : 'Confirmar envío y finalizar'}
+          </button>
+        </div>
+      </form>`;
 
-• ACTIVIDAD: ${actividadTX}
-• FECHA: ${fechaTX}
-• GRUPO: ${grupoTX} (${code})
-• DESTINO / PROGRAMA: ${destinoTX} / ${programaTX}
-• PAX ASISTENTES: ${paxTX}
-• COORDINADOR(A): ${coordTX}
+    const form = body.querySelector('.rtVoucherCorreo');
+    const { destinatario, copia, asunto, mensaje, finalizar } = form.elements;
+    form.onsubmit = evento => {
+      evento.preventDefault();
+      const parametros = [
+        ['subject', asunto.value.trim()],
+        ['body', mensaje.value.trim().replace(/\r?\n/g, '\r\n')],
+        ['cc', copia.value.trim()]
+      ].filter(([, valor]) => valor)
+        .map(([clave, valor]) => `${clave}=${encodeURIComponent(valor)}`).join('&');
+      window.location.href = `mailto:${encodeURIComponent(destinatario.value.trim())}?${parametros}`;
+      finalizar.disabled = false;
+    };
 
-OBSERVACIONES:
-—`;
-
-  // estado inicial (si alguien ya lo marcó antes)
-  const actKey = slug(act.actividad || 'actividad');
-  const correoYaEnviado = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
-
-  // ——— 4) UI ———
-  body.innerHTML = `
-    ${voucherHTML}
-    <div class="meta" style="margin-top:.5rem"><strong>PASOS:</strong> 1) ABRIR CORREO · 2) ENVIAR DESDE TU APP · 3) VOLVER Y <u>MARCAR COMO ENVIADA</u> · 4) FINALIZAR ACTIVIDAD.</div>
-    <div class="rowflex" style="gap:.4rem;align-items:center;margin:.25rem 0 .25rem 0">
-      <input id="rtMailTo" type="email" placeholder="PARA" value="${(provEmail||'')}" style="flex:1"/>
-      <input id="rtMailCc" type="email" placeholder="CC" value="operaciones@raitrai.cl" style="flex:1"/>
-    </div>
-    <input id="rtMailSubj" type="text" placeholder="ASUNTO" value="${subject.replace(/"/g,'&quot;')}" />
-    <textarea id="rtMailBody" placeholder="CUERPO (SE PUEDE EDITAR ANTES DE ENVIAR)" style="margin-top:.4rem;height:160px">${defaultBody}</textarea>
-
-    <div class="rowflex" style="margin-top:.6rem;gap:.5rem;flex-wrap:wrap">
-      <button id="rtOpenMail" class="btn ok">ABRIR CORREO</button>
-      <button id="rtMarkSent" class="btn sec">MARCAR COMO ENVIADA</button>
-      <button id="rtFinalizar" class="btn warn" ${correoYaEnviado ? '' : 'disabled title="PRIMERO MARCA EL CORREO COMO ENVIADO"'}>
-        FINALIZAR ACTIVIDAD
-      </button>
-      <button id="vchPend" class="btn">DEJAR PENDIENTE</button>
-    </div>
-    <div class="meta muted">Se abrirá tu cliente de correo (Gmail/Mail) con el mensaje prellenado. Luego vuelve y marca “ENVIADA”.</div>
-  `;
-
-  // ——— 5) Handlers ———
-  const $to   = document.getElementById('rtMailTo');
-  const $cc   = document.getElementById('rtMailCc');
-  const $subj = document.getElementById('rtMailSubj');
-  const $txt  = document.getElementById('rtMailBody');
-  const $fin  = document.getElementById('rtFinalizar');
-
-   // tras crear const $fin = document.getElementById('rtFinalizar');
-   (() => {
-     const actKey = slug(act.actividad || 'actividad');
-     const ya = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
-     if (ya && $fin) { $fin.disabled = false; $fin.removeAttribute('title'); }
-   })();
-
-
-  // 5.a) Abrir mailto (no cambia estado)
-   document.getElementById('rtOpenMail').onclick = () => {
-     const to = ($to.value||'').trim();
-     if (!to) { alert('INGRESA UN DESTINATARIO (PARA).'); return; }
-     const mailto = buildMailto({
-       to,
-       cc: ($cc.value||'').trim(),
-       subject: ($subj.value||'').trim(),
-       htmlBody: ($txt.value||'').trim()
-     });
-     const a = document.createElement('a');
-     a.href = mailto;
-     a.style.display = 'none';
-     document.body.appendChild(a);
-     a.click();
-     a.remove();
-     showFlash('ABRÍ TU CORREO, LUEGO MARCA “ENVIADA”');
-   };
-
-
-  // 5.b) Marcar como ENVIADA → guarda en Firestore + log + alerta
-  document.getElementById('rtMarkSent').onclick = async () => {
-    const to = ($to.value||'').trim();
-    if (!to) { alert('COMPLETA EL CORREO DEL PROVEEDOR.'); return; }
-    try {
-      const refGrupo = doc(db,'grupos', g.id);
-      const payload  = {};
-      payload[`serviciosEstado.${fechaISO}.${actKey}.correo`] = { estado:'ENVIADA', enviadaAt: serverTimestamp() };
-      await updateDoc(refGrupo, payload);
-
-      // espejo local
-      (g.serviciosEstado ||= {});
-      (g.serviciosEstado[fechaISO] ||= {});
-      (g.serviciosEstado[fechaISO][actKey] ||= {});
-      g.serviciosEstado[fechaISO][actKey].correo = { estado:'ENVIADA', enviadaAt: new Date() };
-
-      // log + alerta
+    finalizar.onclick = async () => {
+      finalizar.disabled = true;
+      const correo = correoYaEnviado ? correoGuardado : { estado: 'ENVIADA', enviadaAt: serverTimestamp() };
+      const guardado = await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true, correo);
+      if (!guardado) {
+        finalizar.disabled = false;
+        return;
+      }
+      if (correoYaEnviado) return;
       try {
         await appendViajeLog(
           g.id,
@@ -10862,29 +10804,10 @@ OBSERVACIONES:
           }
         });
         await window.renderGlobalAlertsV2();
-      } catch (_) {}
-
-      showFlash('CORREO MARCADO COMO ENVIADO');
-      if ($fin) { $fin.disabled = false; $fin.removeAttribute('title'); }
-    } catch (e) {
-      console.error('Error al marcar correo ENVIADA', e);
-      alert('NO SE PUDO GUARDAR EL ESTADO DEL CORREO.');
-    }
-  };
-
-  // 5.c) Finalizar actividad (requiere PAX y correo ENVIADA)
-  document.getElementById('rtFinalizar').onclick = async () => {
-    const paxOk    = (getSavedAsistencia(g, fechaISO, act.actividad)?.paxFinal ?? null) != null;
-    const correoOk = (g?.serviciosEstado?.[fechaISO]?.[actKey]?.correo?.estado === 'ENVIADA');
-    if (!paxOk)  { alert('FALTA DECLARAR LA ASISTENCIA (PAX).'); return; }
-    if (!correoOk) { alert('PRIMERO MARCA EL CORREO COMO ENVIADO.'); return; }
-    await setEstadoServicio(g, fechaISO, act, 'FINALIZADA', true);
-    document.getElementById('modalBack').style.display='none';
-  };
-
-  // 5.d) Dejar PENDIENTE explícitamente
-  document.getElementById('vchPend').onclick = () =>
-    setEstadoServicio(g, fechaISO, act, 'PENDIENTE', true);
+      } catch (error) {
+        console.warn('No se pudo registrar la alerta de confirmación por correo.', error);
+      }
+    };
 
   } else {
     // ELECTRÓNICO (clave / NFC)
@@ -12441,13 +12364,20 @@ async function openActividadModal(
   }
 }
 
-async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
+async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false, correo=null){
   try{
     const key=slug(act.actividad||'');
     const path=doc(db,'grupos',g.id);
-    const payload={}; payload[`serviciosEstado.${fechaISO}.${key}`]={ estado, updatedAt: serverTimestamp(), by:(state.user.email||'').toLowerCase() };
+    const payload = {
+      [`serviciosEstado.${fechaISO}.${key}`]: {
+        estado, updatedAt: serverTimestamp(), by: (state.user.email || '').toLowerCase(),
+        ...(correo ? { correo } : {})
+      }
+    };
     await updateDoc(path,payload);
-    (g.serviciosEstado ||= {}); (g.serviciosEstado[fechaISO] ||= {}); g.serviciosEstado[fechaISO][key]={estado};
+    (g.serviciosEstado ||= {}); (g.serviciosEstado[fechaISO] ||= {}); g.serviciosEstado[fechaISO][key] = {
+      estado, ...(correo ? { correo: { estado: correo.estado, enviadaAt: new Date() } } : {})
+    };
     document.getElementById('modalBack').style.display='none';
     renderItinerario(g, document.getElementById('paneItin'), fechaISO);
 
@@ -12459,9 +12389,14 @@ async function setEstadoServicio(g, fechaISO, act, estado, logBitacora=false){
         byUid: state.user.uid,
         byEmail: (state.user.email||'').toLowerCase(),
         ts: serverTimestamp()
-      });
+      }).catch(error => console.warn('No se pudo registrar el cambio en bitácora.', error));
     }
-  }catch(e){ console.error(e); alert('NO FUE POSIBLE ACTUALIZAR EL ESTADO.'); }
+    return true;
+  } catch(e) {
+    console.error(e);
+    alert('NO FUE POSIBLE ACTUALIZAR EL ESTADO.');
+    return false;
+  }
 }
 
 /* ====== VIAJE: RESTABLECER (STAFF) ====== */
