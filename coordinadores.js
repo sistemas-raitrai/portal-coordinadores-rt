@@ -10727,7 +10727,7 @@ async function openVoucherModal(g, fechaISO, act, servicio, tipo){
     const fechaTX = dmy(fechaISO);
     const paxTX = asis.paxFinal;
     const referencia = code ? `${grupoTX} (${code})` : grupoTX;
-    const subject = `Confirmación de asistencia — ${actividadTX} — ${fechaTX} — ${referencia}`;
+    const subject = `RAITRAI - Confirmación de asistencia — ${actividadTX} — ${fechaTX} — ${referencia}`;
     const defaultBody = `Hola,
 
 Confirmamos ${paxTX} asistentes para ${actividadTX} el ${fechaTX}.
